@@ -146,7 +146,11 @@ def main() -> int:
         )
         for client in session.scalars(select(Client)).all():
             cf = dict(client.custom_fields or {})
-            if cf.pop("credit_balance_by_currency", None) is not None:
+            changed = False
+            for key in ("credit_balance_by_currency", "wallet_balances_by_currency"):
+                if cf.pop(key, None) is not None:
+                    changed = True
+            if changed:
                 client.custom_fields = cf
                 attributes.flag_modified(client, "custom_fields")
 
@@ -166,6 +170,11 @@ def main() -> int:
         residual_wallets = session.scalar(
             select(func.count()).select_from(Client).where(Client.wallet_balance != 0)
         )
+        wallet_cf_left = 0
+        for c in session.scalars(select(Client)).all():
+            cf = c.custom_fields or {}
+            if isinstance(cf, dict) and cf.get("wallet_balances_by_currency"):
+                wallet_cf_left += 1
         residual_users = session.scalar(
             select(func.count()).select_from(User).where(User.wallet_balance != 0)
         )
@@ -181,6 +190,8 @@ def main() -> int:
                 problems.append(f"{table}={n}")
         if int(residual_wallets or 0) != 0:
             problems.append(f"clients.wallet_balance≠0 ({residual_wallets})")
+        if wallet_cf_left != 0:
+            problems.append(f"clients.wallet_balances_by_currency≠0 ({wallet_cf_left})")
         if int(residual_users or 0) != 0:
             problems.append(f"users.wallet_balance≠0 ({residual_users})")
         if problems:

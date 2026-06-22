@@ -6,7 +6,9 @@ Conserva catálogos maestros, clientes, usuarios/distribuidores e inventario IPT
 (recargas ``iptv_accounts``, bodega ``screen_stock``, productos).
 
 Elimina ventas, cobros CxC, contabilidad, gastos, facturas de proveedor de prueba,
-recargas BaaS (solicitudes), notificaciones y notas de actividad.
+recargas BaaS (solicitudes + movimientos de billetera), notificaciones y notas de actividad.
+Tras el TRUNCATE, pone en cero saldos CxC, billetera BaaS (columna y ``wallet_balances_by_currency``)
+y saldo a favor de todos los clientes/usuarios.
 
 Ejecutar desde ``backend/``:
 
@@ -53,7 +55,7 @@ TRANSACTIONAL_TABLES: tuple[str, ...] = (
     "vendor_payments",
     "vendor_bill_lines",
     "vendor_bills",
-    # Billetera BaaS (solicitudes y movimientos; no confundir con ``iptv_accounts``)
+    # BaaS — billeteras virtuales (orden: allocations → movimientos → solicitudes)
     "wallet_transactions",
     "wallet_recharge_requests",
     # Notificaciones y notas de actividad
@@ -115,7 +117,8 @@ def _print_plan() -> None:
         "  • Pantallas IPTV legacy liberadas (iptv_screens disponibles)\n"
         "  • Contadores de preventas en products (reserved/assigned → 0; se conserva opening/recargas)\n"
         "  • Saldos cacheados del plan de cuentas → saldo de apertura\n"
-        "  • Saldos transaccionales en clients/users (CxC, billetera BaaS) → 0\n"
+        "  • BaaS: clients/users.wallet_balance → 0 y custom_fields.wallet_balances_by_currency eliminado\n"
+        "  • CxC: clients.credit_balance → 0 y custom_fields.credit_balance_by_currency eliminado\n"
     )
 
 
@@ -188,7 +191,7 @@ def _reset_account_cached_balances(conn) -> int:
 
 
 def _reset_client_transactional_balances(conn) -> int:
-    """No borra clientes; limpia saldos derivados de ventas/cobros eliminados."""
+    """No borra clientes; limpia saldos CxC, billetera BaaS y saldo a favor."""
     result = conn.execute(
         text(
             """
@@ -200,7 +203,9 @@ def _reset_client_transactional_balances(conn) -> int:
                 last_recharge = NULL,
                 custom_fields = CASE
                     WHEN custom_fields IS NULL THEN '{}'::jsonb
-                    ELSE custom_fields - 'credit_balance_by_currency'
+                    ELSE custom_fields
+                        - 'credit_balance_by_currency'
+                        - 'wallet_balances_by_currency'
                 END
             """
         )
@@ -220,6 +225,49 @@ def _reset_user_wallet_balances(conn) -> int:
     return int(result.rowcount or 0)
 
 
+def _verify_baas_zero(conn) -> None:
+    """Comprueba ledger BaaS vacío y saldos virtuales en cero (columna + custom_fields)."""
+    for table in ("wallet_recharge_requests", "wallet_transactions"):
+        n = _count(conn, table)
+        if n != 0:
+            raise RuntimeError(f"Tras la limpieza, {table} aún tiene {n} fila(s).")
+
+    row = conn.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n
+            FROM clients
+            WHERE ABS(COALESCE(wallet_balance, 0)) > 0.000001
+               OR (
+                    custom_fields IS NOT NULL
+                    AND custom_fields ? 'wallet_balances_by_currency'
+               )
+            """
+        )
+    ).mappings().first()
+    residual_clients = int(row["n"]) if row else 0
+    if residual_clients > 0:
+        raise RuntimeError(
+            f"Tras la limpieza, {residual_clients} cliente(s) aún tienen saldo BaaS "
+            "(wallet_balance o wallet_balances_by_currency)."
+        )
+
+    row_u = conn.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n
+            FROM users
+            WHERE ABS(COALESCE(wallet_balance, 0)) > 0.000001
+            """
+        )
+    ).mappings().first()
+    residual_users = int(row_u["n"]) if row_u else 0
+    if residual_users > 0:
+        raise RuntimeError(
+            f"Tras la limpieza, {residual_users} usuario(s) aún tienen wallet_balance distinto de cero."
+        )
+
+
 def _verify_post_cleanup(conn) -> None:
     for table in (
         "journal_entry_lines",
@@ -228,8 +276,6 @@ def _verify_post_cleanup(conn) -> None:
         "sales",
         "client_payments",
         "client_debt_payments",
-        "wallet_recharge_requests",
-        "wallet_transactions",
         "client_notifications",
         "client_notes",
         "expenses",
@@ -238,6 +284,8 @@ def _verify_post_cleanup(conn) -> None:
         n = _count(conn, table)
         if n != 0:
             raise RuntimeError(f"Tras la limpieza, {table} aún tiene {n} fila(s).")
+
+    _verify_baas_zero(conn)
 
     row = conn.execute(
         text(
@@ -287,8 +335,9 @@ def _run_cleanup() -> None:
         db.commit()
         print(f"\n✓ {prod_rows} producto(s): contadores de preventa reiniciados.")
         print(f"✓ {acct_rows} cuenta(s) contables: saldo cache = apertura.")
-        print(f"✓ {cli_rows} cliente(s): saldos CxC/billetera reiniciados (registros conservados).")
+        print(f"✓ {cli_rows} cliente(s): saldos CxC/billetera BaaS reiniciados (registros conservados).")
         print(f"✓ {usr_rows} usuario(s): saldo BaaS virtual reiniciado.")
+        print("✓ BaaS: sin recargas, sin movimientos de billetera, saldos virtuales en cero.")
     except Exception:
         db.rollback()
         raise
@@ -319,7 +368,7 @@ def main() -> int:
         return 1
 
     print(
-        "\n✓ Limpieza completada: sin ventas, cobros, contabilidad ni notificaciones de prueba.\n"
+        "\n✓ Limpieza completada: sin ventas, cobros, contabilidad, BaaS ni notificaciones de prueba.\n"
         "  Catálogo de productos, clientes, usuarios e inventario IPTV (recargas + bodega) conservados."
     )
     return 0
