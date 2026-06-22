@@ -763,6 +763,7 @@ def _process_completado(
                 sale=sale,
                 wallet_recharge=req,
                 es_prueba=es_prueba,
+                existing_payment=ctx.client_payment,
             )
             db.commit()
             msg = (

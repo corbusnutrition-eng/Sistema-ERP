@@ -208,12 +208,26 @@ def add_client_credit_balance(
     if add <= _FP_EPS:
         return
     cur = normalize_currency_code(currency)
+    _increment_client_credit_balance(db, client, cur, add)
+    sweep_client_unallocated_funds_to_obligations_fifo(db, client, currency=cur)
+
+
+def _increment_client_credit_balance(
+    db: Session,
+    client: Client,
+    currency: str,
+    delta: Decimal,
+) -> None:
+    """Persiste incremento de saldo a favor sin barrido FIFO (uso interno en aprobaciones)."""
+    add = delta.quantize(Decimal("0.01"))
+    if add <= _FP_EPS:
+        return
+    cur = normalize_currency_code(currency)
     balances = client_credit_balances_map(client)
     prev = balances.get(cur, Decimal("0"))
     balances[cur] = (prev + add).quantize(Decimal("0.01"))
     _persist_client_credit_balances_map(client, balances)
     db.flush()
-    sweep_client_unallocated_funds_to_obligations_fifo(db, client, currency=cur)
 
 
 def subtract_client_credit_balance(
@@ -1298,11 +1312,9 @@ def compute_payment_credit_excess(
     db: Optional[Session] = None,
 ) -> Decimal:
     """
-    Excedente real del cobro: ``monto_total_del_pago − suma(asignaciones_exitosas)``.
-
-    Con ``db``, suma todas las allocations persistidas del pago (fuente de verdad).
+    Excedente real del cobro: ``monto_total − suma(asignaciones)``, tomando también
+    el remanente devuelto por el motor FIFO cuando aún no está persistido en BD.
     """
-    del pool_remainder  # compatibilidad
     paid_total = _q_amt(payment.amount)
     if db is not None:
         applied = _payment_applied_total(db, payment)
@@ -1310,14 +1322,16 @@ def compute_payment_credit_excess(
         applied = sum((_q_amt(a.amount_applied) for a in created), Decimal("0"))
     else:
         applied = Decimal("0")
-    excess = (paid_total - applied).quantize(Decimal("0.01"))
+    ledger_excess = (paid_total - applied).quantize(Decimal("0.01"))
+    pool_left = _q_amt(pool_remainder) if pool_remainder is not None else Decimal("0")
+    excess = max(ledger_excess, pool_left)
     return excess if excess > _FP_EPS else Decimal("0")
 
 
 def add_payment_remainder_to_client_credit_balance(
     db: Session, payment: ClientPayment, remaining: Decimal | None
 ) -> None:
-    """Suma el excedente no aplicado a facturas como saldo a favor en la moneda del pago."""
+    """Suma el excedente no aplicado a CxC como saldo a favor en la moneda del pago."""
     if remaining is None or remaining <= _FP_EPS:
         return
     add = remaining.quantize(Decimal("0.01"))
@@ -1327,7 +1341,7 @@ def add_payment_remainder_to_client_credit_balance(
     if c is None:
         return
     cur = normalize_currency_code(str(payment.currency or "USD"))
-    add_client_credit_balance(db, c, cur, add)
+    _increment_client_credit_balance(db, c, cur, add)
 
 
 def apply_payment_to_sales_fifo(
@@ -2096,9 +2110,6 @@ def finalize_client_payment_approval(
             )
             created = created + extra
 
-    excess = compute_payment_credit_excess(payment, created, remainder, db=db)
-    add_payment_remainder_to_client_credit_balance(db, payment, excess)
-
     touched_sale_ids: set[int] = {int(a.sale_id) for a in created if a.sale_id is not None}
     if meta_sid is not None:
         touched_sale_ids.add(int(meta_sid))
@@ -2108,6 +2119,8 @@ def finalize_client_payment_approval(
     }
     if meta_wr_id is not None:
         touched_wr_ids.add(int(meta_wr_id))
+
+    db.flush()
 
     now = now_ecuador()
     payment.status = ClientPaymentStatus.approved
@@ -2134,6 +2147,8 @@ def finalize_client_payment_approval(
 
     client = db.get(Client, int(payment.client_id))
     if client is not None:
+        excess = compute_payment_credit_excess(payment, created, remainder, db=db)
+        add_payment_remainder_to_client_credit_balance(db, payment, excess)
         sync_client_credit_from_overpay(db, client)
         sweep_client_unallocated_funds_to_obligations_fifo(
             db,
@@ -2581,20 +2596,17 @@ def infer_client_payment_applied_to_ar(db: Session, payment: ClientPayment) -> D
     """
     Monto del cobro que reduce CxC.
 
-    Fuente de verdad: suma de ``PaymentAllocation``. Si el cobro BaaS tiene CxC anotado
-    en notas (``META_WR_CXC_APPLIED`` / ``PARTE_EFECTIVO``) y además allocations a facturas
-    (p. ej. cruce de saldo a favor), se suman ambos sin duplicar el tramo ya en filas.
+    Fuente de verdad: suma de ``PaymentAllocation``. Las notas (``PARTE_EFECTIVO``,
+    ``META_WR_CXC_APPLIED``) solo se usan cuando aún no hay filas de asignación.
     """
     applied_alloc = _payment_applied_total(db, payment)
     amt = _q_amt(payment.amount)
-    wr_inferred = _infer_ar_from_wallet_recharge_payment_notes(payment, amt)
-
-    if wr_inferred > _FP_EPS and applied_alloc > _FP_EPS:
-        return min(_q_amt(wr_inferred + applied_alloc), amt)
     if applied_alloc > _FP_EPS:
         return min(applied_alloc, amt)
+
+    wr_inferred = _infer_ar_from_wallet_recharge_payment_notes(payment, amt)
     if wr_inferred > _FP_EPS:
-        return wr_inferred
+        return min(wr_inferred, amt)
 
     if _is_initial_encapsulated_payment(payment):
         inferred = _infer_ar_from_linked_sale_notes(db, payment, amt)
