@@ -518,7 +518,7 @@ def register_retiro_webhook_wallet_recharge_abono(
     actualiza ``amount_paid`` / ``balance_pending`` y asiento DR banco / CR CxC.
     """
     from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
-    from app.services.client_payment_service import add_client_credit_balance, next_payment_number
+    from app.services.client_payment_service import next_payment_number
     from app.services.wallet_recharge_client_payment import (
         build_wallet_recharge_payment_notes,
         finalize_wallet_recharge_client_payment_on_approval,
@@ -595,10 +595,6 @@ def register_retiro_webhook_wallet_recharge_abono(
         req.status = REQ_STATUS_APPROVED
     else:
         req.status = REQ_STATUS_PARTIALLY_PAID
-
-    if surplus > _WR_EPS:
-        add_client_credit_balance(db, client, cur, Decimal(str(surplus)))
-        req.surplus_credited = float(getattr(req, "surplus_credited", 0) or 0) + surplus
 
     clear_wallet_recharge_retiro_instant_cxc(req)
 

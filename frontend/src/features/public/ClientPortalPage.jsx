@@ -5833,7 +5833,8 @@ function ClientPortalPageInner() {
                             Comprobante
                           </p>
                           <p className="mb-4 text-[13px] text-slate-200/90">
-                            Sube el comprobante de pago (JPG/PNG/PDF).
+                            Sube el comprobante de pago (JPG/PNG/PDF). Puedes declarar un importe mayor al saldo
+                            pendiente; el excedente quedará como saldo a favor tras la revisión.
                           </p>
                           <input
                             type="file"
@@ -6490,7 +6491,10 @@ function ClientPortalPageInner() {
                                     {formatMoney(totalAfterCredit, saleCurrency)} ).
                                   </>
                                 ) : (
-                                  <>Sube el comprobante de pago (JPG/PNG/PDF).</>
+                                  <>
+                                    Sube el comprobante de pago (JPG/PNG/PDF). Puedes declarar un importe mayor al
+                                    saldo pendiente; el excedente quedará como saldo a favor tras la revisión.
+                                  </>
                                 )}
                               </p>
                               <input

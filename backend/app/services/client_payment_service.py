@@ -2904,9 +2904,9 @@ def finalize_wallet_recharge_payment_approval(
     """
     Aprueba un comprobante BaaS (venta a crédito del saldo virtual):
 
-    - Registra el cobro en CxC (``amount_paid`` / ``balance_pending``).
+    - Registra el cobro en CxC (``amount_paid`` / ``balance_pending``) solo por lo aplicado.
     - Entrega el producto completo (``amount_requested``) a la billetera en el primer abono.
-    - Excedente de cobro → ``Client.credit_balance`` (saldo a favor).
+    - Excedente de cobro → remanente sin asignar en ``ClientPayment`` (saldo a favor vía ledger).
     - Devengo DR CxC / CR ingresos + cobro vía ``sync_client_payment_accounting_ledgers`` (igual que ventas).
     """
     from app.models.wallet_transaction import WalletTransaction
@@ -2947,10 +2947,6 @@ def finalize_wallet_recharge_payment_approval(
 
         add_client_wallet_balance(db, client, wr_cur, wallet_to_add)
 
-    if surplus > _WR_EPS:
-        add_client_credit_balance(db, client, wr_cur, Decimal(str(surplus)))
-        req.surplus_credited = float(getattr(req, "surplus_credited", 0) or 0) + surplus
-
     req.amount_paid = float(getattr(req, "amount_paid", 0) or 0) + applied
     pending_after = max(0.0, pending_before - applied)
     req.balance_pending = pending_after
@@ -2965,7 +2961,7 @@ def finalize_wallet_recharge_payment_approval(
         f" · saldo solicitud {pending_after:.2f}"
     )
     if surplus > _WR_EPS:
-        desc += f" · excedente a favor CxC +{surplus:.2f}"
+        desc += f" · excedente sin asignar (saldo a favor) +{surplus:.2f}"
 
     tx = WalletTransaction(
         user_id=None,
