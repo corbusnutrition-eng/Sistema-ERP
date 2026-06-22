@@ -13,6 +13,7 @@ from app.models.base import Base
 if TYPE_CHECKING:
     from app.models.client import Client
     from app.models.sale import Sale
+    from app.models.wallet_recharge_request import WalletRechargeRequest
 
 
 class ClientPaymentStatus(str, enum.Enum):
@@ -59,7 +60,7 @@ class ClientPayment(Base):
 
 
 class PaymentAllocation(Base):
-    """Vincula un pago a una o más facturas con el monto aplicado."""
+    """Vincula un pago a una o más obligaciones CxC (venta o recarga BaaS)."""
 
     __tablename__ = "payment_allocations"
 
@@ -67,8 +68,19 @@ class PaymentAllocation(Base):
     payment_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("client_payments.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    sale_id: Mapped[int] = mapped_column(Integer, ForeignKey("sales.id", ondelete="CASCADE"), nullable=False, index=True)
+    sale_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("sales.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    wallet_recharge_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("wallet_recharge_requests.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     amount_applied: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
 
     payment: Mapped["ClientPayment"] = relationship("ClientPayment", back_populates="allocations")
-    sale: Mapped["Sale"] = relationship("Sale", lazy="select")
+    sale: Mapped[Optional["Sale"]] = relationship("Sale", lazy="select")
+    wallet_recharge: Mapped[Optional["WalletRechargeRequest"]] = relationship(
+        "WalletRechargeRequest", lazy="select"
+    )

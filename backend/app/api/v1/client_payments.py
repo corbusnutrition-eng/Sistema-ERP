@@ -112,7 +112,14 @@ def _allocations_to_dicts(rows: list) -> list[dict]:
             d = row
         else:
             continue
-        out.append({"sale_id": d.get("sale_id"), "applied_amount": d.get("applied_amount", d.get("amount_applied"))})
+        entry: dict = {
+            "applied_amount": d.get("applied_amount", d.get("amount_applied")),
+        }
+        if d.get("wallet_recharge_id") is not None:
+            entry["wallet_recharge_id"] = d.get("wallet_recharge_id")
+        if d.get("sale_id") is not None:
+            entry["sale_id"] = d.get("sale_id")
+        out.append(entry)
     return out
 
 
@@ -417,14 +424,19 @@ def approve_payment(
     if body and body.allocations is not None:
         alloc_rows = _allocations_to_dicts(body.allocations)
     elif existing_allocs:
-        alloc_rows = [{"sale_id": int(a.sale_id)} for a in existing_allocs]
+        alloc_rows = []
+        for a in existing_allocs:
+            if a.wallet_recharge_id is not None:
+                alloc_rows.append({"wallet_recharge_id": int(a.wallet_recharge_id)})
+            elif a.sale_id is not None:
+                alloc_rows.append({"sale_id": int(a.sale_id)})
 
     try:
         finalize_client_payment_approval(
             db,
             p,
             manual_rows=alloc_rows,
-            fifo_fallback=not bool(alloc_rows),
+            fifo_fallback=True,
             strict_accounting=True,
         )
     except HTTPException:

@@ -23,6 +23,7 @@ from app.wallet_recharge_helpers import (
 )
 
 _FP_EPS = Decimal("0.00005")
+_WR_EPS = 1e-6
 _CREDIT_BALANCES_CF_KEY = "credit_balance_by_currency"
 
 
@@ -210,6 +211,7 @@ def add_client_credit_balance(
     balances[cur] = (prev + add).quantize(Decimal("0.01"))
     _persist_client_credit_balances_map(client, balances)
     db.flush()
+    sweep_client_unallocated_funds_to_obligations_fifo(db, client, currency=cur)
 
 
 def subtract_client_credit_balance(
@@ -258,6 +260,155 @@ def _pending_review_alloc_sum_for_sale(
         return Decimal(str(agg or 0)).quantize(Decimal("0.0001"))
     except Exception:
         return Decimal("0")
+
+
+def _approved_alloc_sum_for_wallet_recharge(
+    db: Session,
+    wallet_recharge_id: int,
+    *,
+    exclude_payment_id: Optional[int] = None,
+) -> Decimal:
+    """Suma cobros aprobados aplicados a una recarga BaaS."""
+    q = (
+        db.query(func.coalesce(func.sum(PaymentAllocation.amount_applied), 0))
+        .join(ClientPayment, PaymentAllocation.payment_id == ClientPayment.id)
+        .filter(
+            PaymentAllocation.wallet_recharge_id == int(wallet_recharge_id),
+            ClientPayment.status == ClientPaymentStatus.approved,
+        )
+    )
+    if exclude_payment_id is not None:
+        q = q.filter(ClientPayment.id != int(exclude_payment_id))
+    agg = q.scalar()
+    try:
+        return Decimal(str(agg or 0)).quantize(Decimal("0.0001"))
+    except Exception:
+        return Decimal("0")
+
+
+def _pending_review_alloc_sum_for_wallet_recharge(
+    db: Session,
+    wallet_recharge_id: int,
+    *,
+    exclude_payment_id: Optional[int] = None,
+) -> Decimal:
+    """Suma allocations en revisión hacia una recarga BaaS."""
+    q = (
+        db.query(func.coalesce(func.sum(PaymentAllocation.amount_applied), 0))
+        .join(ClientPayment, PaymentAllocation.payment_id == ClientPayment.id)
+        .filter(
+            PaymentAllocation.wallet_recharge_id == int(wallet_recharge_id),
+            ClientPayment.status == ClientPaymentStatus.pending_review,
+        )
+    )
+    if exclude_payment_id is not None:
+        q = q.filter(ClientPayment.id != int(exclude_payment_id))
+    agg = q.scalar()
+    try:
+        return Decimal(str(agg or 0)).quantize(Decimal("0.0001"))
+    except Exception:
+        return Decimal("0")
+
+
+def _load_client_wallet_recharge_for_payment(
+    db: Session,
+    payment: ClientPayment,
+    wallet_recharge_id: int,
+) -> Optional[WalletRechargeRequest]:
+    req = db.get(WalletRechargeRequest, int(wallet_recharge_id))
+    if req is None or int(req.client_id) != int(payment.client_id):
+        return None
+    return req
+
+
+def _effective_open_balance_for_wallet_recharge_apply(
+    db: Session,
+    req: WalletRechargeRequest,
+    payment: Optional[ClientPayment],
+    session_allocated_wr: Optional[dict[int, Decimal]] = None,
+) -> Decimal:
+    """Saldo CxC vivo de recarga BaaS al aplicar un cobro."""
+    from app.wallet_recharge_helpers import wallet_recharge_open_balance
+
+    product_total = Decimal(str(getattr(req, "amount_requested", 0) or 0)).quantize(Decimal("0.0001"))
+    if product_total <= _FP_EPS:
+        bp = Decimal(str(wallet_recharge_open_balance(req))).quantize(Decimal("0.0001"))
+    else:
+        excl = int(payment.id) if payment is not None else None
+        approved = _approved_alloc_sum_for_wallet_recharge(db, int(req.id), exclude_payment_id=excl)
+        pending = _pending_review_alloc_sum_for_wallet_recharge(db, int(req.id), exclude_payment_id=excl)
+        bp = max(Decimal("0"), (product_total - approved - pending).quantize(Decimal("0.0001")))
+        legacy_bp = Decimal(str(wallet_recharge_open_balance(req))).quantize(Decimal("0.0001"))
+        if legacy_bp > _FP_EPS:
+            bp = min(bp, legacy_bp) if bp > _FP_EPS else legacy_bp
+    if session_allocated_wr:
+        consumed = _q_amt(session_allocated_wr.get(int(req.id), Decimal("0")))
+        bp = max(Decimal("0"), _q_amt(bp - consumed))
+    return bp
+
+
+def sync_wallet_recharge_amount_paid_from_allocations(
+    db: Session,
+    req: WalletRechargeRequest,
+) -> None:
+    """Alinea ``amount_paid`` / ``balance_pending`` con allocations CxC."""
+    from app.wallet_recharge_helpers import (
+        REQ_STATUS_APPROVED,
+        REQ_STATUS_PARTIALLY_PAID,
+        clear_wallet_recharge_retiro_instant_cxc,
+        wallet_recharge_open_balance,
+    )
+
+    approved = _approved_alloc_sum_for_wallet_recharge(db, int(req.id))
+    pending = _pending_review_alloc_sum_for_wallet_recharge(db, int(req.id))
+    paid = (approved + pending).quantize(Decimal("0.0001"))
+    product_total = Decimal(str(getattr(req, "amount_requested", 0) or 0)).quantize(Decimal("0.0001"))
+    if product_total <= _FP_EPS:
+        product_total = Decimal(str(wallet_recharge_open_balance(req) + float(paid))).quantize(
+            Decimal("0.0001")
+        )
+    req.amount_paid = float(paid)
+    open_bal = max(Decimal("0"), product_total - paid).quantize(Decimal("0.0001"))
+    req.balance_pending = float(open_bal)
+    if open_bal <= _FP_EPS:
+        req.balance_pending = 0.0
+        req.status = REQ_STATUS_APPROVED
+        clear_wallet_recharge_retiro_instant_cxc(req)
+    elif paid > _FP_EPS:
+        req.status = REQ_STATUS_PARTIALLY_PAID
+
+
+def refresh_wallet_recharge_after_payment(db: Session, req: WalletRechargeRequest) -> None:
+    """Actualiza saldos CxC de recarga BaaS tras aplicar cobros."""
+    sync_wallet_recharge_amount_paid_from_allocations(db, req)
+
+
+def _apply_amount_to_wallet_recharge(
+    db: Session,
+    req: WalletRechargeRequest,
+    payment: ClientPayment,
+    apply: Decimal,
+) -> None:
+    """Reduce CxC de recarga BaaS sin tocar billetera virtual."""
+    from app.wallet_recharge_helpers import (
+        REQ_STATUS_APPROVED,
+        REQ_STATUS_PARTIALLY_PAID,
+        clear_wallet_recharge_retiro_instant_cxc,
+        wallet_recharge_open_balance,
+    )
+
+    applied_f = float(_q_amt(apply))
+    pending_before = wallet_recharge_open_balance(req)
+    actual = min(applied_f, pending_before) if pending_before > _WR_EPS else applied_f
+    req.amount_paid = float(getattr(req, "amount_paid", 0) or 0) + actual
+    req.balance_pending = max(0.0, pending_before - actual)
+    if req.balance_pending <= _WR_EPS:
+        req.balance_pending = 0.0
+        req.status = REQ_STATUS_APPROVED
+        clear_wallet_recharge_retiro_instant_cxc(req)
+    else:
+        req.status = REQ_STATUS_PARTIALLY_PAID
+    db.flush()
 
 
 def _approved_alloc_sum_for_sale(
@@ -417,6 +568,26 @@ def cap_allocation_for_sale(
     if req <= _FP_EPS:
         return Decimal("0")
     return min(req, balance)
+
+
+def cap_allocation_for_wallet_recharge(
+    db: Session,
+    payment: ClientPayment,
+    req: WalletRechargeRequest,
+    requested: Decimal | float | str,
+    *,
+    session_allocated_wr: Optional[dict[int, Decimal]] = None,
+) -> Decimal:
+    """Tope seguro antes de crear ``PaymentAllocation`` hacia recarga BaaS."""
+    balance = _effective_open_balance_for_wallet_recharge_apply(
+        db, req, payment, session_allocated_wr
+    )
+    if balance <= _FP_EPS:
+        return Decimal("0")
+    req_amt = _q_amt(requested)
+    if req_amt <= _FP_EPS:
+        return Decimal("0")
+    return min(req_amt, balance)
 
 
 def _payment_unallocated_balance(db: Session, payment: ClientPayment) -> Decimal:
@@ -694,6 +865,363 @@ def _allocation_amount(row: dict) -> Decimal:
     return _q_amt(raw or 0)
 
 
+def _apply_allocation_slice_to_obligation(
+    db: Session,
+    payment: ClientPayment,
+    *,
+    sale: Optional[Sale] = None,
+    wallet_recharge: Optional[WalletRechargeRequest] = None,
+    amount: Decimal,
+    session_allocated: Optional[dict[int, Decimal]] = None,
+    session_allocated_wr: Optional[dict[int, Decimal]] = None,
+) -> Optional[PaymentAllocation]:
+    """Crea una ``PaymentAllocation`` polimórfica hacia venta o recarga BaaS."""
+    cur = normalize_currency_code(str(payment.currency or "USD"))
+    now_iso = isoformat_z(now_ecuador())
+
+    if sale is not None:
+        cap = cap_allocation_for_sale(
+            db, payment, sale, amount, session_allocated=session_allocated
+        )
+        if cap <= _FP_EPS:
+            return None
+        _apply_amount_to_sale(db, sale, payment, cap, cur, now_iso)
+        alloc = PaymentAllocation(
+            payment_id=int(payment.id),
+            sale_id=int(sale.id),
+            amount_applied=cap,
+        )
+        db.add(alloc)
+        if session_allocated is not None:
+            sid = int(sale.id)
+            session_allocated[sid] = _q_amt(session_allocated.get(sid, Decimal("0")) + cap)
+        return alloc
+
+    if wallet_recharge is not None:
+        cap = cap_allocation_for_wallet_recharge(
+            db,
+            payment,
+            wallet_recharge,
+            amount,
+            session_allocated_wr=session_allocated_wr,
+        )
+        if cap <= _FP_EPS:
+            return None
+        _apply_amount_to_wallet_recharge(db, wallet_recharge, payment, cap)
+        alloc = PaymentAllocation(
+            payment_id=int(payment.id),
+            wallet_recharge_id=int(wallet_recharge.id),
+            amount_applied=cap,
+        )
+        db.add(alloc)
+        if session_allocated_wr is not None:
+            rid = int(wallet_recharge.id)
+            session_allocated_wr[rid] = _q_amt(session_allocated_wr.get(rid, Decimal("0")) + cap)
+        return alloc
+
+    return None
+
+
+def _resolve_obligation_entity(
+    db: Session,
+    client_id: int,
+    obl: dict,
+) -> tuple[Optional[Sale], Optional[WalletRechargeRequest]]:
+    kind = str(obl.get("obligation_kind") or "")
+    if kind == "wallet_recharge":
+        wr_id = int(obl.get("wallet_recharge_id") or 0)
+        if wr_id < 1:
+            return None, None
+        req = db.get(WalletRechargeRequest, int(wr_id))
+        if req is None or int(req.client_id) != int(client_id):
+            return None, None
+        return None, req
+    sid = int(obl.get("sale_id") or 0)
+    if sid < 1:
+        return None, None
+    sale = (
+        db.query(Sale)
+        .options(joinedload(Sale.product), joinedload(Sale.screen_stock_row))
+        .filter(Sale.id == int(sid), Sale.client_id == int(client_id))
+        .first()
+    )
+    return sale, None
+
+
+def _refresh_obligations_after_allocations(
+    db: Session,
+    *,
+    sale_ids: set[int],
+    wallet_recharge_ids: set[int],
+    strict_accounting: bool = False,
+) -> None:
+    """Sincroniza saldos CxC y devengos tras asignaciones."""
+    from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
+    from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
+
+    touched_payments: set[int] = set()
+    for sid in sale_ids:
+        sale = db.get(Sale, int(sid))
+        if sale is None:
+            continue
+        sync_sale_amount_paid_from_allocations(db, sale)
+        refresh_sale_status_after_payment(db, sale)
+    for wr_id in wallet_recharge_ids:
+        wr = db.get(WalletRechargeRequest, int(wr_id))
+        if wr is None:
+            continue
+        ensure_wallet_recharge_accrual_journal(db, wr, strict=strict_accounting)
+        refresh_wallet_recharge_after_payment(db, wr)
+    db.flush()
+
+
+def allocate_client_payment_fifo_cross_module(
+    db: Session,
+    payment: ClientPayment,
+    *,
+    pool: Optional[Decimal] = None,
+    priority_targets: Optional[list[dict]] = None,
+    fifo_cross_module: bool = True,
+    session_allocated: Optional[dict[int, Decimal]] = None,
+    session_allocated_wr: Optional[dict[int, Decimal]] = None,
+    skip_sale_ids: Optional[set[int]] = None,
+    skip_wallet_recharge_ids: Optional[set[int]] = None,
+) -> tuple[list[PaymentAllocation], Decimal]:
+    """
+    Función maestra de asignación CxC cruzada (ventas + recargas BaaS).
+
+    1. Consulta ``list_client_ar_open_obligations`` (FIFO cronológico estricto).
+    2. Si hay ``priority_targets`` (comprobante / webhook), aplica primero ahí.
+    3. Con excedente, liquida deudas más antiguas sin importar módulo de origen.
+    4. Ventas → ``PaymentAllocation(sale_id=...)``; BaaS → ``PaymentAllocation(wallet_recharge_id=...)``.
+    5. Devuelve allocations creadas y remanente (saldo a favor flotante en el cobro).
+    """
+    created: list[PaymentAllocation] = []
+    cur = normalize_currency_code(str(payment.currency or "USD"))
+    pool_amt = _q_amt(pool if pool is not None else payment.amount)
+    in_session: dict[int, Decimal] = dict(session_allocated or {})
+    in_session_wr: dict[int, Decimal] = dict(session_allocated_wr or {})
+    skip_ids: set[int] = set(skip_sale_ids or ())
+    skip_wr_ids: set[int] = set(skip_wallet_recharge_ids or ())
+    touched_sale_ids: set[int] = set()
+    touched_wr_ids: set[int] = set()
+
+    def _track_alloc(alloc: Optional[PaymentAllocation]) -> bool:
+        if alloc is None:
+            return False
+        created.append(alloc)
+        if alloc.sale_id is not None:
+            touched_sale_ids.add(int(alloc.sale_id))
+        if alloc.wallet_recharge_id is not None:
+            touched_wr_ids.add(int(alloc.wallet_recharge_id))
+        return True
+
+    def _apply_to_row(row: dict, cap: Decimal) -> Decimal:
+        nonlocal pool_amt
+        if pool_amt <= _FP_EPS or cap <= _FP_EPS:
+            return Decimal("0")
+        wr_id = int(row.get("wallet_recharge_id") or 0)
+        sid = int(row.get("sale_id") or 0)
+        sale: Optional[Sale] = None
+        req: Optional[WalletRechargeRequest] = None
+        if wr_id >= 1:
+            if wr_id in skip_wr_ids or wr_id in touched_wr_ids:
+                return Decimal("0")
+            req = _load_client_wallet_recharge_for_payment(db, payment, wr_id)
+            if req is None:
+                return Decimal("0")
+            wr_cur = normalize_currency_code(str(getattr(req, "recharge_currency", None) or "USD"))
+            if wr_cur != cur:
+                return Decimal("0")
+        elif sid >= 1:
+            if sid in skip_ids or sid in touched_sale_ids:
+                return Decimal("0")
+            sale = _load_client_sale_for_payment(db, payment, sid)
+            if sale is None:
+                return Decimal("0")
+            if normalize_currency_code(str(sale.currency or "USD")) != cur:
+                return Decimal("0")
+        else:
+            return Decimal("0")
+
+        slice_cap = min(_q_amt(cap), pool_amt)
+        alloc = _apply_allocation_slice_to_obligation(
+            db,
+            payment,
+            sale=sale,
+            wallet_recharge=req,
+            amount=slice_cap,
+            session_allocated=in_session,
+            session_allocated_wr=in_session_wr,
+        )
+        if not _track_alloc(alloc):
+            return Decimal("0")
+        applied = _q_amt(alloc.amount_applied)
+        pool_amt = _q_amt(pool_amt - applied)
+        return applied
+
+    rows = list(priority_targets or [])
+    explicit_total = sum(_allocation_amount(r) for r in rows) if rows else Decimal("0")
+    multi_target = len(rows) > 1
+    intentional_split = (
+        multi_target
+        and explicit_total > _FP_EPS
+        and explicit_total <= pool_amt + _FP_EPS
+    )
+    for row in rows:
+        if pool_amt <= _FP_EPS:
+            break
+        row_amt = _allocation_amount(row)
+        if intentional_split and row_amt > _FP_EPS:
+            cap = min(_q_amt(row_amt), pool_amt)
+        else:
+            cap = pool_amt
+        _apply_to_row(row, cap)
+
+    if fifo_cross_module and pool_amt > _FP_EPS:
+        for obl in list_client_ar_open_obligations(db, payment.client_id, currency=cur):
+            if pool_amt <= _FP_EPS:
+                break
+            kind = str(obl.get("obligation_kind") or "")
+            if kind == "wallet_recharge":
+                wr_id = int(obl.get("wallet_recharge_id") or 0)
+                if wr_id in touched_wr_ids or wr_id in skip_wr_ids:
+                    continue
+                row = {"wallet_recharge_id": wr_id}
+            else:
+                sid = int(obl.get("sale_id") or 0)
+                if sid in touched_sale_ids or sid in skip_ids:
+                    continue
+                row = {"sale_id": sid}
+            _apply_to_row(row, pool_amt)
+
+    if created:
+        db.flush()
+    return created, pool_amt
+
+
+def sweep_client_unallocated_funds_to_obligations_fifo(
+    db: Session,
+    client: Client,
+    *,
+    currency: Optional[str] = None,
+    strict_accounting: bool = False,
+) -> list[PaymentAllocation]:
+    """
+    Cruza automáticamente saldo a favor (remanentes de cobros aprobados) contra
+    deudas CxC abiertas del cliente en orden FIFO cronológico estricto.
+
+    Se dispara tras aprobar un cobro o cuando hay fondos disponibles sin asignar.
+    """
+    cid = int(client.id)
+    cur_filter = normalize_currency_code(currency) if currency else None
+    currencies: set[str] = set()
+    if cur_filter:
+        currencies.add(cur_filter)
+    else:
+        approved_pays = (
+            db.query(ClientPayment)
+            .filter(
+                ClientPayment.client_id == cid,
+                ClientPayment.status == ClientPaymentStatus.approved,
+            )
+            .all()
+        )
+        for pay in approved_pays:
+            if _payment_unallocated_balance(db, pay) > _FP_EPS:
+                currencies.add(normalize_currency_code(str(pay.currency or "USD")))
+        for obl in list_client_ar_open_obligations(db, cid):
+            currencies.add(normalize_currency_code(str(obl.get("currency") or "USD")))
+
+    created_all: list[PaymentAllocation] = []
+    touched_sale_ids: set[int] = set()
+    touched_wr_ids: set[int] = set()
+    touched_payment_ids: set[int] = set()
+
+    for cur in sorted(currencies):
+        obligations = list_client_ar_open_obligations(db, cid, currency=cur)
+        if not obligations:
+            continue
+
+        session_allocated: dict[int, Decimal] = {}
+        session_allocated_wr: dict[int, Decimal] = {}
+
+        for obl in obligations:
+            sale, req = _resolve_obligation_entity(db, cid, obl)
+            if sale is None and req is None:
+                continue
+
+            while True:
+                if sale is not None:
+                    open_bal = _effective_open_balance_for_apply(
+                        db, sale, None, session_allocated
+                    )
+                else:
+                    assert req is not None
+                    open_bal = _effective_open_balance_for_wallet_recharge_apply(
+                        db, req, None, session_allocated_wr
+                    )
+                if open_bal <= _FP_EPS:
+                    break
+
+                sources = list_client_payments_with_unallocated_balance(db, cid, cur)
+                if not sources:
+                    break
+
+                source_pay, _hint = sources[0]
+                avail = _payment_unallocated_balance(db, source_pay)
+                if avail <= _FP_EPS:
+                    break
+
+                apply_amt = min(avail, open_bal)
+                alloc = _apply_allocation_slice_to_obligation(
+                    db,
+                    source_pay,
+                    sale=sale,
+                    wallet_recharge=req,
+                    amount=apply_amt,
+                    session_allocated=session_allocated,
+                    session_allocated_wr=session_allocated_wr,
+                )
+                if alloc is None:
+                    break
+
+                created_all.append(alloc)
+                touched_payment_ids.add(int(source_pay.id))
+                if alloc.sale_id is not None:
+                    touched_sale_ids.add(int(alloc.sale_id))
+                if alloc.wallet_recharge_id is not None:
+                    touched_wr_ids.add(int(alloc.wallet_recharge_id))
+
+        if created_all:
+            db.flush()
+
+    if not created_all:
+        return []
+
+    _refresh_obligations_after_allocations(
+        db,
+        sale_ids=touched_sale_ids,
+        wallet_recharge_ids=touched_wr_ids,
+        strict_accounting=strict_accounting,
+    )
+
+    from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
+
+    for pid in sorted(touched_payment_ids):
+        pay = db.get(ClientPayment, int(pid))
+        if pay is not None:
+            try:
+                sync_client_payment_accounting_ledgers(db, pay, strict=strict_accounting)
+            except Exception:
+                if strict_accounting:
+                    raise
+
+    sync_client_credit_from_overpay(db, client)
+    db.flush()
+    return created_all
+
+
 def apply_payment_allocations(
     db: Session,
     payment: ClientPayment,
@@ -702,94 +1230,22 @@ def apply_payment_allocations(
     fifo_fallback: bool = True,
     initial_pool: Optional[Decimal] = None,
     session_allocated: Optional[dict[int, Decimal]] = None,
+    session_allocated_wr: Optional[dict[int, Decimal]] = None,
     skip_sale_ids: Optional[set[int]] = None,
+    skip_wallet_recharge_ids: Optional[set[int]] = None,
 ) -> tuple[list[PaymentAllocation], Decimal]:
-    """
-    Distribución en cascada (waterfall) del pago del cliente.
-
-    1. Aplica primero a las factura(s) indicadas en ``allocations`` (referencia del comprobante).
-    2. Con el excedente, liquida otras facturas pendientes del mismo cliente (FIFO, misma moneda).
-    3. Devuelve el remanente no aplicado (para ``credit_balance`` del cliente).
-
-    ``session_allocated`` / ``skip_sale_ids`` evitan doble asignación cuando ya existen
-    allocations en revisión confirmadas al aprobar el cobro.
-    """
-    created: list[PaymentAllocation] = []
-    now_iso = isoformat_z(now_ecuador())
-    cur = normalize_currency_code(str(payment.currency or "USD"))
-    pool = _q_amt(initial_pool if initial_pool is not None else payment.amount)
-    rows = list(allocations or [])
-    in_session: dict[int, Decimal] = dict(session_allocated or {})
-    skip_ids: set[int] = set(skip_sale_ids or ())
-    touched_sale_ids: set[int] = set()
-
-    def _apply_slice(sale: Sale, cap: Decimal) -> Decimal:
-        nonlocal pool
-        sid = int(sale.id)
-        if sid in skip_ids or sid in touched_sale_ids:
-            return Decimal("0")
-        if pool <= _FP_EPS or cap <= _FP_EPS:
-            return Decimal("0")
-        if normalize_currency_code(str(sale.currency or "USD")) != cur:
-            return Decimal("0")
-        balance = _effective_open_balance_for_apply(db, sale, payment, in_session)
-        if balance <= _FP_EPS:
-            return Decimal("0")
-        apply = min(_q_amt(cap), _q_amt(balance), pool)
-        if apply <= _FP_EPS:
-            return Decimal("0")
-        _apply_amount_to_sale(db, sale, payment, apply, cur, now_iso)
-        alloc = PaymentAllocation(payment_id=payment.id, sale_id=sid, amount_applied=apply)
-        db.add(alloc)
-        created.append(alloc)
-        in_session[sid] = _q_amt(in_session.get(sid, Decimal("0")) + apply)
-        touched_sale_ids.add(sid)
-        pool = _q_amt(pool - apply)
-        return apply
-
-    # Fase 1 — factura(s) objetivo del pago (comprobante / selección admin).
-    explicit_total = sum(_allocation_amount(r) for r in rows) if rows else Decimal("0")
-    multi_target = len(rows) > 1
-    intentional_split = (
-        multi_target
-        and explicit_total > _FP_EPS
-        and explicit_total <= pool + _FP_EPS
+    """Delega en ``allocate_client_payment_fifo_cross_module`` (compatibilidad)."""
+    return allocate_client_payment_fifo_cross_module(
+        db,
+        payment,
+        pool=initial_pool,
+        priority_targets=allocations,
+        fifo_cross_module=fifo_fallback,
+        session_allocated=session_allocated,
+        session_allocated_wr=session_allocated_wr,
+        skip_sale_ids=skip_sale_ids,
+        skip_wallet_recharge_ids=skip_wallet_recharge_ids,
     )
-    if rows:
-        for row in rows:
-            sid = int(row.get("sale_id") or 0)
-            if sid < 1 or pool <= _FP_EPS:
-                continue
-            sale = _load_client_sale_for_payment(db, payment, sid)
-            if sale is None:
-                continue
-            if normalize_currency_code(str(sale.currency or "USD")) != cur:
-                continue
-            row_amt = _allocation_amount(row)
-            if intentional_split and row_amt > _FP_EPS:
-                cap = min(_q_amt(row_amt), pool)
-            else:
-                cap = pool
-            _apply_slice(sale, cap)
-    elif fifo_fallback:
-        pass
-
-    # Fase 2 — excedente a otras facturas pendientes (FIFO); omite las ya cubiertas.
-    run_waterfall = pool > _FP_EPS and (bool(rows) or fifo_fallback)
-    if run_waterfall:
-        for inv in list_unpaid_invoices(db, payment.client_id, currency=cur, payment=payment):
-            if pool <= _FP_EPS:
-                break
-            sid = int(inv["sale_id"])
-            if sid in touched_sale_ids or sid in skip_ids:
-                continue
-            sale = _load_client_sale_for_payment(db, payment, sid)
-            if sale is None:
-                continue
-            _apply_slice(sale, pool)
-
-    remainder = pool
-    return created, remainder
 
 
 def compute_payment_credit_excess(
@@ -1386,13 +1842,13 @@ def resolve_client_payment_deposit_account_id(db: Session, payment: ClientPaymen
 def _confirm_existing_payment_allocations(
     db: Session,
     payment: ClientPayment,
-) -> tuple[list[PaymentAllocation], Decimal, dict[int, Decimal]]:
+) -> tuple[list[PaymentAllocation], Decimal, dict[int, Decimal], dict[int, Decimal]]:
     """
     Confirma allocations ``pending_review`` ya persistidas al aprobar un cobro.
 
-    - Capa cada fila al saldo CxC real de la factura (si ya debe $0, no asigna).
-    - Consolida duplicados por factura en una sola fila.
-    - Devuelve allocations válidas, pool restante y mapa de lo ya aplicado en sesión.
+    - Capa cada fila al saldo CxC real (venta o recarga BaaS).
+    - Consolida duplicados por obligación en una sola fila.
+    - Devuelve allocations válidas, pool restante y mapas de lo ya aplicado en sesión.
     """
     existing = (
         db.query(PaymentAllocation)
@@ -1403,10 +1859,17 @@ def _confirm_existing_payment_allocations(
     pool = _q_amt(payment.amount)
     confirmed: list[PaymentAllocation] = []
     session_allocated: dict[int, Decimal] = {}
+    session_allocated_wr: dict[int, Decimal] = {}
 
     by_sale: dict[int, list[PaymentAllocation]] = {}
+    by_wr: dict[int, list[PaymentAllocation]] = {}
     for alloc in existing:
-        by_sale.setdefault(int(alloc.sale_id), []).append(alloc)
+        if alloc.wallet_recharge_id is not None:
+            by_wr.setdefault(int(alloc.wallet_recharge_id), []).append(alloc)
+        elif alloc.sale_id is not None:
+            by_sale.setdefault(int(alloc.sale_id), []).append(alloc)
+        else:
+            db.delete(alloc)
 
     for sale_id, allocs in sorted(by_sale.items(), key=lambda x: x[0]):
         if pool <= _FP_EPS:
@@ -1446,8 +1909,48 @@ def _confirm_existing_payment_allocations(
         session_allocated[sale_id] = _q_amt(session_allocated.get(sale_id, Decimal("0")) + cap)
         pool = _q_amt(pool - cap)
 
+    for wr_id, allocs in sorted(by_wr.items(), key=lambda x: x[0]):
+        if pool <= _FP_EPS:
+            for stale in allocs:
+                db.delete(stale)
+            continue
+
+        req = _load_client_wallet_recharge_for_payment(db, payment, wr_id)
+        if req is None:
+            for stale in allocs:
+                db.delete(stale)
+            continue
+
+        if len(allocs) > 1:
+            merged_amt = sum((_q_amt(a.amount_applied) for a in allocs), Decimal("0"))
+            keep = allocs[0]
+            keep.amount_applied = merged_amt
+            for dup in allocs[1:]:
+                db.delete(dup)
+            allocs = [keep]
+
+        alloc = allocs[0]
+        balance = _effective_open_balance_for_wallet_recharge_apply(
+            db, req, payment, session_allocated_wr
+        )
+        if balance <= _FP_EPS:
+            db.delete(alloc)
+            continue
+
+        cap = min(_q_amt(alloc.amount_applied), balance, pool)
+        if cap <= _FP_EPS:
+            db.delete(alloc)
+            continue
+
+        if cap != _q_amt(alloc.amount_applied):
+            alloc.amount_applied = cap
+
+        confirmed.append(alloc)
+        session_allocated_wr[wr_id] = _q_amt(session_allocated_wr.get(wr_id, Decimal("0")) + cap)
+        pool = _q_amt(pool - cap)
+
     db.flush()
-    return confirmed, pool, session_allocated
+    return confirmed, pool, session_allocated, session_allocated_wr
 
 
 def finalize_client_payment_approval(
@@ -1462,9 +1965,8 @@ def finalize_client_payment_approval(
     Aprueba un ``ClientPayment`` en revisión dentro de la sesión actual (sin ``commit``):
 
     1. Confirma allocations en revisión existentes (sin duplicar).
-    2. Reparte el remanente del importe (waterfall CxC) si queda pool.
-    3. Abona el remanente a ``Client.credit_balance``.
-    4. Marca el pago como aprobado y registra DR banco / CR CxC por el total cobrado.
+    2. Asignación FIFO cruzada (ventas + BaaS) vía ``allocate_client_payment_fifo_cross_module``.
+    3. Marca aprobado, sincroniza contabilidad y cruza saldo a favor remanente contra deudas.
     """
     if payment.status != ClientPaymentStatus.pending_review:
         raise ValueError(f"El pago {payment.payment_number} no está en revisión.")
@@ -1475,15 +1977,17 @@ def finalize_client_payment_approval(
     if resolved_dep is not None and payment.deposit_account_id is None:
         payment.deposit_account_id = int(resolved_dep)
 
-    confirmed, pool, session_allocated = _confirm_existing_payment_allocations(db, payment)
+    confirmed, pool, session_allocated, session_allocated_wr = _confirm_existing_payment_allocations(
+        db, payment
+    )
     skip_sale_ids = set(session_allocated.keys())
+    skip_wr_ids = set(session_allocated_wr.keys())
     rows = list(manual_rows or [])
 
     new_created: list[PaymentAllocation] = []
     remainder = pool
 
     if confirmed:
-        # Ya hay asignaciones en revisión: sólo waterfall del excedente, sin recrear filas.
         if pool > _FP_EPS:
             new_created, remainder = apply_payment_allocations(
                 db,
@@ -1492,31 +1996,58 @@ def finalize_client_payment_approval(
                 fifo_fallback=True,
                 initial_pool=pool,
                 session_allocated=session_allocated,
+                session_allocated_wr=session_allocated_wr,
                 skip_sale_ids=skip_sale_ids,
+                skip_wallet_recharge_ids=skip_wr_ids,
             )
         created = confirmed + new_created
     else:
-        created, remainder = apply_payment_allocations(
+        created, remainder = allocate_client_payment_fifo_cross_module(
             db,
             payment,
-            rows,
-            fifo_fallback=fifo_fallback if rows else True,
+            priority_targets=rows or None,
+            fifo_cross_module=True,
+            session_allocated=session_allocated,
+            session_allocated_wr=session_allocated_wr,
+            skip_sale_ids=skip_sale_ids,
+            skip_wallet_recharge_ids=skip_wr_ids,
         )
 
     meta_sid = parse_notes_meta_sale_id(payment.notes)
-    if meta_sid is not None and not created:
+    if meta_sid is not None and not any(a.sale_id for a in created):
         linked_sale = db.get(Sale, int(meta_sid))
         if linked_sale is not None and int(linked_sale.client_id) == int(payment.client_id):
             created, remainder = _reconcile_initial_payment_allocations(
                 db, payment, linked_sale, created, remainder
             )
 
+    from app.services.wallet_recharge_client_payment import parse_notes_meta_wallet_recharge_id
+
+    meta_wr_id = parse_notes_meta_wallet_recharge_id(payment.notes)
+    if meta_wr_id is not None and not any(a.wallet_recharge_id for a in created):
+        linked_wr = db.get(WalletRechargeRequest, int(meta_wr_id))
+        if linked_wr is not None and int(linked_wr.client_id) == int(payment.client_id):
+            extra, remainder = allocate_client_payment_fifo_cross_module(
+                db,
+                payment,
+                pool=remainder if confirmed else None,
+                priority_targets=[{"wallet_recharge_id": int(meta_wr_id)}],
+                fifo_cross_module=True,
+            )
+            created = created + extra
+
     excess = compute_payment_credit_excess(payment, created, remainder, db=db)
     add_payment_remainder_to_client_credit_balance(db, payment, excess)
 
-    touched_sale_ids: set[int] = {int(a.sale_id) for a in created}
+    touched_sale_ids: set[int] = {int(a.sale_id) for a in created if a.sale_id is not None}
     if meta_sid is not None:
         touched_sale_ids.add(int(meta_sid))
+
+    touched_wr_ids: set[int] = {
+        int(a.wallet_recharge_id) for a in created if a.wallet_recharge_id is not None
+    }
+    if meta_wr_id is not None:
+        touched_wr_ids.add(int(meta_wr_id))
 
     now = now_ecuador()
     payment.status = ClientPaymentStatus.approved
@@ -1530,6 +2061,11 @@ def finalize_client_payment_approval(
             sync_sale_amount_paid_from_allocations(db, s)
             refresh_sale_status_after_payment(db, s)
 
+    for wr_id in touched_wr_ids:
+        wr = db.get(WalletRechargeRequest, int(wr_id))
+        if wr is not None:
+            refresh_wallet_recharge_after_payment(db, wr)
+
     db.flush()
 
     from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
@@ -1539,6 +2075,12 @@ def finalize_client_payment_approval(
     client = db.get(Client, int(payment.client_id))
     if client is not None:
         sync_client_credit_from_overpay(db, client)
+        sweep_client_unallocated_funds_to_obligations_fifo(
+            db,
+            client,
+            currency=normalize_currency_code(str(payment.currency or "USD")),
+            strict_accounting=strict_accounting,
+        )
 
     from app.services.codigos_retiro_erp_notify import (
         schedule_codigos_retiro_erp_notify_from_payment_approval,
@@ -2183,8 +2725,12 @@ def approve_pending_linked_client_payments_for_sale(
 
     for cp in sorted(approved_now, key=lambda p: (p.created_at or now, int(p.id))):
         target_ids: list[int] = [sid]
+        target_wr_ids: list[int] = []
         for alloc in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == cp.id).all():
-            target_ids.append(int(alloc.sale_id))
+            if alloc.sale_id is not None:
+                target_ids.append(int(alloc.sale_id))
+            elif alloc.wallet_recharge_id is not None:
+                target_wr_ids.append(int(alloc.wallet_recharge_id))
         if parse_notes_meta_sale_id(cp.notes) == sid and sid not in target_ids:
             target_ids.insert(0, sid)
 
@@ -2195,6 +2741,8 @@ def approve_pending_linked_client_payments_for_sale(
                 continue
             seen.add(ts)
             primary_rows.append({"sale_id": ts})
+        for wr_id in target_wr_ids:
+            primary_rows.append({"wallet_recharge_id": wr_id})
 
         finalize_client_payment_approval(
             db,

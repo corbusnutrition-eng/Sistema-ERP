@@ -164,7 +164,12 @@ def sync_retiro_webhook_payment_accounting(
         touched_sale_ids.add(int(meta_sid))
 
     for alloc in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == int(payment.id)).all():
-        touched_sale_ids.add(int(alloc.sale_id))
+        if alloc.sale_id is not None:
+            touched_sale_ids.add(int(alloc.sale_id))
+        if alloc.wallet_recharge_id is not None:
+            wr = db.get(WalletRechargeRequest, int(alloc.wallet_recharge_id))
+            if wr is not None:
+                ensure_wallet_recharge_accrual_journal(db, wr, strict=False)
 
     for sid in sorted(touched_sale_ids):
         sale = db.get(Sale, int(sid))
@@ -443,6 +448,123 @@ def build_instant_activation_cxc_response(db: Session, sale: Sale) -> dict[str, 
     }
 
 
+def register_retiro_webhook_cxc_abono(
+    db: Session,
+    *,
+    client: Client,
+    amount: Decimal,
+    sale: Optional[Sale] = None,
+    wallet_recharge: Optional[WalletRechargeRequest] = None,
+    es_prueba: bool = False,
+) -> int:
+    """
+    Registra abono CxC confirmado por webhook del socio (estado=completado).
+
+    Motor único: ``ClientPayment`` + ``PaymentAllocation`` + ``finalize_client_payment_approval``.
+    Soporta ventas y recargas BaaS polimórficamente.
+    """
+    from app.services.client_payment_service import finalize_client_payment_approval, next_payment_number
+
+    if (sale is None) == (wallet_recharge is None):
+        raise ValueError("Indique exactamente sale o wallet_recharge.")
+
+    pay_amount = amount.quantize(Decimal("0.01"))
+    if pay_amount <= Decimal("0"):
+        raise ValueError("Monto del webhook inválido.")
+
+    now = now_ecuador()
+    manual_rows: list[dict] = []
+
+    if sale is not None:
+        cur = str(sale.currency or "USD").strip().upper()[:10] or "USD"
+        exchange_rate = float(getattr(sale, "exchange_rate", None) or 1.0)
+        pm_id = getattr(sale, "payment_method_id", None)
+        dep_id = getattr(sale, "deposit_account_id", None)
+        receipt_url = None
+        notes = stamp_retiro_webhook_notes(
+            f"META_SALE_ID={int(sale.id)}\ncodigos_retiro_webhook=1\nwebhook_abono=1"
+        )
+        manual_rows = [{"sale_id": int(sale.id)}]
+    else:
+        assert wallet_recharge is not None
+        req = wallet_recharge
+        from app.services.wallet_recharge_client_payment import build_wallet_recharge_payment_notes
+
+        cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+        exchange_rate = float(getattr(req, "recharge_exchange_rate", None) or 1.0)
+        pm_id = None
+        raw_pm = getattr(req, "allowed_payment_methods", None)
+        if isinstance(raw_pm, list):
+            for x in raw_pm:
+                try:
+                    pm_id = int(x)
+                    break
+                except (TypeError, ValueError):
+                    continue
+        dep_id = getattr(req, "portal_submitted_deposit_account_id", None)
+        try:
+            dep_id = int(dep_id) if dep_id is not None else None
+        except (TypeError, ValueError):
+            dep_id = None
+        receipt_url = str(getattr(req, "receipt_url", "") or "").strip() or None
+        base_notes = build_wallet_recharge_payment_notes(int(req.id), float(pay_amount), cur)
+        notes = stamp_retiro_webhook_notes(
+            f"{base_notes}\ncodigos_retiro_webhook=1\nwebhook_abono=1"
+        )
+        manual_rows = [{"wallet_recharge_id": int(req.id)}]
+
+    if es_prueba:
+        notes = f"[PRUEBA] {notes}"
+
+    cp = ClientPayment(
+        payment_number=next_payment_number(db),
+        client_id=int(client.id),
+        amount=pay_amount,
+        currency=cur,
+        exchange_rate=exchange_rate,
+        payment_method="Códigos de Retiro",
+        payment_method_id=pm_id,
+        deposit_account_id=dep_id,
+        receipt_file_url=receipt_url,
+        status=ClientPaymentStatus.pending_review,
+        notes=notes,
+        created_at=now,
+    )
+    db.add(cp)
+    db.flush()
+
+    ensure_retiro_webhook_deposit_account(
+        db,
+        cp,
+        client=client,
+        sale=sale,
+        wallet_recharge=wallet_recharge,
+    )
+    db.flush()
+
+    if sale is not None:
+        from app.services.sale_accounting_sync import sync_sale_accounting_ledgers
+
+        sync_sale_accounting_ledgers(db, sale, strict=False, strict_cogs=False)
+    else:
+        from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
+
+        ensure_wallet_recharge_accrual_journal(db, wallet_recharge, strict=False)
+
+    finalize_client_payment_approval(
+        db,
+        cp,
+        manual_rows=manual_rows,
+        fifo_fallback=True,
+        strict_accounting=True,
+    )
+
+    sync_retiro_webhook_payment_accounting(db, cp, strict=True)
+
+    db.flush()
+    return int(cp.id)
+
+
 def register_retiro_webhook_abono(
     db: Session,
     *,
@@ -452,55 +574,13 @@ def register_retiro_webhook_abono(
     es_prueba: bool = False,
 ) -> int:
     """Registra abono CxC confirmado por webhook del socio (estado=completado)."""
-    from app.services.client_payment_service import finalize_client_payment_approval, next_payment_number
-
-    pay_amount = amount.quantize(Decimal("0.01"))
-    if pay_amount <= Decimal("0"):
-        raise ValueError("Monto del webhook inválido.")
-
-    cur = str(sale.currency or "USD").strip().upper()[:10] or "USD"
-    now = now_ecuador()
-    notes = stamp_retiro_webhook_notes(
-        f"META_SALE_ID={int(sale.id)}\ncodigos_retiro_webhook=1\nwebhook_abono=1"
-    )
-    if es_prueba:
-        notes = f"[PRUEBA] {notes}"
-
-    cp = ClientPayment(
-        payment_number=next_payment_number(db),
-        client_id=int(client.id),
-        amount=pay_amount,
-        currency=cur,
-        exchange_rate=float(getattr(sale, "exchange_rate", None) or 1.0),
-        payment_method="Códigos de Retiro",
-        payment_method_id=getattr(sale, "payment_method_id", None),
-        deposit_account_id=getattr(sale, "deposit_account_id", None),
-        status=ClientPaymentStatus.pending_review,
-        notes=notes,
-        created_at=now,
-    )
-    db.add(cp)
-    db.flush()
-
-    ensure_retiro_webhook_deposit_account(db, cp, client=client, sale=sale)
-    db.flush()
-
-    from app.services.sale_accounting_sync import sync_sale_accounting_ledgers
-
-    sync_sale_accounting_ledgers(db, sale, strict=False, strict_cogs=False)
-
-    finalize_client_payment_approval(
+    return register_retiro_webhook_cxc_abono(
         db,
-        cp,
-        manual_rows=[{"sale_id": int(sale.id)}],
-        fifo_fallback=False,
-        strict_accounting=True,
+        client=client,
+        amount=amount,
+        sale=sale,
+        es_prueba=es_prueba,
     )
-
-    sync_retiro_webhook_payment_accounting(db, cp, strict=True)
-
-    db.flush()
-    return int(cp.id)
 
 
 def register_retiro_webhook_wallet_recharge_abono(
@@ -514,101 +594,12 @@ def register_retiro_webhook_wallet_recharge_abono(
     """
     Registra abono CxC confirmado por webhook del socio (recarga BaaS activada instant-retiro).
 
-    No vuelve a acreditar billetera (ya entregada en portal); registra ``ClientPayment``,
-    actualiza ``amount_paid`` / ``balance_pending`` y asiento DR banco / CR CxC.
+    Delega en ``register_retiro_webhook_cxc_abono`` (motor único ``PaymentAllocation``).
     """
-    from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
-    from app.services.client_payment_service import next_payment_number
-    from app.services.wallet_recharge_client_payment import (
-        build_wallet_recharge_payment_notes,
-        finalize_wallet_recharge_client_payment_on_approval,
-    )
-    from app.wallet_recharge_helpers import (
-        REQ_STATUS_APPROVED,
-        REQ_STATUS_PARTIALLY_PAID,
-        clear_wallet_recharge_retiro_instant_cxc,
-    )
-
-    _WR_EPS = 1e-6
-
-    pay_amount = amount.quantize(Decimal("0.01"))
-    if pay_amount <= Decimal("0"):
-        raise ValueError("Monto del webhook inválido.")
-
-    pending_before = float(getattr(req, "balance_pending", 0) or 0)
-    if pending_before <= _WR_EPS:
-        pending_before = float(getattr(req, "amount_requested", 0) or 0)
-    applied = min(float(pay_amount), pending_before) if pending_before > _WR_EPS else float(pay_amount)
-    surplus = max(0.0, float(pay_amount) - applied)
-
-    cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
-    now = now_ecuador()
-
-    base_notes = build_wallet_recharge_payment_notes(int(req.id), float(pay_amount), cur)
-    notes = stamp_retiro_webhook_notes(f"{base_notes}\ncodigos_retiro_webhook=1\nwebhook_abono=1")
-    if es_prueba:
-        notes = f"[PRUEBA] {notes}"
-
-    pm_id: Optional[int] = None
-    raw_pm = getattr(req, "allowed_payment_methods", None)
-    if isinstance(raw_pm, list):
-        for x in raw_pm:
-            try:
-                pm_id = int(x)
-                break
-            except (TypeError, ValueError):
-                continue
-
-    dep_id = getattr(req, "portal_submitted_deposit_account_id", None)
-    try:
-        dep_id_int = int(dep_id) if dep_id is not None else None
-    except (TypeError, ValueError):
-        dep_id_int = None
-
-    cp = ClientPayment(
-        payment_number=next_payment_number(db),
-        client_id=int(client.id),
-        amount=pay_amount,
-        currency=cur,
-        exchange_rate=float(getattr(req, "recharge_exchange_rate", None) or 1.0),
-        payment_method="Códigos de Retiro",
-        payment_method_id=pm_id,
-        deposit_account_id=dep_id_int,
-        receipt_file_url=str(getattr(req, "receipt_url", "") or "").strip() or None,
-        status=ClientPaymentStatus.pending_review,
-        notes=notes,
-        created_at=now,
-    )
-    db.add(cp)
-    db.flush()
-
-    ensure_retiro_webhook_deposit_account(db, cp, client=client, wallet_recharge=req)
-    db.flush()
-
-    ensure_wallet_recharge_accrual_journal(db, req, strict=False)
-
-    req.amount_paid = float(getattr(req, "amount_paid", 0) or 0) + applied
-    pending_after = max(0.0, pending_before - applied)
-    req.balance_pending = pending_after
-    if pending_after <= _WR_EPS:
-        req.balance_pending = 0.0
-        req.status = REQ_STATUS_APPROVED
-    else:
-        req.status = REQ_STATUS_PARTIALLY_PAID
-
-    clear_wallet_recharge_retiro_instant_cxc(req)
-
-    finalize_wallet_recharge_client_payment_on_approval(
+    return register_retiro_webhook_cxc_abono(
         db,
-        req,
         client=client,
-        received_amount=float(pay_amount),
-        applied_to_cxc=applied,
-        surplus=surplus,
-        strict_accounting=True,
+        amount=amount,
+        wallet_recharge=req,
+        es_prueba=es_prueba,
     )
-
-    sync_retiro_webhook_payment_accounting(db, cp, strict=True)
-
-    db.flush()
-    return int(cp.id)

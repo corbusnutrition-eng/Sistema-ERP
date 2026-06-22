@@ -245,7 +245,7 @@ def _resolve_sale_for_payment(db: Session, cp: ClientPayment) -> Optional[Sale]:
         .order_by(PaymentAllocation.id.asc())
         .first()
     )
-    if alloc is not None:
+    if alloc is not None and alloc.sale_id is not None:
         sale = db.get(Sale, int(alloc.sale_id))
         if sale is not None and int(sale.client_id) == int(cp.client_id):
             return sale
@@ -569,7 +569,8 @@ def _approve_client_payment_retiro_light(
     if meta_sid is not None:
         touched_sale_ids.add(int(meta_sid))
     for alloc in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == int(cp.id)).all():
-        touched_sale_ids.add(int(alloc.sale_id))
+        if alloc.sale_id is not None:
+            touched_sale_ids.add(int(alloc.sale_id))
 
     for sid in touched_sale_ids:
         s = db.get(Sale, int(sid))
@@ -700,6 +701,32 @@ def process_codigos_retiro_webhook(
     return _process_fallido(db, match, es_prueba=es_prueba)
 
 
+def _wallet_recharge_retiro_failed_preserves_cxc(db: Session, req: WalletRechargeRequest) -> bool:
+    """
+    True si un retiro fallido no debe alterar CxC ni billetera (igual que ventas activadas).
+    """
+    from app.services.client_payment_service import _wallet_credited_for_recharge_request
+    from app.wallet_recharge_helpers import (
+        REQ_STATUS_APPROVED,
+        REQ_STATUS_IN_REVIEW,
+        REQ_STATUS_PARTIALLY_PAID,
+        _RETIRO_INSTANT_CXC_MARKER,
+        wallet_recharge_contributes_to_client_debt,
+        wallet_recharge_open_balance,
+    )
+
+    if wallet_recharge_contributes_to_client_debt(req):
+        return True
+    if _wallet_credited_for_recharge_request(db, req) > 1e-6:
+        return True
+    if _RETIRO_INSTANT_CXC_MARKER in str(getattr(req, "admin_note", "") or ""):
+        return True
+    st = str(getattr(req, "status", "") or "")
+    if st in (REQ_STATUS_APPROVED, REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_IN_REVIEW):
+        return wallet_recharge_open_balance(req) > 1e-6
+    return False
+
+
 def _process_completado(
     db: Session,
     ctx: MatchedRetiroTransaction,
@@ -707,34 +734,10 @@ def _process_completado(
     es_prueba: bool = False,
 ) -> dict[str, object]:
     try:
-        if ctx.wallet_recharge is not None:
-            from app.services.codigos_retiro_instant_service import (
-                register_retiro_webhook_wallet_recharge_abono,
-            )
+        sale = ctx.sale
+        req = ctx.wallet_recharge
 
-            payment_id = register_retiro_webhook_wallet_recharge_abono(
-                db,
-                req=ctx.wallet_recharge,
-                client=ctx.client,
-                amount=ctx.amount,
-                es_prueba=es_prueba,
-            )
-            db.commit()
-            return {
-                "ok": True,
-                "message": "Abono CxC registrado por webhook de códigos de retiro (recarga BaaS).",
-                "wallet_recharge_id": int(ctx.wallet_recharge.id),
-                "payment_id": payment_id,
-                "client_id": int(ctx.client.id),
-            }
-
-        if ctx.sale is not None:
-            from app.services.codigos_retiro_instant_service import (
-                instant_activation_cxc,
-                register_retiro_webhook_abono,
-            )
-
-            sale = ctx.sale
+        if sale is not None:
             if sale.status in (SaleStatus.pending, SaleStatus.payment_submitted):
                 try:
                     from app.services.codigos_retiro_instant_service import instant_activation_cxc
@@ -750,21 +753,34 @@ def _process_completado(
                         raise
                 db.refresh(sale)
 
-            payment_id = register_retiro_webhook_abono(
+        if sale is not None or req is not None:
+            from app.services.codigos_retiro_instant_service import register_retiro_webhook_cxc_abono
+
+            payment_id = register_retiro_webhook_cxc_abono(
                 db,
-                sale=sale,
                 client=ctx.client,
                 amount=ctx.amount,
+                sale=sale,
+                wallet_recharge=req,
                 es_prueba=es_prueba,
             )
             db.commit()
-            return {
+            msg = (
+                "Abono CxC registrado por webhook de códigos de retiro (recarga BaaS)."
+                if req is not None
+                else "Abono CxC registrado por webhook de códigos de retiro."
+            )
+            out: dict[str, object] = {
                 "ok": True,
-                "message": "Abono CxC registrado por webhook de códigos de retiro.",
-                "sale_id": int(sale.id),
+                "message": msg,
                 "payment_id": payment_id,
                 "client_id": int(ctx.client.id),
             }
+            if sale is not None:
+                out["sale_id"] = int(sale.id)
+            if req is not None:
+                out["wallet_recharge_id"] = int(req.id)
+            return out
 
         cp = ctx.client_payment
         if cp is not None:
@@ -800,18 +816,18 @@ def _process_fallido(
     if es_prueba:
         reason = f"[PRUEBA] {reason}"
     cp = ctx.client_payment
+    sale = ctx.sale
     req = ctx.wallet_recharge
     try:
-        sale = ctx.sale
+        if cp is not None and cp.status == ClientPaymentStatus.pending_review:
+            void_client_payment(
+                db,
+                cp,
+                reason=f"Código de retiro fallido ({cp.payment_number or cp.id})",
+            )
+
         if sale is not None:
             cur = _resolve_currency(ctx)
-            cp = ctx.client_payment
-            if cp is not None and cp.status == ClientPaymentStatus.pending_review:
-                void_client_payment(
-                    db,
-                    cp,
-                    reason=f"Código de retiro fallido ({cp.payment_number or cp.id})",
-                )
             _stamp_sale_retiro_failed_note_only(
                 db,
                 sale,
@@ -828,40 +844,28 @@ def _process_fallido(
                 "es_prueba": es_prueba,
             }
 
-        req = ctx.wallet_recharge
         if req is not None:
-            from app.wallet_recharge_helpers import wallet_recharge_awaiting_codigos_retiro_webhook
-
-            if wallet_recharge_awaiting_codigos_retiro_webhook(req):
-                cur = _resolve_currency(ctx)
-                _stamp_wallet_recharge_retiro_failed_note_only(
-                    db,
-                    req,
-                    amount=ctx.amount,
-                    currency=cur,
-                    reason=reason,
-                )
-                db.commit()
-                return {
-                    "ok": True,
-                    "message": "Retiro fallido registrado; billetera y CxC sin cambios.",
-                    "client_id": int(ctx.client.id),
-                    "wallet_recharge_id": int(req.id),
-                    "es_prueba": es_prueba,
-                }
-
-        if cp is not None and cp.status == ClientPaymentStatus.pending_review:
-            void_client_payment(
+            cur = _resolve_currency(ctx)
+            _stamp_wallet_recharge_retiro_failed_note_only(
                 db,
-                cp,
-                reason=f"Código de retiro fallido ({cp.payment_number or cp.id})",
+                req,
+                amount=ctx.amount,
+                currency=cur,
+                reason=reason,
             )
+            if not _wallet_recharge_retiro_failed_preserves_cxc(db, req):
+                if str(req.status) in OPEN_PORTAL_STATUSES:
+                    req.status = REQ_STATUS_REJECTED
+            db.commit()
+            return {
+                "ok": True,
+                "message": "Retiro fallido registrado; billetera y CxC sin cambios.",
+                "client_id": int(ctx.client.id),
+                "wallet_recharge_id": int(req.id),
+                "es_prueba": es_prueba,
+            }
 
-        req = ctx.wallet_recharge
-        if req is not None and str(req.status) in OPEN_PORTAL_STATUSES:
-            req.status = REQ_STATUS_REJECTED
-
-        if not es_prueba:
+        if cp is not None and not es_prueba:
             _record_failed_retiro_cxc_debt(db, ctx, reason=reason)
 
         db.commit()
@@ -870,7 +874,6 @@ def _process_fallido(
             "message": "Retiro fallido registrado.",
             "client_id": int(ctx.client.id),
             "payment_id": int(cp.id) if cp is not None else None,
-            "wallet_recharge_id": int(req.id) if req is not None else None,
             "es_prueba": es_prueba,
         }
     except Exception as exc:
