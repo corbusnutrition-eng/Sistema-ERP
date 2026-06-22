@@ -115,6 +115,7 @@ from app.wallet_recharge_helpers import (
     OPEN_PORTAL_STATUSES,
     REQ_STATUS_APPROVED,
     REQ_STATUS_IN_REVIEW,
+    REQ_STATUS_PARTIALLY_PAID,
     REQ_STATUS_PENDING,
     payment_methods_display,
     wallet_recharge_accepts_client_receipt,
@@ -1402,9 +1403,6 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
 
         product_total = float(getattr(req, "amount_requested", 0) or 0)
-        pending_before = float(getattr(req, "balance_pending", 0) or 0)
-        if pending_before <= 1e-6:
-            pending_before = product_total
 
         from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
         from app.services.client_currency_service import maybe_set_client_base_currency_from_recharge
@@ -1424,9 +1422,11 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
 
         # Regla 2 (paralelo a instant_activation_cxc en ventas): entrega el producto,
         # devenga CxC al 100% y deja amount_paid=0 hasta confirmación del webhook del socio.
+        # balance_pending=0 evita que el admin la duplique en «Pendientes» (ese tab incluye
+        # approved/partially_paid con balance_pending>0). La CxC vive en el devengo contable.
         req.amount_paid = 0.0
-        req.balance_pending = pending_before
-        req.status = REQ_STATUS_APPROVED
+        req.balance_pending = 0.0
+        req.status = REQ_STATUS_PARTIALLY_PAID
         ensure_wallet_recharge_accrual_journal(db, req, strict=True)
 
         db.commit()
