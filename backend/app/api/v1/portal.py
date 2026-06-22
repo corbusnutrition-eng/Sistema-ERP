@@ -1372,49 +1372,66 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         payment_method_id=payment_method_id,
     )
 
-    # --- BEGIN: Pago especial por "Códigos de Retiro" (salta in_review, va directo a aprobado, CxC forzada) ---
-    # Determinar si el método corresponde a 'Códigos de Retiro'
-    from app.account_constants import PAYMENT_METHOD_CODES_RETIRO_IDS # debes tener este listado definido en account_constants
-
-    # Soporta entero y/o None
     pm_id = int(payment_method_id) if payment_method_id is not None else None
-    is_codigos_retiro = (
-        PAYMENT_METHOD_CODES_RETIRO_IDS
-        and pm_id in PAYMENT_METHOD_CODES_RETIRO_IDS
-    )
+    from app.services.codigos_retiro_instant_service import is_codigos_retiro_payment_method_id
 
-    if is_codigos_retiro:
-        # Forzar la lógica tipo autocompra/auto-aprobación
+    paid_raw = ((declared_amount_alt or paid_amount_str) or "").strip().replace(",", ".")
+    if is_codigos_retiro_payment_method_id(db, pm_id):
+        if not paid_raw:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Indica el importe que pagaste según tu comprobante.",
+            )
+        try:
+            paid_f = float(paid_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El importe declarado no es válido.",
+            ) from None
+        if not (paid_f > 0):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El importe declarado debe ser mayor a cero.",
+            )
+
         was_partial = float(getattr(req, "amount_paid", 0) or 0) > 1e-6
         receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url_form)
         req.receipt_url = receipt_url
-        req.status = REQ_STATUS_APPROVED
-        req.portal_declared_payment_amount = 0.0
-        req.amount_paid = 0.0  # Forzar 0 para que se genere deuda CxC por el 100%
+        req.portal_declared_payment_amount = paid_f
         req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
-        req.approved_at = now_ecuador()
-        from app.services.wallet_recharge_client_payment import ensure_pending_client_payment_for_wallet_recharge, _approve_wallet_recharge
-        # Este método debe dejarle la deuda generada y todo el saldo como CxC, sin pago real
-        ensure_pending_client_payment_for_wallet_recharge(
-            db,
-            req,
-            client=client,
-            payment_method_id=pm_id,
-            deposit_account_id=int(deposit_account_id) if deposit_account_id is not None else None,
-            declared_amount=0.0,
-            credit_amount=credit_amount,
-            codigos_retiro=True if hasattr(req, "codigos_retiro") else False,
-        )
-        # Aprobar la recarga, o método equivalente
-        _approve_wallet_recharge(
-            db,
-            req,
-            approve_user_id=None,  # asume flujo portal (cliente)
-            approve_comment="Autorización automática vía portal: Códigos de Retiro",
-            approve_from_portal=True,
-        )
+
+        product_total = float(getattr(req, "amount_requested", 0) or 0)
+        pending_before = float(getattr(req, "balance_pending", 0) or 0)
+        if pending_before <= 1e-6:
+            pending_before = product_total
+
+        from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
+        from app.services.client_currency_service import maybe_set_client_base_currency_from_recharge
+        from app.services.client_payment_service import _wallet_credited_for_recharge_request
+        from app.services.wallet_balance_service import add_client_wallet_balance
+
+        credited_so_far = _wallet_credited_for_recharge_request(db, req)
+        wallet_to_add = max(0.0, round(product_total - credited_so_far, 2))
+        if wallet_to_add > 1e-6:
+            maybe_set_client_base_currency_from_recharge(
+                db,
+                client,
+                wr_cur,
+                recharge_request_id=int(req.id),
+            )
+            add_client_wallet_balance(db, client, wr_cur, wallet_to_add)
+
+        # Regla 2 (paralelo a instant_activation_cxc en ventas): entrega el producto,
+        # devenga CxC al 100% y deja amount_paid=0 hasta confirmación del webhook del socio.
+        req.amount_paid = 0.0
+        req.balance_pending = pending_before
+        req.status = REQ_STATUS_APPROVED
+        ensure_wallet_recharge_accrual_journal(db, req, strict=True)
+
         db.commit()
         db.refresh(req)
+
         email = str(client.email or "").strip()
         abs_receipt = str(receipt_url or "").strip()
         if email and abs_receipt:
@@ -1422,15 +1439,13 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
                 render_sync.notify_wallet_recharge_client_receipt,
                 int(req.id),
                 email,
-                0.0,
+                paid_f,
                 abs_receipt,
                 from_partial_payment=was_partial,
             )
         return req
-    # --- END: Lógica especial Códigos de Retiro ---
-    
+
     # Resto de flujos: igual que antes, estado in_review, monto declarado, etc.
-    paid_raw = ((declared_amount_alt or paid_amount_str) or "").strip().replace(",", ".")
     if not paid_raw:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
