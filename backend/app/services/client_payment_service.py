@@ -1219,6 +1219,12 @@ def sweep_client_unallocated_funds_to_obligations_fifo(
 
     sync_client_credit_from_overpay(db, client)
     db.flush()
+
+    from app.services.codigos_retiro_erp_notify import (
+        schedule_codigos_retiro_erp_notify_for_allocations_batch,
+    )
+
+    schedule_codigos_retiro_erp_notify_for_allocations_batch(db, created_all)
     return created_all
 
 

@@ -22,6 +22,7 @@ from app.currency_utils import normalize_currency_code
 from app.models.client import Client
 from app.models.client_payment import ClientPayment, PaymentAllocation
 from app.models.sale import Sale
+from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.schemas.codigos_retiro_erp_notify import CodigosRetiroErpPagoAprobadoOut
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,18 @@ def format_sale_referencia_externa(sale_id: int) -> str:
     return f"FAC-{int(sale_id):04d}"
 
 
+def format_wallet_recharge_referencia_rec(wallet_recharge_id: int) -> str:
+    return f"REC-{int(wallet_recharge_id):05d}"
+
+
+def _obligation_log_label(payload: CodigosRetiroErpPagoAprobadoOut) -> str:
+    if payload.wallet_recharge_id is not None:
+        return f"wallet_recharge_id={payload.wallet_recharge_id}"
+    if payload.sale_id is not None:
+        return f"sale_id={payload.sale_id}"
+    return f"referencia_externa={payload.referencia_externa}"
+
+
 def _client_retiro_label(client: Optional[Client]) -> str:
     if client is None:
         return "Cliente"
@@ -98,8 +111,8 @@ def post_codigos_retiro_erp_pago_aprobado(payload: CodigosRetiroErpPagoAprobadoO
         logger.warning(
             "codigos-retiro ERP notify OMITIDO (deshabilitado o sin API key). "
             "Configure CODIGOS_RETIRO_ERP_NOTIFY_API_KEY o CODIGOS_RETIRO_WEBHOOK_API_KEY. "
-            "sale_id=%s payment_id=%s",
-            payload.sale_id,
+            "%s payment_id=%s",
+            _obligation_log_label(payload),
             payload.payment_id,
         )
         return
@@ -124,20 +137,20 @@ def post_codigos_retiro_erp_pago_aprobado(payload: CodigosRetiroErpPagoAprobadoO
         if response.status_code >= 400:
             logger.error(
                 "codigos-retiro ERP pago-aprobado RESPUESTA ERROR HTTP %s | url=%s | "
-                "sale_id=%s payment_id=%s | body=%s",
+                "%s payment_id=%s | body=%s",
                 response.status_code,
                 url,
-                payload.sale_id,
+                _obligation_log_label(payload),
                 payload.payment_id,
                 response_text[:2000],
             )
         else:
             logger.info(
                 "codigos-retiro ERP pago-aprobado RESPUESTA OK HTTP %s | url=%s | "
-                "sale_id=%s payment_id=%s monto=%s %s | body=%s",
+                "%s payment_id=%s monto=%s %s | body=%s",
                 response.status_code,
                 url,
-                payload.sale_id,
+                _obligation_log_label(payload),
                 payload.payment_id,
                 payload.monto_abonado,
                 payload.moneda,
@@ -145,15 +158,15 @@ def post_codigos_retiro_erp_pago_aprobado(payload: CodigosRetiroErpPagoAprobadoO
             )
     except requests.RequestException as exc:
         logger.error(
-            "codigos-retiro ERP pago-aprobado FALLO DE RED | url=%s | sale_id=%s payment_id=%s | error=%s",
+            "codigos-retiro ERP pago-aprobado FALLO DE RED | url=%s | %s payment_id=%s | error=%s",
             url,
-            payload.sale_id,
+            _obligation_log_label(payload),
             payload.payment_id,
             exc,
         )
         logger.exception(
-            "codigos-retiro ERP pago-aprobado traceback sale_id=%s payment_id=%s",
-            payload.sale_id,
+            "codigos-retiro ERP pago-aprobado traceback %s payment_id=%s",
+            _obligation_log_label(payload),
             payload.payment_id,
         )
 
@@ -200,8 +213,9 @@ def build_codigos_retiro_erp_pago_aprobado_events(
     payment: ClientPayment,
     allocations: list[PaymentAllocation],
 ) -> list[CodigosRetiroErpPagoAprobadoOut]:
-    """Construye un evento por venta con importe aplicado > 0."""
+    """Construye un evento por venta o recarga BaaS con importe aplicado > 0."""
     from app.services.client_payment_service import _sale_cxc_open_balance
+    from app.wallet_recharge_helpers import wallet_recharge_open_balance
 
     if not allocations:
         return []
@@ -213,6 +227,7 @@ def build_codigos_retiro_erp_pago_aprobado_events(
     es_prueba = codigos_retiro_es_prueba_default()
 
     by_sale: dict[int, Decimal] = {}
+    by_wr: dict[int, Decimal] = {}
     for alloc in allocations:
         try:
             applied = Decimal(str(alloc.amount_applied or 0)).quantize(Decimal("0.01"))
@@ -220,8 +235,12 @@ def build_codigos_retiro_erp_pago_aprobado_events(
             applied = Decimal("0")
         if applied <= _FP_EPS:
             continue
-        sid = int(alloc.sale_id)
-        by_sale[sid] = by_sale.get(sid, Decimal("0")) + applied
+        if alloc.wallet_recharge_id is not None:
+            wr_id = int(alloc.wallet_recharge_id)
+            by_wr[wr_id] = by_wr.get(wr_id, Decimal("0")) + applied
+        elif alloc.sale_id is not None:
+            sid = int(alloc.sale_id)
+            by_sale[sid] = by_sale.get(sid, Decimal("0")) + applied
 
     events: list[CodigosRetiroErpPagoAprobadoOut] = []
     for sid, applied_total in sorted(by_sale.items()):
@@ -235,6 +254,7 @@ def build_codigos_retiro_erp_pago_aprobado_events(
         ref = str(sid)
         events.append(
             CodigosRetiroErpPagoAprobadoOut(
+                obligation_kind="sale",
                 referencia_externa=ref,
                 referencia_fac=format_sale_referencia_externa(sid),
                 sale_id=sid,
@@ -243,6 +263,36 @@ def build_codigos_retiro_erp_pago_aprobado_events(
                 monto_abonado=applied_total,
                 moneda=cur,
                 saldo_pendiente_restante=open_after.quantize(Decimal("0.01")),
+                cliente=cliente_label,
+                payment_id=int(payment.id),
+                payment_number=pay_num,
+                metodo_pago=pay_method,
+                es_prueba=es_prueba,
+            )
+        )
+
+    for wr_id, applied_total in sorted(by_wr.items()):
+        req = db.get(WalletRechargeRequest, wr_id)
+        if req is None:
+            continue
+        cur = normalize_currency_code(
+            str(getattr(req, "recharge_currency", None) or payment.currency or "USD")
+        )
+        open_after = Decimal(str(wallet_recharge_open_balance(req))).quantize(Decimal("0.01"))
+        if open_after < Decimal("0"):
+            open_after = Decimal("0")
+        ref = str(wr_id)
+        events.append(
+            CodigosRetiroErpPagoAprobadoOut(
+                obligation_kind="wallet_recharge",
+                referencia_externa=ref,
+                referencia_rec=format_wallet_recharge_referencia_rec(wr_id),
+                wallet_recharge_id=wr_id,
+                meta_wallet_recharge_id=wr_id,
+                monto=applied_total,
+                monto_abonado=applied_total,
+                moneda=cur,
+                saldo_pendiente_restante=open_after,
                 cliente=cliente_label,
                 payment_id=int(payment.id),
                 payment_number=pay_num,
@@ -266,7 +316,7 @@ def schedule_codigos_retiro_erp_notify_from_payment_approval(
     allocations: list[PaymentAllocation],
 ) -> None:
     """
-    Punto de integración: tras aprobar un cobro que aplica a facturas, avisa al socio.
+    Punto de integración: tras aprobar un cobro que aplica a facturas o recargas BaaS, avisa al socio.
 
     Debe invocarse cuando las allocations ya están persistidas (``flush``) y el pago está aprobado.
     """
@@ -296,3 +346,24 @@ def schedule_codigos_retiro_erp_notify_from_payment_approval(
             "codigos-retiro ERP notify: error preparando eventos payment_id=%s",
             getattr(payment, "id", None),
         )
+
+
+def schedule_codigos_retiro_erp_notify_for_allocations_batch(
+    db: Session,
+    allocations: list[PaymentAllocation],
+) -> None:
+    """Avisa al socio por allocations FIFO (p. ej. barrido de saldo a favor), agrupadas por cobro."""
+    if not allocations:
+        return
+    from collections import defaultdict
+
+    by_payment: dict[int, list[PaymentAllocation]] = defaultdict(list)
+    for alloc in allocations:
+        pid = getattr(alloc, "payment_id", None)
+        if pid is not None:
+            by_payment[int(pid)].append(alloc)
+
+    for pid in sorted(by_payment):
+        pay = db.get(ClientPayment, pid)
+        if pay is not None:
+            schedule_codigos_retiro_erp_notify_from_payment_approval(db, pay, by_payment[pid])
