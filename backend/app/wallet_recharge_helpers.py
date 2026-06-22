@@ -129,6 +129,61 @@ def wallet_recharge_accepts_client_receipt(req) -> bool:
     )
 
 
+def wallet_recharge_portal_abono_requires_manual_review(req) -> bool:
+    """
+    True si un comprobante del portal debe encolar revisión admin (``pending_review``),
+    no activación instantánea Códigos de Retiro.
+
+    Aplica a abonos secundarios sobre recargas ya activadas (``META_RETIRO_INSTANT_CXC``,
+    ``approved`` / ``partially_paid``, o con abonos previos).
+    """
+    st = str(getattr(req, "status", "") or "")
+    if st in (REQ_STATUS_APPROVED, REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_IN_REVIEW):
+        return True
+    if _RETIRO_INSTANT_CXC_MARKER in str(getattr(req, "admin_note", "") or ""):
+        return True
+    try:
+        if float(getattr(req, "amount_paid", 0) or 0) > _WR_BALANCE_EPS:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return False
+
+
+def wallet_recharge_codigos_retiro_initial_portal_activation(req, db: Optional[Session] = None) -> bool:
+    """Primer paso Códigos de Retiro: solicitud ``pending`` sin activación previa."""
+    if db is not None and wallet_recharge_virtual_product_already_delivered(db, req):
+        return False
+    if wallet_recharge_portal_abono_requires_manual_review(req):
+        return False
+    return str(getattr(req, "status", "") or "") == REQ_STATUS_PENDING
+
+
+def wallet_recharge_virtual_product_already_delivered(db: Session, req) -> bool:
+    """
+    Candado de acreditación: True si el saldo virtual ya fue entregado para esta solicitud.
+
+    Cuando es True, el portal y la aprobación admin NO deben volver a sumar billetera.
+    """
+    if wallet_recharge_portal_abono_requires_manual_review(req):
+        return True
+    try:
+        product = float(getattr(req, "amount_requested", 0) or 0)
+    except (TypeError, ValueError):
+        product = 0.0
+    if product <= _WR_BALANCE_EPS:
+        return False
+    from app.services.client_payment_service import _wallet_credited_for_recharge_request
+
+    credited = _wallet_credited_for_recharge_request(db, req)
+    return credited >= product - _WR_BALANCE_EPS
+
+
+def wallet_recharge_portal_may_deliver_virtual_product(db: Session, req) -> bool:
+    """True solo en el primer paso portal antes de entregar producto virtual."""
+    return not wallet_recharge_virtual_product_already_delivered(db, req)
+
+
 def wallet_recharge_portal_historical_debt(req) -> bool:
     """Deuda real en portal «Saldo pendiente»: activada con CxC; excluye pedidos abiertos en «Nuevos pedidos»."""
     if wallet_recharge_open_balance(req) <= _WR_BALANCE_EPS:

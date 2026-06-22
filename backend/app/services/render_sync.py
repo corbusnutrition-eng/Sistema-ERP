@@ -257,13 +257,21 @@ def notify_wallet_recharge_client_receipt(
     receipt_url: str,
     *,
     from_partial_payment: bool = False,
+    cxc_abono_only: bool = False,
 ) -> None:
     """
     Notifica al portal Flask cuando el cliente sube comprobante de una solicitud de recarga.
 
-    POST ``{VIP_CATALOG_BRIDGE_URL}/api/pagar-recarga/{id}`` con JSON compatible con el ERP local /
-    legacy (incluye ``monto_declarado`` y alias ``paid_amount``).
+    POST ``{VIP_CATALOG_BRIDGE_URL}/api/pagar-recarga/{id}`` — solo activación inicial de producto.
+
+    Con ``cxc_abono_only=True`` no se llama al bridge (evita doble acreditación en abonos CxC).
     """
+    if cxc_abono_only:
+        logger.info(
+            "Puente VIP: omitiendo pagar-recarga id=%s (abono CxC en revisión admin, sin entrega de producto).",
+            request_id,
+        )
+        return
     if not bridge_enabled():
         logger.info(
             "Puente VIP: omitiendo POST pagar-recarga id=%s (configura VIP_CATALOG_BRIDGE_URL y VIP_CATALOG_WEBHOOK_SECRET).",

@@ -1310,6 +1310,47 @@ def portal_auto_purchase(
         ) from exc
 
 
+async def _portal_wallet_recharge_submit_abono_manual_review(
+    db: Session,
+    client: Client,
+    *,
+    req: WalletRechargeRequest,
+    receipt_file: Optional[UploadFile],
+    receipt_url_form: Optional[str],
+    payment_method_id: Optional[int],
+    deposit_account_id: Optional[int],
+    paid_f: float,
+    credit_amount: Optional[float],
+    pm_id: Optional[int],
+) -> WalletRechargeRequest:
+    """
+    Abono a deuda ya activada: solo ``ClientPayment`` en revisión + ``in_review``.
+
+    No acredita billetera, no altera CxC ni dispara bridge ``pagar-recarga`` (evita doble entrega).
+    """
+    receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url_form)
+    req.receipt_url = receipt_url
+    req.portal_declared_payment_amount = paid_f
+    req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
+    req.status = REQ_STATUS_IN_REVIEW
+
+    from app.services.wallet_recharge_client_payment import ensure_pending_client_payment_for_wallet_recharge
+
+    ensure_pending_client_payment_for_wallet_recharge(
+        db,
+        req,
+        client=client,
+        payment_method_id=pm_id,
+        deposit_account_id=int(deposit_account_id) if deposit_account_id is not None else None,
+        declared_amount=paid_f,
+        credit_amount=credit_amount,
+        always_create_new=True,
+    )
+    db.commit()
+    db.refresh(req)
+    return req
+
+
 async def apply_portal_wallet_recharge_client_receipt_upload(
     db: Session,
     client: Client,
@@ -1375,27 +1416,53 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
 
     pm_id = int(payment_method_id) if payment_method_id is not None else None
     from app.services.codigos_retiro_instant_service import is_codigos_retiro_payment_method_id
+    from app.wallet_recharge_helpers import (
+        wallet_recharge_codigos_retiro_initial_portal_activation,
+        wallet_recharge_virtual_product_already_delivered,
+    )
 
     paid_raw = ((declared_amount_alt or paid_amount_str) or "").strip().replace(",", ".")
-    if is_codigos_retiro_payment_method_id(db, pm_id):
+
+    def _parse_paid_amount() -> float:
         if not paid_raw:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Indica el importe que pagaste según tu comprobante.",
             )
         try:
-            paid_f = float(paid_raw)
+            amount = float(paid_raw)
         except (TypeError, ValueError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El importe declarado no es válido.",
             ) from None
-        if not (paid_f > 0):
+        if not (amount > 0):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El importe declarado debe ser mayor a cero.",
             )
+        return amount
 
+    is_retiro_pm = is_codigos_retiro_payment_method_id(db, pm_id)
+
+    # Candado: producto ya entregado → solo revisión admin (sin billetera ni bridge pagar-recarga).
+    if wallet_recharge_virtual_product_already_delivered(db, req):
+        paid_f = _parse_paid_amount()
+        return await _portal_wallet_recharge_submit_abono_manual_review(
+            db,
+            client,
+            req=req,
+            receipt_file=receipt_file,
+            receipt_url_form=receipt_url_form,
+            payment_method_id=payment_method_id,
+            deposit_account_id=deposit_account_id,
+            paid_f=paid_f,
+            credit_amount=credit_amount,
+            pm_id=pm_id,
+        )
+
+    if is_retiro_pm and wallet_recharge_codigos_retiro_initial_portal_activation(req, db):
+        paid_f = _parse_paid_amount()
         was_partial = float(getattr(req, "amount_paid", 0) or 0) > 1e-6
         receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url_form)
         req.receipt_url = receipt_url
@@ -1406,11 +1473,9 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
 
         from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
         from app.services.client_currency_service import maybe_set_client_base_currency_from_recharge
-        from app.services.client_payment_service import _wallet_credited_for_recharge_request
-        from app.services.wallet_balance_service import add_client_wallet_balance
+        from app.services.client_payment_service import credit_wallet_recharge_product_if_pending
 
-        credited_so_far = _wallet_credited_for_recharge_request(db, req)
-        wallet_to_add = max(0.0, round(product_total - credited_so_far, 2))
+        wallet_to_add = credit_wallet_recharge_product_if_pending(db, req, client, wr_cur)
         if wallet_to_add > 1e-6:
             maybe_set_client_base_currency_from_recharge(
                 db,
@@ -1418,12 +1483,7 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
                 wr_cur,
                 recharge_request_id=int(req.id),
             )
-            add_client_wallet_balance(db, client, wr_cur, wallet_to_add)
 
-        # Regla 2 (paralelo a instant_activation_cxc en ventas): entrega el producto,
-        # devenga CxC al 100% y deja amount_paid=0 hasta confirmación del webhook del socio.
-        # balance_pending refleja la deuda exigible; el tab «Pendientes» excluye estas filas
-        # vía META_RETIRO_INSTANT_CXC (sin ClientPayment en revisión para el admin).
         from app.wallet_recharge_helpers import stamp_wallet_recharge_retiro_instant_cxc
 
         req.amount_paid = 0.0
@@ -1448,66 +1508,19 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
             )
         return req
 
-    # Resto de flujos: igual que antes, estado in_review, monto declarado, etc.
-    if not paid_raw:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Indica el importe que pagaste según tu comprobante.",
-        )
-    try:
-        paid_f = float(paid_raw)
-    except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El importe declarado no es válido.",
-        ) from None
-    if not (paid_f > 0):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El importe declarado debe ser mayor a cero.",
-        )
-
-    was_partial = float(getattr(req, "amount_paid", 0) or 0) > 1e-6
-
-    receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url_form)
-    req.receipt_url = receipt_url
-    req.portal_declared_payment_amount = paid_f
-    req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
-    st_now = str(getattr(req, "status", "") or "")
-    if st_now in (REQ_STATUS_APPROVED, REQ_STATUS_PARTIALLY_PAID):
-        if float(getattr(req, "amount_paid", 0) or 0) > 1e-6:
-            req.status = REQ_STATUS_PARTIALLY_PAID
-    else:
-        req.status = REQ_STATUS_IN_REVIEW
-
-    from app.services.wallet_recharge_client_payment import ensure_pending_client_payment_for_wallet_recharge
-
-    ensure_pending_client_payment_for_wallet_recharge(
+    paid_f = _parse_paid_amount()
+    return await _portal_wallet_recharge_submit_abono_manual_review(
         db,
-        req,
-        client=client,
-        payment_method_id=pm_id,
-        deposit_account_id=int(deposit_account_id) if deposit_account_id is not None else None,
-        declared_amount=paid_f,
+        client,
+        req=req,
+        receipt_file=receipt_file,
+        receipt_url_form=receipt_url_form,
+        payment_method_id=payment_method_id,
+        deposit_account_id=deposit_account_id,
+        paid_f=paid_f,
         credit_amount=credit_amount,
-        always_create_new=True,
+        pm_id=pm_id,
     )
-    db.commit()
-    db.refresh(req)
-
-    email = str(client.email or "").strip()
-    abs_receipt = str(receipt_url or "").strip()
-    if email and abs_receipt:
-        background_tasks.add_task(
-            render_sync.notify_wallet_recharge_client_receipt,
-            int(req.id),
-            email,
-            paid_f,
-            abs_receipt,
-            from_partial_payment=was_partial,
-        )
-
-    return req
 
 
 @router.post("/{portal_token}/recharges/{request_id}/pay", response_model=WalletRechargeRequestRead)

@@ -3386,6 +3386,52 @@ def apply_wallet_recharge_credit_on_create(
     return applied_to_req
 
 
+def credit_wallet_recharge_product_if_pending(
+    db: Session,
+    req: WalletRechargeRequest,
+    client: Client,
+    currency: str,
+) -> float:
+    """
+    Acredita ``amount_requested`` a la billetera solo si el producto aún no fue entregado.
+
+    Registra ``WalletTransaction`` auditable (evita doble entrega en abonos posteriores).
+    """
+    from app.wallet_recharge_helpers import wallet_recharge_virtual_product_already_delivered
+
+    if wallet_recharge_virtual_product_already_delivered(db, req):
+        return 0.0
+
+    try:
+        product_total = float(getattr(req, "amount_requested", 0) or 0)
+    except (TypeError, ValueError):
+        product_total = 0.0
+    credited_so_far = _wallet_credited_for_recharge_request(db, req)
+    wallet_to_add = max(0.0, round(product_total - credited_so_far, 2))
+    if wallet_to_add <= _WR_EPS:
+        return 0.0
+
+    from app.models.wallet_transaction import WalletTransaction
+    from app.services.wallet_balance_service import add_client_wallet_balance
+
+    wr_cur = normalize_currency_code(currency)
+    add_client_wallet_balance(db, client, wr_cur, wallet_to_add)
+    db.add(
+        WalletTransaction(
+            user_id=None,
+            client_id=int(client.id),
+            amount=wallet_to_add,
+            transaction_type=_TX_RECHARGE,
+            description=(
+                f"Recarga abono (solicitud #{int(req.id)}): entrega producto · "
+                f"billetera +{wallet_to_add:.2f}"
+            ),
+        )
+    )
+    db.flush()
+    return wallet_to_add
+
+
 def _wallet_credited_for_recharge_request(db: Session, req: WalletRechargeRequest) -> float:
     """Saldo virtual ya entregado por esta solicitud (suma de movimientos de billetera vinculados)."""
     from app.models.wallet_transaction import WalletTransaction
@@ -3450,58 +3496,65 @@ def finalize_wallet_recharge_payment_approval(
     strict_accounting: bool = True,
 ) -> tuple["WalletTransaction", Optional[ClientPayment], float, float, float]:
     """
-    Aprueba un comprobante BaaS (venta a crédito del saldo virtual):
+    Aprueba un comprobante BaaS en revisión (admin):
 
-    - Registra el cobro en CxC (``amount_paid`` / ``balance_pending``) solo por lo aplicado.
-    - Entrega el producto completo (``amount_requested``) a la billetera en el primer abono.
-    - Excedente de cobro → remanente sin asignar en ``ClientPayment`` (saldo a favor vía ledger).
-    - Devengo DR CxC / CR ingresos + cobro vía ``sync_client_payment_accounting_ledgers`` (igual que ventas).
+    - Entrega saldo virtual pendiente (solo primer abono).
+    - Aprueba ``ClientPayment`` vía ``finalize_client_payment_approval`` + FIFO cruzado.
+    - Excedente → remanente en cobro (saldo a favor vía ledger).
     """
     from app.models.wallet_transaction import WalletTransaction
     from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
     from app.services.wallet_recharge_client_payment import (
+        ensure_pending_client_payment_for_wallet_recharge,
         finalize_wallet_recharge_client_payment_on_approval,
     )
 
     recv = float(received_amount)
     pending_before = float(getattr(req, "balance_pending", 0) or 0)
-    applied = min(recv, pending_before)
-    surplus = max(0.0, recv - applied)
     wr_cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
 
-    from app.services.wallet_recharge_client_payment import (
-        finalize_wallet_recharge_client_payment_on_approval,
-        find_pending_client_payment_for_wallet_recharge,
-    )
-
-    pending_cp = find_pending_client_payment_for_wallet_recharge(db, req)
-    if pending_cp is not None:
-        _deduct_reserved_credit_on_payment_approval(db, pending_cp)
-
-    from app.services.client_currency_service import maybe_set_client_base_currency_from_recharge
-
-    maybe_set_client_base_currency_from_recharge(
-        db,
-        client,
-        wr_cur,
-        recharge_request_id=int(req.id),
-    )
-
-    product_total = float(getattr(req, "amount_requested", 0) or 0)
-    credited_so_far = _wallet_credited_for_recharge_request(db, req)
-    wallet_to_add = max(0.0, round(product_total - credited_so_far, 2))
+    wallet_to_add = credit_wallet_recharge_product_if_pending(db, req, client, wr_cur)
     if wallet_to_add > _WR_EPS:
-        from app.services.wallet_balance_service import add_client_wallet_balance
+        from app.services.client_currency_service import maybe_set_client_base_currency_from_recharge
 
-        add_client_wallet_balance(db, client, wr_cur, wallet_to_add)
+        maybe_set_client_base_currency_from_recharge(
+            db,
+            client,
+            wr_cur,
+            recharge_request_id=int(req.id),
+        )
 
-    req.amount_paid = float(getattr(req, "amount_paid", 0) or 0) + applied
-    pending_after = max(0.0, pending_before - applied)
-    req.balance_pending = pending_after
+    ensure_wallet_recharge_accrual_journal(db, req, strict=strict_accounting)
 
-    req.status = REQ_STATUS_APPROVED
-    if pending_after <= _WR_EPS:
-        req.balance_pending = 0.0
+    cp = finalize_wallet_recharge_client_payment_on_approval(
+        db,
+        req,
+        client=client,
+        received_amount=recv,
+        strict_accounting=strict_accounting,
+    )
+    if cp is None:
+        cp = ensure_pending_client_payment_for_wallet_recharge(
+            db,
+            req,
+            client=client,
+            declared_amount=recv,
+        )
+        if cp is not None:
+            cp = finalize_wallet_recharge_client_payment_on_approval(
+                db,
+                req,
+                client=client,
+                received_amount=recv,
+                strict_accounting=strict_accounting,
+            )
+
+    db.refresh(req)
+    pending_after = float(getattr(req, "balance_pending", 0) or 0)
+    applied = max(0.0, round(pending_before - pending_after, 2))
+    if cp is not None:
+        applied = float(_payment_applied_total(db, cp))
+    surplus = float(compute_payment_credit_excess(cp, db=db)) if cp is not None else max(0.0, recv - applied)
 
     desc = (
         f"Recarga abono (solicitud #{req.id}): percibido {recv:.2f}"
@@ -3520,18 +3573,6 @@ def finalize_wallet_recharge_payment_approval(
     )
     db.add(tx)
     db.flush()
-
-    ensure_wallet_recharge_accrual_journal(db, req, strict=strict_accounting)
-
-    cp = finalize_wallet_recharge_client_payment_on_approval(
-        db,
-        req,
-        client=client,
-        received_amount=recv,
-        applied_to_cxc=applied,
-        surplus=surplus,
-        strict_accounting=strict_accounting,
-    )
 
     if pending_after > _WR_EPS:
         req.receipt_url = None

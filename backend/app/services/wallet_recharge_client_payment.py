@@ -374,14 +374,30 @@ def approve_wallet_recharge_client_payment_ledger(
     surplus: float,
     strict_accounting: bool = True,
 ) -> None:
-    """Aprueba el cobro BaaS vía el mismo motor CxC que ventas (sin ``commit``)."""
-    from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
-    from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
-    from app.services.client_payment_service import _stamp_wallet_recharge_cxc_applied_notes
+    """
+    Aprueba cobro BaaS vía motor CxC unificado (``finalize_client_payment_approval``).
 
+    Legacy: si el cobro ya está aprobado, solo sincroniza asientos.
+    """
     recv = Decimal(str(received_amount)).quantize(Decimal("0.0001"))
     if recv > Decimal("0"):
         payment.amount = recv
+
+    if payment.status == ClientPaymentStatus.pending_review:
+        from app.services.client_payment_service import finalize_client_payment_approval
+
+        finalize_client_payment_approval(
+            db,
+            payment,
+            manual_rows=[{"wallet_recharge_id": int(req.id)}],
+            fifo_fallback=True,
+            strict_accounting=strict_accounting,
+        )
+        return
+
+    from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
+    from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
+    from app.services.client_payment_service import _stamp_wallet_recharge_cxc_applied_notes
 
     if payment.status != ClientPaymentStatus.approved:
         payment.status = ClientPaymentStatus.approved
@@ -405,12 +421,12 @@ def finalize_wallet_recharge_client_payment_on_approval(
     *,
     client: Optional[Client] = None,
     received_amount: float,
-    applied_to_cxc: float,
+    applied_to_cxc: float = 0.0,
     surplus: float = 0.0,
     strict_accounting: bool = True,
 ) -> Optional[ClientPayment]:
     """
-    Al aprobar una recarga BaaS: garantiza ``ClientPayment`` en estado ``approved`` y asiento contable.
+    Localiza el ``ClientPayment`` en revisión y lo aprueba con FIFO cruzado CxC.
 
     Debe invocarse **antes** de borrar ``receipt_url`` en abonos parciales.
     """
@@ -429,6 +445,20 @@ def finalize_wallet_recharge_client_payment_on_approval(
         )
     if cp is None:
         return None
+
+    if cp.status == ClientPaymentStatus.pending_review:
+        cp.amount = Decimal(str(recv)).quantize(Decimal("0.0001"))
+        db.flush()
+        approve_wallet_recharge_client_payment_ledger(
+            db,
+            cp,
+            req,
+            received_amount=recv,
+            applied_to_recharge=applied_to_cxc,
+            surplus=surplus,
+            strict_accounting=strict_accounting,
+        )
+        return cp
 
     approve_wallet_recharge_client_payment_ledger(
         db,
