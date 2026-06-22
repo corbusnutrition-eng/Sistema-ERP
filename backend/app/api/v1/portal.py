@@ -233,6 +233,7 @@ def _portal_wants_credit_balance(*flags: Optional[object]) -> bool:
 _PORTAL_REVIEW_SUCCESS_MSG = (
     "Tu pago/abono ha sido enviado y está en revisión por un operador."
 )
+_PORTAL_CREDIT_APPLIED_MSG = "Saldo a favor aplicado correctamente."
 
 
 def _pending_review_alloc_sum(db: Session, sale_id: int) -> Decimal:
@@ -1492,6 +1493,11 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         stamp_wallet_recharge_retiro_instant_cxc(req)
         ensure_wallet_recharge_accrual_journal(db, req, strict=True)
 
+        db.flush()
+        from app.services.client_payment_service import try_sweep_client_credit_on_new_cxc
+
+        try_sweep_client_credit_on_new_cxc(db, client, currency=wr_cur, strict_accounting=False)
+
         db.commit()
         db.refresh(req)
 
@@ -1553,11 +1559,11 @@ async def portal_pay_wallet_recharge(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
 
     if _portal_wants_credit_balance(pay_with_credit, use_credit_balance, apply_credit_balance):
-        from app.services.client_payment_service import submit_client_credit_to_wallet_recharge_for_review
+        from app.services.client_payment_service import apply_client_credit_to_wallet_recharge_portal
 
         if int(req.client_id) != int(client.id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Esta solicitud no pertenece a tu cuenta.")
-        _applied, cp = submit_client_credit_to_wallet_recharge_for_review(db, client, req)
+        _applied, cp = apply_client_credit_to_wallet_recharge_portal(db, client, req)
         if _applied <= 1e-6 or cp is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -2075,8 +2081,8 @@ async def portal_submit_payment(
 
         if _portal_wants_credit_balance(pay_with_credit, use_credit_balance, apply_credit_balance):
             from app.services.client_payment_service import (
-                submit_client_credit_to_sale_for_review,
-                submit_client_credit_to_wallet_recharge_for_review,
+                apply_client_credit_to_sale_portal,
+                apply_client_credit_to_wallet_recharge_portal,
             )
 
             if kind_ab == "wallet_recharge":
@@ -2088,7 +2094,7 @@ async def portal_submit_payment(
                 req_wr = db.get(WalletRechargeRequest, int(tgt_wr_ab))
                 if req_wr is None or int(req_wr.client_id) != int(client.id):
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud de recarga no encontrada.")
-                applied_wr, cp_wr = submit_client_credit_to_wallet_recharge_for_review(db, client, req_wr)
+                applied_wr, cp_wr = apply_client_credit_to_wallet_recharge_portal(db, client, req_wr)
                 if applied_wr <= 1e-6 or cp_wr is None:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -2097,8 +2103,8 @@ async def portal_submit_payment(
                 commit_db_or_rollback(db)
                 db.refresh(req_wr)
                 return PortalPaymentSubmitResponse(
-                    message=_PORTAL_REVIEW_SUCCESS_MSG,
-                    status=str(REQ_STATUS_IN_REVIEW),
+                    message=_PORTAL_CREDIT_APPLIED_MSG,
+                    status=str(req_wr.status or REQ_STATUS_IN_REVIEW),
                     receipt_url=None,
                     payment_id=int(cp_wr.id),
                     payment_number=cp_wr.payment_number,
@@ -2122,7 +2128,7 @@ async def portal_submit_payment(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No se puede abonar una factura cancelada o rechazada.",
                 )
-            applied_sale, credit_pay = submit_client_credit_to_sale_for_review(db, client, sale_cr)
+            applied_sale, credit_pay = apply_client_credit_to_sale_portal(db, client, sale_cr)
             if applied_sale <= _FP_EPS:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -2133,7 +2139,7 @@ async def portal_submit_payment(
             if credit_pay is not None:
                 db.refresh(credit_pay)
             return PortalPaymentSubmitResponse(
-                message=_PORTAL_REVIEW_SUCCESS_MSG,
+                message=_PORTAL_CREDIT_APPLIED_MSG,
                 status=sale_cr.status.value,
                 receipt_url=None,
                 payment_id=int(credit_pay.id) if credit_pay is not None else None,
@@ -2394,9 +2400,9 @@ async def portal_submit_payment(
             )
 
     if credit_only_flag:
-        from app.services.client_payment_service import submit_client_credit_to_sale_for_review
+        from app.services.client_payment_service import apply_client_credit_to_sale_portal
 
-        applied, credit_pay = submit_client_credit_to_sale_for_review(
+        applied, credit_pay = apply_client_credit_to_sale_portal(
             db,
             client,
             sale,
@@ -2418,7 +2424,7 @@ async def portal_submit_payment(
             db.refresh(credit_pay)
         return PortalPaymentSubmitResponse(
             status=sale.status.value,
-            message=_PORTAL_REVIEW_SUCCESS_MSG,
+            message=_PORTAL_CREDIT_APPLIED_MSG,
             receipt_url=None,
             payment_id=int(credit_pay.id) if credit_pay is not None else None,
             payment_number=credit_pay.payment_number if credit_pay is not None else None,

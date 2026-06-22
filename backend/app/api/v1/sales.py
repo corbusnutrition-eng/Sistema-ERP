@@ -4899,6 +4899,14 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
             _maybe_set_partially_paid(sale)
 
         sync_sale_accounting_ledgers(db, sale, strict=True, strict_cogs=False)
+        from app.services.client_payment_service import try_sweep_client_credit_on_new_cxc
+
+        try_sweep_client_credit_on_new_cxc(
+            db,
+            client,
+            currency=str(sale.currency or "USD"),
+            strict_accounting=False,
+        )
         db.commit()
     except HTTPException as exc:
         db.rollback()

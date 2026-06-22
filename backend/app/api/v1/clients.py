@@ -489,29 +489,53 @@ def get_client_ledger(client_id: int, db: DbDep) -> ClientLedgerResponse:
     client = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
-    raw = build_client_ledger(db, client_id)
-    entries = [
-        LedgerEntry(
-            date=e["date"],
-            type=e["type"],
-            ref_number=e["ref_number"],
-            note=e["note"],
-            amount=e["amount"],
-            currency=e["currency"],
-            status=e["status"],
-            entity_id=e["entity_id"],
-            entity_kind=e["entity_kind"],
-            payment_id=e.get("payment_id"),
-            receipt_file_url=e.get("receipt_file_url"),
-            related_docs=[LedgerRelatedDoc(**rd) for rd in e.get("related_docs", [])],
-            wallet_transaction_id=e.get("wallet_transaction_id"),
-            can_revert=bool(e.get("can_revert")),
-            revert_counterparty_id=e.get("revert_counterparty_id"),
-            revert_counterparty_name=e.get("revert_counterparty_name"),
-            baas_transfer_amount=e.get("baas_transfer_amount"),
-        )
-        for e in raw
-    ]
+    try:
+        raw = build_client_ledger(db, client_id)
+    except Exception:
+        logger.exception("GET /clients/%s/ledger — error construyendo historial", client_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo construir el historial del cliente.",
+        ) from None
+    entries = []
+    for e in raw:
+        try:
+            entries.append(
+                LedgerEntry(
+                    date=e.get("date") or "",
+                    type=e.get("type") or "",
+                    ref_number=e.get("ref_number") or "",
+                    note=e.get("note") or "",
+                    amount=float(e.get("amount") or 0),
+                    currency=e.get("currency") or "USD",
+                    status=e.get("status") or "",
+                    entity_id=int(e.get("entity_id") or 0),
+                    entity_kind=e.get("entity_kind") or "",
+                    payment_id=e.get("payment_id"),
+                    receipt_file_url=e.get("receipt_file_url"),
+                    related_docs=[
+                        LedgerRelatedDoc(
+                            type=str(rd.get("type") or ""),
+                            ref_number=str(rd.get("ref_number") or ""),
+                            amount=float(rd.get("amount") or 0),
+                            sale_id=rd.get("sale_id"),
+                        )
+                        for rd in (e.get("related_docs") or [])
+                    ],
+                    wallet_transaction_id=e.get("wallet_transaction_id"),
+                    can_revert=bool(e.get("can_revert")),
+                    revert_counterparty_id=e.get("revert_counterparty_id"),
+                    revert_counterparty_name=e.get("revert_counterparty_name"),
+                    baas_transfer_amount=e.get("baas_transfer_amount"),
+                )
+            )
+        except Exception:
+            logger.exception(
+                "GET /clients/%s/ledger — fila omitida por error de serialización: %r",
+                client_id,
+                e,
+            )
+            continue
     return ClientLedgerResponse(client_id=client_id, entries=entries)
 
 

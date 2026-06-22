@@ -1,6 +1,7 @@
 """Lógica de cobros CxC: numeración, asignación FIFO y ledger."""
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -25,6 +26,7 @@ from app.wallet_recharge_helpers import (
 _FP_EPS = Decimal("0.00005")
 _WR_EPS = 1e-6
 _CREDIT_BALANCES_CF_KEY = "credit_balance_by_currency"
+logger = logging.getLogger(__name__)
 
 
 def client_credit_balances_map(client: Client) -> dict[str, Decimal]:
@@ -1228,6 +1230,29 @@ def sweep_client_unallocated_funds_to_obligations_fifo(
     return created_all
 
 
+def try_sweep_client_credit_on_new_cxc(
+    db: Session,
+    client: Client,
+    *,
+    currency: str,
+    strict_accounting: bool = False,
+) -> None:
+    """Tras consolidar una nueva deuda CxC, cruza saldo a favor disponible (FIFO)."""
+    try:
+        sweep_client_unallocated_funds_to_obligations_fifo(
+            db,
+            client,
+            currency=normalize_currency_code(currency),
+            strict_accounting=strict_accounting,
+        )
+    except Exception:
+        logger.exception(
+            "Sweep saldo a favor tras nueva CxC falló client_id=%s currency=%s",
+            getattr(client, "id", None),
+            currency,
+        )
+
+
 def apply_payment_allocations(
     db: Session,
     payment: ClientPayment,
@@ -1466,11 +1491,14 @@ def apply_client_credit_to_sale_portal(
     client: Client,
     sale: Sale,
     *,
+    credit_amount: Optional[float] = None,
     strict_accounting: bool = True,
 ) -> tuple[Decimal, Optional[ClientPayment]]:
-    """Compatibilidad portal: encola cruce de saldo a favor en revisión (no auto-aprueba)."""
+    """Portal: cruza saldo a favor al instante (allocations desde cobros aprobados con remanente)."""
     _ = strict_accounting
-    return submit_client_credit_to_sale_for_review(db, client, sale)
+    return submit_client_credit_to_sale_for_review(
+        db, client, sale, credit_amount=credit_amount
+    )
 
 
 def submit_client_credit_to_wallet_recharge_for_review(
@@ -1526,12 +1554,27 @@ def apply_client_credit_to_wallet_recharge_portal(
     client: Client,
     req: WalletRechargeRequest,
     *,
+    credit_amount: Optional[float] = None,
     strict_accounting: bool = True,
-) -> float:
-    """Compatibilidad portal: encola cruce de saldo a favor en revisión (no auto-aprueba)."""
-    _ = strict_accounting
-    applied, _cp = submit_client_credit_to_wallet_recharge_for_review(db, client, req)
-    return applied
+) -> tuple[float, Optional[ClientPayment]]:
+    """
+    Portal: pago exclusivo con saldo a favor → cobro aprobado al instante + asignación FIFO.
+    """
+    applied, cp = submit_client_credit_to_wallet_recharge_for_review(
+        db, client, req, credit_amount=credit_amount
+    )
+    if applied <= _WR_EPS or cp is None:
+        return 0.0, None
+    finalize_client_payment_approval(
+        db,
+        cp,
+        manual_rows=[{"wallet_recharge_id": int(req.id)}],
+        fifo_fallback=True,
+        strict_accounting=strict_accounting,
+    )
+    db.refresh(req)
+    db.refresh(cp)
+    return applied, cp
 
 
 def refresh_sale_status_after_payment(db: Session, sale: Sale) -> None:
@@ -2954,15 +2997,21 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
             if p.status != ClientPaymentStatus.approved:
                 continue
             for a in p.allocations or []:
-                if int(a.sale_id) == int(s.id):
-                    related.append(
-                        {
-                            "type": "Pago",
-                            "ref_number": p.payment_number,
-                            "amount": float(a.amount_applied),
-                            "sale_id": None,
-                        }
-                    )
+                if a.sale_id is None:
+                    continue
+                try:
+                    if int(a.sale_id) != int(s.id):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                related.append(
+                    {
+                        "type": "Pago",
+                        "ref_number": str(p.payment_number or f"PAG-{p.id}"),
+                        "amount": float(a.amount_applied or 0),
+                        "sale_id": None,
+                    }
+                )
         entries.append(
             {
                 "date": date_str,
@@ -2982,15 +3031,38 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
     for p in payments:
         dt = p.created_at
         date_str = dt.isoformat() if dt else ""
-        related = [
-            {
-                "type": "Factura",
-                "ref_number": sale_ref_number(a.sale_id),
-                "amount": float(a.amount_applied),
-                "sale_id": a.sale_id,
-            }
-            for a in (p.allocations or [])
-        ]
+        related: list[dict] = []
+        for a in p.allocations or []:
+            try:
+                applied_f = float(a.amount_applied or 0)
+            except (TypeError, ValueError):
+                applied_f = 0.0
+            if a.sale_id is not None:
+                try:
+                    sid = int(a.sale_id)
+                except (TypeError, ValueError):
+                    continue
+                related.append(
+                    {
+                        "type": "Factura",
+                        "ref_number": sale_ref_number(sid),
+                        "amount": applied_f,
+                        "sale_id": sid,
+                    }
+                )
+            elif a.wallet_recharge_id is not None:
+                try:
+                    wr_id = int(a.wallet_recharge_id)
+                except (TypeError, ValueError):
+                    continue
+                related.append(
+                    {
+                        "type": "RECARGA",
+                        "ref_number": wallet_recharge_ref_number(wr_id),
+                        "amount": applied_f,
+                        "sale_id": None,
+                    }
+                )
         status_label = p.status.value if hasattr(p.status, "value") else str(p.status)
         if status_label == "pending_review":
             status_label = "En revisión"

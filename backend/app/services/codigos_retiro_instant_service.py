@@ -339,6 +339,7 @@ def instant_activation_cxc(
     from app.services.client_payment_service import (
         _approved_alloc_sum_for_sale,
         _sale_cxc_open_balance,
+        try_sweep_client_credit_on_new_cxc,
     )
 
     sale = resolve_sale_from_referencia_externa(
@@ -404,6 +405,17 @@ def instant_activation_cxc(
         sale.status = SaleStatus.approved
     elif sale.status not in (SaleStatus.approved, SaleStatus.partially_paid):
         sale.status = SaleStatus.approved
+
+    from app.models.client import Client
+
+    client = db.get(Client, int(client_id))
+    if client is not None:
+        try_sweep_client_credit_on_new_cxc(
+            db,
+            client,
+            currency=str(sale.currency or "USD"),
+            strict_accounting=False,
+        )
 
     db.commit()
     db.refresh(sale)

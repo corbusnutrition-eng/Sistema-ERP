@@ -884,6 +884,15 @@ def request_wallet_recharge(
         surplus_credited=0.0,
     )
     db.add(req)
+    db.flush()
+    from app.services.client_payment_service import try_sweep_client_credit_on_new_cxc
+
+    try_sweep_client_credit_on_new_cxc(
+        db,
+        client,
+        currency=normalize_currency_code(getattr(req, "recharge_currency", None), "USD"),
+        strict_accounting=False,
+    )
     db.commit()
     db.refresh(req)
     return req
@@ -1503,8 +1512,10 @@ def generate_wallet_recharge_link(
         db.flush()
 
         from app.services.client_currency_service import lock_client_base_currency_on_recharge_create
+        from app.services.client_payment_service import try_sweep_client_credit_on_new_cxc
 
         lock_client_base_currency_on_recharge_create(db, client, cur)
+        try_sweep_client_credit_on_new_cxc(db, client, currency=cur, strict_accounting=False)
 
         price_items = getattr(payload, "client_product_prices", None) or []
         if price_items:
