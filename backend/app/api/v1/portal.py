@@ -1422,11 +1422,14 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
 
         # Regla 2 (paralelo a instant_activation_cxc en ventas): entrega el producto,
         # devenga CxC al 100% y deja amount_paid=0 hasta confirmación del webhook del socio.
-        # balance_pending=0 evita que el admin la duplique en «Pendientes» (ese tab incluye
-        # approved/partially_paid con balance_pending>0). La CxC vive en el devengo contable.
+        # balance_pending refleja la deuda exigible; el tab «Pendientes» excluye estas filas
+        # vía META_RETIRO_INSTANT_CXC (sin ClientPayment en revisión para el admin).
+        from app.wallet_recharge_helpers import stamp_wallet_recharge_retiro_instant_cxc
+
         req.amount_paid = 0.0
-        req.balance_pending = 0.0
-        req.status = REQ_STATUS_PARTIALLY_PAID
+        req.balance_pending = round(product_total, 2)
+        req.status = REQ_STATUS_APPROVED
+        stamp_wallet_recharge_retiro_instant_cxc(req)
         ensure_wallet_recharge_accrual_journal(db, req, strict=True)
 
         db.commit()

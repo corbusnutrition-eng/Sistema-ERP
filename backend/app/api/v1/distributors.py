@@ -71,6 +71,7 @@ from app.wallet_recharge_helpers import (
     REQ_STATUS_REJECTED,
     normalize_wallet_recharge_list_status,
     payment_methods_display,
+    wallet_recharge_admin_pending_sql_filter,
 )
 from app.services import render_sync
 from app.services.catalog_client_picker_rows import local_clients_catalog_picker_rows
@@ -909,12 +910,7 @@ def list_wallet_recharge_requests(
             q = q.filter(
                 or_(
                     WalletRechargeRequest.status == REQ_STATUS_PENDING,
-                    and_(
-                        WalletRechargeRequest.status.in_(
-                            (REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_APPROVED)
-                        ),
-                        WalletRechargeRequest.balance_pending > 1e-6,
-                    ),
+                    wallet_recharge_admin_pending_sql_filter(),
                 )
             )
         elif sf == REQ_STATUS_APPROVED:
@@ -954,10 +950,7 @@ def wallet_recharge_request_metrics(db: DbDep, _: AdminDep) -> WalletRechargeReq
             m.canceled = c
     open_partial = (
         db.query(func.count(WalletRechargeRequest.id))
-        .filter(
-            WalletRechargeRequest.status.in_((REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_APPROVED)),
-            WalletRechargeRequest.balance_pending > 1e-6,
-        )
+        .filter(wallet_recharge_admin_pending_sql_filter())
         .scalar()
     )
     try:

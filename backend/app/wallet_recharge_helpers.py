@@ -30,6 +30,9 @@ OPEN_PORTAL_STATUSES = (REQ_STATUS_PENDING, REQ_STATUS_IN_REVIEW, REQ_STATUS_PAR
 
 _WR_BALANCE_EPS = 1e-6
 
+# Recarga activada en portal con Códigos de Retiro: billetera entregada, cobro pendiente de webhook.
+_RETIRO_INSTANT_CXC_MARKER = "META_RETIRO_INSTANT_CXC=1"
+
 
 def wallet_recharge_billing_currency(req) -> str:
     """Moneda de la solicitud de recarga (normalizada ISO)."""
@@ -138,6 +141,66 @@ def wallet_recharge_portal_historical_debt(req) -> bool:
         if paid > _WR_BALANCE_EPS:
             return False
     return st == REQ_STATUS_APPROVED
+
+
+def stamp_wallet_recharge_retiro_instant_cxc(req) -> None:
+    """Marca solicitud con activación instantánea retiro (CxC viva, sin cola admin)."""
+    note = str(getattr(req, "admin_note", "") or "").strip()
+    if _RETIRO_INSTANT_CXC_MARKER in note:
+        return
+    req.admin_note = (
+        f"{note}\n{_RETIRO_INSTANT_CXC_MARKER}".strip() if note else _RETIRO_INSTANT_CXC_MARKER
+    )
+
+
+def clear_wallet_recharge_retiro_instant_cxc(req) -> None:
+    """Quita la marca tras confirmar el cobro vía webhook del socio."""
+    note = str(getattr(req, "admin_note", "") or "").strip()
+    if _RETIRO_INSTANT_CXC_MARKER not in note:
+        return
+    lines = [ln for ln in note.splitlines() if ln.strip() != _RETIRO_INSTANT_CXC_MARKER]
+    req.admin_note = "\n".join(lines).strip() or None
+
+
+def wallet_recharge_awaiting_codigos_retiro_webhook(req) -> bool:
+    """True si la recarga espera confirmación del socio (no acción manual del admin)."""
+    if _RETIRO_INSTANT_CXC_MARKER not in str(getattr(req, "admin_note", "") or ""):
+        return False
+    return wallet_recharge_open_balance(req) > _WR_BALANCE_EPS
+
+
+def wallet_recharge_show_in_admin_pending_tab(req) -> bool:
+    """True si la solicitud debe aparecer en la pestaña «Pendientes» del panel admin."""
+    st = str(getattr(req, "status", "") or "")
+    if st == REQ_STATUS_PENDING:
+        return True
+    if wallet_recharge_open_balance(req) <= _WR_BALANCE_EPS:
+        return False
+    if st not in (REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_APPROVED):
+        return False
+    if wallet_recharge_awaiting_codigos_retiro_webhook(req):
+        return False
+    return True
+
+
+def wallet_recharge_admin_pending_sql_filter():
+    """
+    Filtro SQLAlchemy: recargas activadas/parciales con CxC viva que requieren cola admin.
+
+    Excluye activaciones instantáneas Códigos de Retiro (``META_RETIRO_INSTANT_CXC``).
+    """
+    from sqlalchemy import and_, or_
+
+    from app.models.wallet_recharge_request import WalletRechargeRequest
+
+    return and_(
+        WalletRechargeRequest.status.in_((REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_APPROVED)),
+        WalletRechargeRequest.balance_pending > _WR_BALANCE_EPS,
+        or_(
+            WalletRechargeRequest.admin_note.is_(None),
+            ~WalletRechargeRequest.admin_note.contains(_RETIRO_INSTANT_CXC_MARKER),
+        ),
+    )
 
 
 def wallet_recharge_contributes_to_client_debt(req) -> bool:

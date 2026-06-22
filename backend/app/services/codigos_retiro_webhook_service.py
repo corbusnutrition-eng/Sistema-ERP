@@ -21,18 +21,14 @@ from app.models.client_note import ClientNote
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
 from app.models.sale import Sale, SaleStatus
 from app.models.wallet_recharge_request import WalletRechargeRequest
-from app.models.wallet_transaction import WalletTransaction
 from app.services.client_payment_service import (
     _deduct_reserved_credit_on_payment_approval,
-    _wallet_credited_for_recharge_request,
-    add_client_credit_balance,
     apply_payment_allocations,
     parse_notes_meta_sale_id,
     refresh_sale_status_after_payment,
     sync_sale_amount_paid_from_allocations,
     void_client_payment,
 )
-from app.services.wallet_balance_service import add_client_wallet_balance
 from app.services.wallet_recharge_client_payment import (
     find_pending_client_payment_for_wallet_recharge,
     parse_notes_meta_wallet_recharge_id,
@@ -49,7 +45,6 @@ logger = logging.getLogger(__name__)
 
 _AMOUNT_EPS = Decimal("0.01")
 _WR_EPS = 1e-6
-_TX_RECHARGE = "recharge"
 _RETIRO_PM_HINTS = ("retiro", "codigo", "código")
 _META_EFECTIVO_RE = re.compile(r"PARTE_EFECTIVO=([\d.]+)", re.IGNORECASE)
 _META_RETIRO_WEBHOOK = "META_RETIRO_WEBHOOK=1"
@@ -154,6 +149,12 @@ def _parse_referencia_externa_sale_id(raw: Optional[str]) -> Optional[int]:
     return parse_referencia_externa_sale_id(raw)
 
 
+def _parse_referencia_externa_wallet_recharge_id(raw: Optional[str]) -> Optional[int]:
+    from app.services.codigos_retiro_instant_service import parse_referencia_externa_wallet_recharge_id
+
+    return parse_referencia_externa_wallet_recharge_id(raw)
+
+
 def find_retiro_transaction_by_referencia_externa(
     db: Session,
     *,
@@ -198,6 +199,37 @@ def find_retiro_transaction_by_referencia_externa(
         amount=target,
         client_payment=cp,
         sale=sale,
+    )
+
+
+def find_retiro_wallet_recharge_by_referencia_externa(
+    db: Session,
+    *,
+    referencia_externa: str,
+    amount: Decimal,
+) -> Optional[MatchedRetiroTransaction]:
+    """Localiza recarga BaaS por referencia externa (``REC-00042``)."""
+    wr_id = _parse_referencia_externa_wallet_recharge_id(referencia_externa)
+    if wr_id is None:
+        return None
+    req = db.get(WalletRechargeRequest, int(wr_id))
+    if req is None:
+        return None
+    pending = float(getattr(req, "balance_pending", 0) or 0)
+    if pending <= _WR_EPS:
+        return None
+    client = db.get(Client, int(req.client_id))
+    if client is None:
+        return None
+    target = amount.quantize(Decimal("0.01"))
+    cp = find_pending_client_payment_for_wallet_recharge(db, req)
+    if not any(_amount_matches(target, cand) for cand in _wallet_amount_candidates(req)):
+        return None
+    return MatchedRetiroTransaction(
+        client=client,
+        amount=target,
+        client_payment=cp,
+        wallet_recharge=req,
     )
 
 
@@ -289,7 +321,7 @@ def find_pending_retiro_transaction(
         db.query(WalletRechargeRequest)
         .filter(
             WalletRechargeRequest.client_id == cid,
-            WalletRechargeRequest.status.in_(OPEN_PORTAL_STATUSES),
+            WalletRechargeRequest.balance_pending > _WR_EPS,
         )
         .order_by(WalletRechargeRequest.created_at.desc(), WalletRechargeRequest.id.desc())
         .all()
@@ -472,6 +504,31 @@ def _stamp_sale_retiro_failed_note_only(
     )
 
 
+def _stamp_wallet_recharge_retiro_failed_note_only(
+    db: Session,
+    req: WalletRechargeRequest,
+    *,
+    amount: Decimal,
+    currency: str,
+    reason: str,
+) -> None:
+    """Registra fallo de retiro sin revertir billetera ni CxC (recarga ya activada)."""
+    db.add(
+        ClientNote(
+            client_id=int(req.client_id),
+            user_id=None,
+            note=reason[:2000],
+            created_at=now_ecuador(),
+        )
+    )
+    logger.info(
+        "Webhook retiro fallido (recarga BaaS #%s activada): monto=%s %s — CxC sin cambios",
+        req.id,
+        float(amount),
+        currency,
+    )
+
+
 def _approve_client_payment_retiro_light(
     db: Session,
     cp: ClientPayment,
@@ -533,101 +590,6 @@ def _approve_client_payment_retiro_light(
         ensure_retiro_webhook_deposit_account(db, cp, client=client, sale=linked_sale)
         db.flush()
         sync_retiro_webhook_payment_accounting(db, cp, strict=True)
-
-
-def _approve_wallet_recharge_retiro_light(
-    db: Session,
-    ctx: MatchedRetiroTransaction,
-) -> WalletTransaction:
-    """
-    Aprueba recarga BaaS vía webhook del socio: estado ``approved``, saldo en billetera
-    y notificación al portal. Sin devengo contable ni descuento de inventario del socio.
-    """
-    req = ctx.wallet_recharge
-    if req is None:
-        raise ValueError("No hay solicitud de recarga vinculada.")
-
-    st = str(getattr(req, "status", "") or "")
-    if st not in OPEN_PORTAL_STATUSES:
-        raise ValueError(f"La recarga #{req.id} no está pendiente ni en revisión ({st}).")
-
-    recv = float(ctx.amount)
-    pending_before = float(getattr(req, "balance_pending", 0) or 0)
-    if pending_before <= _WR_EPS:
-        pending_before = float(getattr(req, "amount_requested", 0) or recv)
-    applied = min(recv, pending_before) if pending_before > _WR_EPS else recv
-    surplus = max(0.0, recv - applied)
-    wr_cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
-
-    product_total = float(getattr(req, "amount_requested", 0) or 0)
-    credited_so_far = _wallet_credited_for_recharge_request(db, req)
-    wallet_to_add = max(0.0, round(product_total - credited_so_far, 2))
-    if wallet_to_add > _WR_EPS:
-        add_client_wallet_balance(db, ctx.client, wr_cur, wallet_to_add)
-
-    if surplus > _WR_EPS:
-        add_client_credit_balance(db, ctx.client, wr_cur, Decimal(str(surplus)))
-        req.surplus_credited = float(getattr(req, "surplus_credited", 0) or 0) + surplus
-
-    req.amount_paid = float(getattr(req, "amount_paid", 0) or 0) + applied
-    pending_after = max(0.0, pending_before - applied)
-    req.balance_pending = pending_after
-    req.status = REQ_STATUS_APPROVED if pending_after <= _WR_EPS else REQ_STATUS_PARTIALLY_PAID
-    if pending_after <= _WR_EPS:
-        req.balance_pending = 0.0
-
-    desc = (
-        f"Recarga webhook retiro (solicitud #{req.id}): percibido {recv:.2f}"
-        f" · billetera +{wallet_to_add:.2f}"
-        f" · saldo solicitud {pending_after:.2f}"
-    )
-    if surplus > _WR_EPS:
-        desc += f" · excedente a favor +{surplus:.2f}"
-
-    tx = WalletTransaction(
-        user_id=None,
-        client_id=int(ctx.client.id),
-        amount=wallet_to_add if wallet_to_add > _WR_EPS else recv,
-        transaction_type=_TX_RECHARGE,
-        description=desc,
-    )
-    db.add(tx)
-    db.flush()
-
-    cp = ctx.client_payment or find_pending_client_payment_for_wallet_recharge(db, req)
-    if cp is not None:
-        _approve_client_payment_retiro_light(db, cp)
-
-    db.flush()
-    return tx
-
-
-def _approve_wallet_recharge(
-    db: Session,
-    ctx: MatchedRetiroTransaction,
-) -> None:
-    tx = _approve_wallet_recharge_retiro_light(db, ctx)
-    db.commit()
-
-    notify_email = str(ctx.client.email or "").strip()
-    if notify_email:
-        try:
-            from app.services import render_sync
-
-            req = ctx.wallet_recharge
-            credited = float(getattr(req, "amount_requested", 0) or ctx.amount) if req else float(ctx.amount)
-            render_sync.notify_sumar_saldo_billetera(notify_email, credited)
-        except Exception:
-            logger.exception(
-                "Webhook retiro: no se pudo notificar Render tras aprobar recarga id=%s",
-                ctx.wallet_recharge.id if ctx.wallet_recharge else None,
-            )
-
-    logger.info(
-        "Webhook retiro: recarga BaaS aprobada (sin contabilidad/inventario socio) wr=%s tx=%s",
-        ctx.wallet_recharge.id if ctx.wallet_recharge else None,
-        tx.id,
-    )
 
 
 def _approve_sale_retiro_light(db: Session, ctx: MatchedRetiroTransaction) -> None:
@@ -699,6 +661,19 @@ def process_codigos_retiro_webhook(
                 ref,
                 es_prueba,
             )
+        if match is None:
+            match = find_retiro_wallet_recharge_by_referencia_externa(
+                db,
+                referencia_externa=ref,
+                amount=amount,
+            )
+            if match is not None:
+                logger.info(
+                    "Webhook retiro: recarga BaaS #%s enlazada por referencia_externa=%r (es_prueba=%s)",
+                    match.wallet_recharge.id if match.wallet_recharge else None,
+                    ref,
+                    es_prueba,
+                )
 
     if match is None:
         client = find_client_by_retiro_label(db, cliente)
@@ -733,11 +708,23 @@ def _process_completado(
 ) -> dict[str, object]:
     try:
         if ctx.wallet_recharge is not None:
-            _approve_wallet_recharge(db, ctx)
+            from app.services.codigos_retiro_instant_service import (
+                register_retiro_webhook_wallet_recharge_abono,
+            )
+
+            payment_id = register_retiro_webhook_wallet_recharge_abono(
+                db,
+                req=ctx.wallet_recharge,
+                client=ctx.client,
+                amount=ctx.amount,
+                es_prueba=es_prueba,
+            )
+            db.commit()
             return {
                 "ok": True,
-                "message": "Recarga BaaS aprobada (billetera acreditada; sin contabilidad del socio).",
+                "message": "Abono CxC registrado por webhook de códigos de retiro (recarga BaaS).",
                 "wallet_recharge_id": int(ctx.wallet_recharge.id),
+                "payment_id": payment_id,
                 "client_id": int(ctx.client.id),
             }
 
@@ -840,6 +827,28 @@ def _process_fallido(
                 "sale_id": int(sale.id),
                 "es_prueba": es_prueba,
             }
+
+        req = ctx.wallet_recharge
+        if req is not None:
+            from app.wallet_recharge_helpers import wallet_recharge_awaiting_codigos_retiro_webhook
+
+            if wallet_recharge_awaiting_codigos_retiro_webhook(req):
+                cur = _resolve_currency(ctx)
+                _stamp_wallet_recharge_retiro_failed_note_only(
+                    db,
+                    req,
+                    amount=ctx.amount,
+                    currency=cur,
+                    reason=reason,
+                )
+                db.commit()
+                return {
+                    "ok": True,
+                    "message": "Retiro fallido registrado; billetera y CxC sin cambios.",
+                    "client_id": int(ctx.client.id),
+                    "wallet_recharge_id": int(req.id),
+                    "es_prueba": es_prueba,
+                }
 
         if cp is not None and cp.status == ClientPaymentStatus.pending_review:
             void_client_payment(
