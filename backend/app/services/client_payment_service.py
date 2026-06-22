@@ -391,7 +391,7 @@ def _apply_amount_to_wallet_recharge(
     payment: ClientPayment,
     apply: Decimal,
 ) -> None:
-    """Reduce CxC de recarga BaaS (la billetera se acredita en ``credit_wallet_on_baas_fifo_allocation``)."""
+    """Reduce CxC de recarga BaaS (entrega virtual al primer abono vía ``credit_wallet_on_baas_fifo_allocation``)."""
     from app.wallet_recharge_helpers import (
         REQ_STATUS_APPROVED,
         REQ_STATUS_PARTIALLY_PAID,
@@ -909,6 +909,12 @@ def _apply_allocation_slice_to_obligation(
         )
         if cap <= _FP_EPS:
             return None
+        credit_wallet_on_baas_fifo_allocation(
+            db,
+            wallet_recharge,
+            cap,
+            payment=payment,
+        )
         _apply_amount_to_wallet_recharge(db, wallet_recharge, payment, cap)
         alloc = PaymentAllocation(
             payment_id=int(payment.id),
@@ -916,12 +922,6 @@ def _apply_allocation_slice_to_obligation(
             amount_applied=cap,
         )
         db.add(alloc)
-        credit_wallet_on_baas_fifo_allocation(
-            db,
-            wallet_recharge,
-            cap,
-            payment=payment,
-        )
         if session_allocated_wr is not None:
             rid = int(wallet_recharge.id)
             session_allocated_wr[rid] = _q_amt(session_allocated_wr.get(rid, Decimal("0")) + cap)
@@ -3478,17 +3478,22 @@ def credit_wallet_on_baas_fifo_allocation(
     payment: Optional[ClientPayment] = None,
 ) -> float:
     """
-    Acredita billetera virtual por cada abono FIFO a recarga BaaS (proporcional al monto aplicado).
+    Modelo crédito BaaS: en el **primer** abono FIFO entrega el 100% del producto solicitado.
 
-    Omite recargas con ``META_RETIRO_INSTANT_CXC`` (producto ya entregado al activar).
+    - Abono parcial (p. ej. $12 sobre solicitud $100) → billetera +$100 de una vez.
+    - Abonos posteriores solo reducen ``balance_pending`` (sin nueva entrega).
+    - Omite ``META_RETIRO_INSTANT_CXC`` (producto ya entregado al activar).
     """
-    from app.wallet_recharge_helpers import wallet_recharge_is_retiro_instant_cxc
+    from app.wallet_recharge_helpers import (
+        wallet_recharge_is_retiro_instant_cxc,
+        wallet_recharge_virtual_product_already_delivered,
+    )
 
     if wallet_recharge_is_retiro_instant_cxc(req):
         return 0.0
-
-    wallet_amt = float(_q_amt(allocated_amount))
-    if wallet_amt <= _WR_EPS:
+    if _q_amt(allocated_amount) <= _FP_EPS:
+        return 0.0
+    if wallet_recharge_virtual_product_already_delivered(db, req):
         return 0.0
 
     client = db.get(Client, int(req.client_id))
@@ -3496,39 +3501,7 @@ def credit_wallet_on_baas_fifo_allocation(
         return 0.0
 
     wr_cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
-    from app.models.wallet_transaction import WalletTransaction
-    from app.services.wallet_balance_service import add_client_wallet_balance
-
-    add_client_wallet_balance(db, client, wr_cur, wallet_amt)
-
-    pay_ref = ""
-    if payment is not None:
-        pay_ref = str(getattr(payment, "payment_number", None) or f"PAG-{payment.id}").strip()
-
-    db.add(
-        WalletTransaction(
-            user_id=None,
-            client_id=int(client.id),
-            amount=wallet_amt,
-            transaction_type=_TX_RECHARGE,
-            description=(
-                f"Recarga abono (solicitud #{int(req.id)}): abono FIFO {wallet_amt:.2f} "
-                f"· billetera +{wallet_amt:.2f}"
-                + (f" · cobro {pay_ref}" if pay_ref else "")
-            ),
-        )
-    )
-    db.flush()
-
-    from app.services.client_currency_service import maybe_set_client_base_currency_from_recharge
-
-    maybe_set_client_base_currency_from_recharge(
-        db,
-        client,
-        wr_cur,
-        recharge_request_id=int(req.id),
-    )
-    return wallet_amt
+    return credit_wallet_recharge_product_if_pending(db, req, client, wr_cur)
 
 
 def credit_wallet_recharge_product_if_pending(
@@ -3538,9 +3511,9 @@ def credit_wallet_recharge_product_if_pending(
     currency: str,
 ) -> float:
     """
-    Acredita ``amount_requested`` a la billetera solo si el producto aún no fue entregado.
+    Entrega única del producto virtual (``amount_requested`` completo) al primer abono.
 
-    Registra ``WalletTransaction`` auditable (evita doble entrega en abonos posteriores).
+    Usa movimientos de billetera vinculados a la solicitud como candado anti doble entrega.
     """
     from app.wallet_recharge_helpers import wallet_recharge_virtual_product_already_delivered
 
@@ -3643,7 +3616,7 @@ def finalize_wallet_recharge_payment_approval(
     """
     Aprueba un comprobante BaaS en revisión (admin):
 
-    - Recargas estándar: billetera +FIFO proporcional al aprobar (``credit_wallet_on_baas_fifo_allocation``).
+    - Recargas estándar: entrega total al primer abono FIFO (``credit_wallet_on_baas_fifo_allocation``).
     - Retiro instantáneo CxC: entrega virtual pendiente vía ``credit_wallet_recharge_product_if_pending``.
     - Aprueba ``ClientPayment`` vía ``finalize_client_payment_approval`` + FIFO cruzado.
     - Excedente → remanente en cobro (saldo a favor vía ledger).

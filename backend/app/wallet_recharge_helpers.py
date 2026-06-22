@@ -163,7 +163,8 @@ def wallet_recharge_virtual_product_already_delivered(db: Session, req) -> bool:
     """
     Candado de acreditación: True si el saldo virtual ya fue entregado para esta solicitud.
 
-    Cuando es True, el portal y la aprobación admin NO deben volver a sumar billetera.
+    Tras la primera entrega (100% del ``amount_requested``), abonos parciales posteriores
+    solo liquidan CxC y no vuelven a sumar billetera.
     """
     if wallet_recharge_portal_abono_requires_manual_review(req):
         return True
