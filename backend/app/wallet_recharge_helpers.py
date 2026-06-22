@@ -117,11 +117,16 @@ def wallet_recharge_open_balance(req) -> float:
 def wallet_recharge_accepts_client_receipt(req) -> bool:
     """Cliente puede adjuntar comprobante (inicial o abono adicional contra CxC)."""
     st = str(getattr(req, "status", "") or "")
-    if st == REQ_STATUS_PENDING:
-        return True
-    if st in (REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_APPROVED):
-        return wallet_recharge_open_balance(req) > _WR_BALANCE_EPS
-    return False
+    if st in (REQ_STATUS_REJECTED, REQ_STATUS_CANCELED):
+        return False
+    if wallet_recharge_open_balance(req) <= _WR_BALANCE_EPS:
+        return False
+    return st in (
+        REQ_STATUS_PENDING,
+        REQ_STATUS_IN_REVIEW,
+        REQ_STATUS_PARTIALLY_PAID,
+        REQ_STATUS_APPROVED,
+    )
 
 
 def wallet_recharge_portal_historical_debt(req) -> bool:

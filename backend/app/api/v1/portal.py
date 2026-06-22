@@ -251,6 +251,55 @@ def _pending_review_alloc_sum(db: Session, sale_id: int) -> Decimal:
         return Decimal("0")
 
 
+def _validate_portal_wallet_recharge_declared_amount(
+    req: WalletRechargeRequest,
+    declared: float,
+    *,
+    pending_review_total: float = 0.0,
+) -> None:
+    """Impide que la suma de abonos en revisión + nuevo monto supere el saldo CxC abierto."""
+    from app.wallet_recharge_helpers import wallet_recharge_open_balance
+
+    open_bal = wallet_recharge_open_balance(req)
+    if declared <= 1e-6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El importe declarado debe ser mayor a cero.",
+        )
+    pending_f = max(0.0, float(pending_review_total or 0))
+    if declared + pending_f > open_bal + 1e-6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"El monto indicado ({declared:.2f}) más los abonos en revisión ({pending_f:.2f}) "
+                f"supera el saldo pendiente ({open_bal:.2f})."
+            ),
+        )
+
+
+def _validate_portal_sale_deposit_amount(
+    balance: Decimal,
+    deposit_part: Decimal,
+    *,
+    pending_review_total: Decimal = Decimal("0"),
+) -> None:
+    """Impide sobrepagar una venta con depósitos acumulados en revisión."""
+    if deposit_part <= _FP_EPS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Indica el importe del depósito (debe ser mayor a 0).",
+        )
+    pending = max(Decimal("0"), pending_review_total)
+    if deposit_part + pending > balance + Decimal("0.01"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"El monto del depósito ({float(deposit_part):.2f}) más los abonos en revisión "
+                f"({float(pending):.2f}) supera el saldo pendiente ({float(balance):.2f})."
+            ),
+        )
+
+
 def _portal_effective_amount_paid(db: Session, sale: Sale) -> Decimal:
     from app.services.client_payment_service import (
         _approved_alloc_sum_for_sale,
@@ -1351,8 +1400,12 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
     if not wallet_recharge_accepts_client_receipt(req):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Solo puedes adjuntar comprobante cuando la solicitud está pendiente o activada con saldo CxC pendiente.",
+            detail="No hay saldo pendiente en esta solicitud o no admite nuevos comprobantes.",
         )
+
+    from app.services.wallet_recharge_client_payment import sum_pending_client_payments_for_wallet_recharge
+
+    pending_review_total = sum_pending_client_payments_for_wallet_recharge(db, req)
 
     _validate_wallet_recharge_declared_payment_method(db, req, payment_method_id)
     _validate_wallet_recharge_deposit_account(db, req, deposit_account_id)
@@ -1395,6 +1448,11 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El importe declarado debe ser mayor a cero.",
             )
+        _validate_portal_wallet_recharge_declared_amount(
+            req,
+            paid_f,
+            pending_review_total=pending_review_total,
+        )
 
         was_partial = float(getattr(req, "amount_paid", 0) or 0) > 1e-6
         receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url_form)
@@ -1466,14 +1524,24 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El importe declarado debe ser mayor a cero.",
         )
+    _validate_portal_wallet_recharge_declared_amount(
+        req,
+        paid_f,
+        pending_review_total=pending_review_total,
+    )
 
-    was_partial = float(getattr(req, "amount_paid", 0) or 0) > 1e-6
+    was_partial = float(getattr(req, "amount_paid", 0) or 0) > 1e-6 or pending_review_total > 1e-6
 
     receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url_form)
     req.receipt_url = receipt_url
-    req.status = REQ_STATUS_IN_REVIEW
     req.portal_declared_payment_amount = paid_f
     req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
+    st_now = str(getattr(req, "status", "") or "")
+    if st_now in (REQ_STATUS_APPROVED, REQ_STATUS_PARTIALLY_PAID):
+        if float(getattr(req, "amount_paid", 0) or 0) > 1e-6:
+            req.status = REQ_STATUS_PARTIALLY_PAID
+    else:
+        req.status = REQ_STATUS_IN_REVIEW
 
     from app.services.wallet_recharge_client_payment import ensure_pending_client_payment_for_wallet_recharge
 
@@ -1485,6 +1553,7 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         deposit_account_id=int(deposit_account_id) if deposit_account_id is not None else None,
         declared_amount=paid_f,
         credit_amount=credit_amount,
+        always_create_new=True,
     )
     db.commit()
     db.refresh(req)
@@ -2161,8 +2230,15 @@ async def portal_submit_payment(
                     detail="Indica portal_wallet_recharge_id para pagar una recarga.",
                 )
             req_wr = db.get(WalletRechargeRequest, int(tgt_wr_ab))
-            if req_wr is None:
+            if req_wr is None or int(req_wr.client_id) != int(client.id):
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud de recarga no encontrada.")
+            from app.services.wallet_recharge_client_payment import sum_pending_client_payments_for_wallet_recharge
+
+            _validate_portal_wallet_recharge_declared_amount(
+                req_wr,
+                amt,
+                pending_review_total=sum_pending_client_payments_for_wallet_recharge(db, req_wr),
+            )
 
             req_done = await apply_portal_wallet_recharge_client_receipt_upload(
                 db,
@@ -2225,6 +2301,12 @@ async def portal_submit_payment(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Esta factura no tiene saldo pendiente.",
                 )
+            pending_rev_ab = _pending_review_alloc_sum(db, int(sale_ab.id))
+            _validate_portal_sale_deposit_amount(
+                bal_ab,
+                amt_dec_ab,
+                pending_review_total=pending_rev_ab,
+            )
             from app.services.client_payment_service import cap_allocation_for_sale
 
             alloc_ab = cap_allocation_for_sale(db, payment, sale_ab, amt_dec_ab).quantize(
@@ -2466,11 +2548,12 @@ async def portal_submit_payment(
 
     stored_receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url)
 
-    if deposit_part <= Decimal("0"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Indica el importe del depósito (debe ser mayor a 0).",
-        )
+    pending_rev_sale = _pending_review_alloc_sum(db, int(sale.id))
+    _validate_portal_sale_deposit_amount(
+        balance,
+        deposit_part,
+        pending_review_total=pending_rev_sale,
+    )
 
     total_pay = (credit_apply + deposit_part).quantize(Decimal("0.01"))
     if total_pay <= _FP_EPS:

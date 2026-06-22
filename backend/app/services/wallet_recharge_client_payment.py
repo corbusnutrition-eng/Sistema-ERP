@@ -61,6 +61,32 @@ def _first_allowed_payment_method_id(req: WalletRechargeRequest) -> Optional[int
     return None
 
 
+def sum_pending_client_payments_for_wallet_recharge(
+    db: Session,
+    req: WalletRechargeRequest,
+) -> float:
+    """Suma montos de ``ClientPayment`` en revisión vinculados a la solicitud BaaS."""
+    rid = int(req.id)
+    cid = int(req.client_id)
+    total = 0.0
+    pending = (
+        db.query(ClientPayment)
+        .filter(
+            ClientPayment.client_id == cid,
+            ClientPayment.status == ClientPaymentStatus.pending_review,
+        )
+        .all()
+    )
+    for cp in pending:
+        if parse_notes_meta_wallet_recharge_id(cp.notes) != rid:
+            continue
+        try:
+            total += float(cp.amount or 0)
+        except (TypeError, ValueError):
+            continue
+    return round(total, 2)
+
+
 def find_pending_client_payment_for_wallet_recharge(
     db: Session,
     req: WalletRechargeRequest,
@@ -94,9 +120,13 @@ def ensure_pending_client_payment_for_wallet_recharge(
     deposit_account_id: Optional[int] = None,
     declared_amount: Optional[float] = None,
     credit_amount: Optional[float] = None,
+    always_create_new: bool = False,
 ) -> Optional[ClientPayment]:
     """
-    Crea o actualiza un ``ClientPayment`` en revisión vinculado a la solicitud BaaS.
+    Crea un ``ClientPayment`` en revisión vinculado a la solicitud BaaS.
+
+    Con ``always_create_new=True`` (portal con abonos múltiples) siempre inserta una fila nueva
+    aunque ya exista otro cobro ``pending_review`` para la misma solicitud.
     """
     receipt = str(getattr(req, "receipt_url", None) or "").strip()
     try:
@@ -139,7 +169,7 @@ def ensure_pending_client_payment_for_wallet_recharge(
             except (TypeError, ValueError):
                 dep_id = None
 
-    existing = find_pending_client_payment_for_wallet_recharge(db, req)
+    existing = None if always_create_new else find_pending_client_payment_for_wallet_recharge(db, req)
     notes = build_wallet_recharge_payment_notes(
         int(req.id),
         total_f,
@@ -245,6 +275,7 @@ def ensure_pending_wallet_recharge_credit_payment(
         client=client,
         declared_amount=0.0,
         credit_amount=credit_f,
+        always_create_new=True,
     )
 
 

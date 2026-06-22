@@ -398,13 +398,22 @@ def _build_wallet_recharge_public_detail(db: Session, req: WalletRechargeRequest
             )
         )
 
+    from app.wallet_recharge_helpers import wallet_recharge_accepts_client_receipt, wallet_recharge_open_balance
+
+    open_bal = wallet_recharge_open_balance(req)
+    can_submit = wallet_recharge_accepts_client_receipt(req)
+
     if req.status == REQ_STATUS_PENDING:
         msg = "Realiza el pago usando una de las cuentas indicadas y sube tu comprobante."
-        can_submit = True
+    elif can_submit and open_bal > 1e-6:
+        msg = (
+            f"Saldo restante a pagar: {open_bal:.2f} "
+            f"{normalize_currency_code(getattr(req, 'recharge_currency', None), 'USD')}. "
+            "Puedes enviar abonos parciales adicionales con un nuevo comprobante."
+        )
     elif req.status == REQ_STATUS_IN_REVIEW:
-        msg = "Ya recibimos tu comprobante. Está pendiente de revisión por administración."
-        can_submit = False
-    elif req.status == REQ_STATUS_APPROVED:
+        msg = "Hay comprobante(s) en revisión. Cuando se aprueben, actualizaremos tu saldo."
+    elif req.status == REQ_STATUS_APPROVED and open_bal <= 1e-6:
         msg = "Esta solicitud ya fue aprobada y acreditada."
         can_submit = False
     elif req.status == REQ_STATUS_REJECTED:
@@ -421,6 +430,8 @@ def _build_wallet_recharge_public_detail(db: Session, req: WalletRechargeRequest
 
     return WalletRechargePublicDetail(
         amount_requested=float(req.amount_requested),
+        balance_pending=round(open_bal, 2),
+        amount_paid=float(getattr(req, "amount_paid", 0) or 0),
         recharge_currency=normalize_currency_code(getattr(req, "recharge_currency", None), "USD"),
         recharge_exchange_rate=float(getattr(req, "recharge_exchange_rate", None) or 1.0),
         admin_precheck_receipt_url=precheck,

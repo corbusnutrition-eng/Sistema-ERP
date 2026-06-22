@@ -67,16 +67,22 @@ export default function RechargePortalPage() {
       )
       if (!res.ok) throw new Error(await readErrorDetail(res))
       const updated = await res.json()
-      setDoneMsg('Comprobante enviado correctamente. Tu solicitud está pendiente de revisión.')
+      setDoneMsg('Comprobante enviado correctamente. Puedes enviar abonos adicionales mientras quede saldo pendiente.')
       setFile(null)
       setDetail((prev) =>
         prev
           ? {
               ...prev,
-              status: updated.status || 'in_review',
-              can_submit_receipt: false,
+              status: updated.status || prev.status,
+              balance_pending:
+                updated.balance_pending != null ? Number(updated.balance_pending) : prev.balance_pending,
+              can_submit_receipt:
+                updated.can_submit_receipt != null ?
+                  Boolean(updated.can_submit_receipt)
+                : Number(updated.balance_pending ?? prev.balance_pending ?? 0) > 1e-6,
               status_message:
-                'Ya recibimos tu comprobante. Está pendiente de revisión por administración.',
+                updated.status_message ||
+                'Comprobante recibido. Puedes enviar abonos adicionales si aún hay saldo pendiente.',
             }
           : prev,
       )
@@ -173,6 +179,12 @@ export default function RechargePortalPage() {
                   </p>
                 : null}
                 <p className="text-xs text-slate-500 mt-2">{detail.status_message}</p>
+                {Number(detail.balance_pending) > 1e-6 ? (
+                  <p className="text-sm font-semibold text-amber-800 mt-2">
+                    Saldo restante a pagar:{' '}
+                    {formatBillingAmount(detail.balance_pending, detail.recharge_currency)}
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-4">

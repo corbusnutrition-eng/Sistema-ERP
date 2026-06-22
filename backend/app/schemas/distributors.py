@@ -988,6 +988,8 @@ class WalletRechargePublicMethodGroup(BaseModel):
 
 class WalletRechargePublicDetail(BaseModel):
     amount_requested: float
+    balance_pending: float = 0.0
+    amount_paid: float = 0.0
     recharge_currency: str = "USD"
     recharge_exchange_rate: float = 1.0
     admin_precheck_receipt_url: Optional[str] = None

@@ -424,18 +424,43 @@ function portalLastClientPaymentRejected(data) {
   return false
 }
 
-function portalRechargeHasBlockingPayment(recharge) {
+function portalRechargeHasPaymentsInReview(recharge) {
   const st = String(recharge?.status ?? '').toLowerCase()
   return st === 'in_review' || st === 'pending_review'
 }
 
+/** @deprecated Use portalRechargeHasPaymentsInReview for banners; form visibility uses open balance only. */
+function portalRechargeHasBlockingPayment(recharge) {
+  return portalRechargeHasPaymentsInReview(recharge)
+}
+
 function portalCanShowPayFormForRecharge(recharge) {
-  return portalRechargeOpenBalance(recharge) > 1e-9 && !portalRechargeHasBlockingPayment(recharge)
+  return portalRechargeOpenBalance(recharge) > 1e-9
 }
 
 function portalRechargeLastPaymentRejected(recharge) {
   const st = String(recharge?.status ?? '').toLowerCase()
   return st === 'rejected' || st === 'failed'
+}
+
+function PortalPaymentsInReviewBanner({ message = PORTAL_REVIEW_SUCCESS_MSG }) {
+  return (
+    <div
+      role="status"
+      style={{
+        marginBottom: 14,
+        padding: '12px 14px',
+        borderRadius: 14,
+        background: 'rgba(34,197,94,0.12)',
+        border: '1px solid rgba(52,211,153,0.35)',
+        fontSize: 13,
+        lineHeight: 1.55,
+        color: '#bbf7d0',
+      }}
+    >
+      {message}
+    </div>
+  )
 }
 
 function PortalPaymentRejectedBanner() {
@@ -482,17 +507,12 @@ function isPortalNewOrderSale(sale) {
   return portalSaleOpenBalance(sale) > 1e-9
 }
 
-/** Recarga destacada en «Nuevos pedidos»: pendiente/parcial/activada con abono y saldo vivo. */
+/** Recarga destacada en «Nuevos pedidos»: cualquier solicitud con saldo CxC vivo. */
 function isPortalNewOrderWalletRecharge(r) {
-  const st = String(r?.status ?? '').toLowerCase()
   const open = portalRechargeOpenBalance(r)
   if (!(open > 1e-9)) return false
-  if (st === 'pending' || st === 'partially_paid') return true
-  if (st === 'approved') {
-    const paid = parseMoneyNum(r?.amount_paid)
-    return Number.isFinite(paid) && paid > 1e-9
-  }
-  return false
+  const st = String(r?.status ?? '').toLowerCase()
+  return st !== 'rejected' && st !== 'canceled'
 }
 
 /** Deuda real en «Saldo pendiente»: excluye pedidos abiertos del acordeón «Nuevos pedidos». */
@@ -3566,20 +3586,12 @@ function ClientPortalPageInner() {
       setFeaturedDebtForm((p) => ({ ...p, error: 'Identificador de recarga inválido.' }))
       return
     }
-    const st = String(row.status ?? '').toLowerCase()
     const pendingBal = parseMoneyNum(row.balance_pending)
-    const canUpload =
-      st === 'pending' || st === 'partially_paid' || (st === 'approved' && pendingBal > 1e-9)
-    if (!canUpload) {
+    if (!(portalCanShowPayFormForRecharge(row) && pendingBal > 1e-9)) {
       setFeaturedDebtForm((p) => ({
         ...p,
-        error:
-          'Solo puedes enviar un comprobante cuando la solicitud está pendiente o activada con saldo CxC pendiente (no en revisión).',
+        error: 'Esta solicitud no tiene saldo pendiente por cubrir o no admite nuevos comprobantes.',
       }))
-      return
-    }
-    if (!(pendingBal > 1e-9)) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'Esta solicitud no tiene saldo pendiente por cubrir.' }))
       return
     }
 
@@ -5462,7 +5474,9 @@ function ClientPortalPageInner() {
             const stLc = String(fr.status ?? '').toLowerCase()
             const showPayForm = portalCanShowPayFormForRecharge(fr)
             const featLastPaymentRejected = portalRechargeLastPaymentRejected(fr)
-            const featShowReviewSuccess = featuredDebtForm.success && portalRechargeHasBlockingPayment(fr)
+            const featPaymentsInReview = portalRechargeHasPaymentsInReview(fr)
+            const featShowReviewBanner =
+              (featuredDebtForm.success || featPaymentsInReview) && showPayForm
             const featuredDepResolved =
               featuredDebtForm.account ||
               (featuredDepositAccounts[0]?.id != null ? String(featuredDepositAccounts[0].id) : '')
@@ -5502,7 +5516,10 @@ function ClientPortalPageInner() {
               : Number.isFinite(amountReq) && amountReq > 1e-9 ? amountReq
               : pend > 1e-9 ? pend
               : 0
-            const headlineCaption = isFeatPartial ? 'Saldo pendiente' : 'Total a pagar'
+            const headlineCaption =
+              pend > 1e-9 ? 'Saldo restante a pagar'
+              : isFeatPartial ? 'Saldo pendiente'
+              : 'Total a pagar'
             const featUxHint = portalNewOrderPayMissingHint({
               submitting: featuredDebtForm.submitting,
               reservationExpired: false,
@@ -5525,21 +5542,7 @@ function ClientPortalPageInner() {
 
             return (
               <div style={{ marginTop: 12, marginBottom: 28 }}>
-                {featShowReviewSuccess ? (
-                  <div
-                    style={{
-                      padding: '22px 18px',
-                      borderRadius: 22,
-                      background: 'linear-gradient(180deg, rgba(34,197,94,0.18), rgba(15,23,42,0.72))',
-                      border: '1px solid rgba(52,211,153,0.35)',
-                      textAlign: 'center',
-                    }}
-                  >
-                    <p style={{ margin: 0, fontSize: 15, fontWeight: 650, color: '#bbf7d0' }}>
-                      {PORTAL_REVIEW_SUCCESS_MSG}
-                    </p>
-                  </div>
-                ) : !showPayForm ? (
+                {!showPayForm ? (
                   <p
                     style={{
                       margin: 0,
@@ -5552,12 +5555,7 @@ function ClientPortalPageInner() {
                       color: '#fef3c7',
                     }}
                   >
-                    {stLc === 'in_review' ?
-                      <>
-                        Ya enviaste un comprobante para <strong>{refStr}</strong>. Está <strong>en revisión</strong>: el
-                        equipo lo validará y actualizará tu saldo.
-                      </>
-                    : pend <= 1e-9 ?
+                    {pend <= 1e-9 ?
                       <>Esta solicitud no tiene saldo pendiente por cubrir.</>
                     : featLastPaymentRejected ?
                       <>
@@ -5577,6 +5575,9 @@ function ClientPortalPageInner() {
                     }}
                     style={{ display: 'flex', flexDirection: 'column', gap: 0 }}
                   >
+                    {featShowReviewBanner ? (
+                      <PortalPaymentsInReviewBanner message="Recibimos tu comprobante. Puedes enviar abonos adicionales mientras quede saldo pendiente." />
+                    ) : null}
                     {featLastPaymentRejected ? <PortalPaymentRejectedBanner /> : null}
                     <PortalNeoOrderSummaryCard
                       headlineAmountFormatted={formatMoney(headlineAmt, cur)}
@@ -5787,30 +5788,29 @@ function ClientPortalPageInner() {
                     ) : null}
 
                     {isFeaturedRetiro ? (
-                      (retiroSuccessByScope?.scope === 'featured' || featuredDebtForm.success)
-                      && portalRechargeHasBlockingPayment(fr) ? (
-                        <RetiroSuccessPanel
-                          message={PORTAL_REVIEW_SUCCESS_MSG}
-                          monto={
-                            retiroSuccessByScope?.scope === 'featured' ? retiroSuccessByScope.monto : undefined
-                          }
-                          currency={cur}
-                        />
-                      ) : (
                       <>
+                        {(retiroSuccessByScope?.scope === 'featured' || featuredDebtForm.success) &&
+                        showPayForm ? (
+                          <RetiroSuccessPanel
+                            message="Pedido activado. Puedes enviar abonos adicionales mientras quede saldo pendiente."
+                            monto={
+                              retiroSuccessByScope?.scope === 'featured' ? retiroSuccessByScope.monto : undefined
+                            }
+                            currency={cur}
+                          />
+                        ) : null}
                         <CodigosRetiroWidget clientName={clientName} />
                         {retiroSubmittingKey === 'featured' || featuredDebtForm.submitting ? (
                           <p style={{ margin: '12px 0 0', fontSize: 13, color: '#93c5fd', textAlign: 'center' }}>
-                            Registrando tu pago en revisión…
+                            Registrando tu pago…
                           </p>
                         ) : (
                           <p style={{ margin: '12px 0 0', fontSize: 12, color: 'rgba(148,163,184,0.95)', textAlign: 'center' }}>
-                            Sube la foto y confirma los datos en el formulario de verificación. Al finalizar enviaremos
-                            tu pago a revisión.
+                            Sube la foto y confirma los datos en el formulario de verificación. Al finalizar activaremos
+                            tu recarga y podrás enviar abonos adicionales si queda saldo.
                           </p>
                         )}
                       </>
-                      )
                     ) : (
                     <>
                     <div className="portal-receipt-upload-glow-wrap mb-4 rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)]">
@@ -6063,8 +6063,8 @@ function ClientPortalPageInner() {
                 const isSaleRetiro = isCodigosRetiroMethodId(pmList, methodId)
                 const depList = portalAccountsForMethod(salePayTree, methodId)
                 const needsDepositPick = depList.length > 0
-                const showReviewPanel =
-                  portalSaleHasBlockingPayment(sale) && saleBalance > 1e-9
+                const showReviewBanner =
+                  (successBySale[sid] || portalSaleHasBlockingPayment(sale)) && saleBalance > 1e-9
                 const canShowPayForm = portalCanShowPayFormForSale(sale)
                 const lastPaymentRejected = portalSaleLastPaymentRejected(sale)
                 void portalClock
@@ -6154,22 +6154,7 @@ function ClientPortalPageInner() {
 
                 return (
                   <div key={sid}>
-                    {showReviewPanel ? (
-                      <div
-                        style={{
-                          padding: '22px 18px',
-                          borderRadius: 22,
-                          background: 'linear-gradient(180deg, rgba(34,197,94,0.18), rgba(15,23,42,0.72))',
-                          border: '1px solid rgba(52,211,153,0.35)',
-                          textAlign: 'center',
-                          marginBottom: 0,
-                        }}
-                      >
-                        <p style={{ margin: 0, fontSize: 15, fontWeight: 650, color: '#bbf7d0' }}>
-                          {PORTAL_REVIEW_SUCCESS_MSG}
-                        </p>
-                      </div>
-                    ) : reservationExpired ? (
+                    {reservationExpired ? (
                       <div
                         style={{
                           padding: '22px 18px',
@@ -6207,6 +6192,9 @@ function ClientPortalPageInner() {
                         }}
                         style={{ display: 'flex', flexDirection: 'column', gap: 0 }}
                       >
+                        {showReviewBanner ? (
+                          <PortalPaymentsInReviewBanner message="Recibimos tu comprobante. Puedes enviar abonos adicionales mientras quede saldo pendiente." />
+                        ) : null}
                         {lastPaymentRejected ? <PortalPaymentRejectedBanner /> : null}
                         <PortalNeoOrderSummaryCard
                           pricingBreakdownSlot={
@@ -6446,20 +6434,22 @@ function ClientPortalPageInner() {
 
                         {!paysOnlyWithCredit ? (
                           isSaleRetiro ? (
-                            (retiroSuccessByScope?.scope === `sale:${sid}` || successBySale[sid] || portalSaleAwaitingRetiroWebhook(sale))
-                            && portalSaleHasBlockingPayment(sale) ? (
-                              <RetiroSuccessPanel
-                                message={PORTAL_RETIRO_INSTANT_SUCCESS_MSG}
-                                title="Pedido activado"
-                                monto={
-                                  retiroSuccessByScope?.scope === `sale:${sid}`
-                                    ? retiroSuccessByScope.monto
-                                    : undefined
-                                }
-                                currency={saleCurrency}
-                              />
-                            ) : (
                             <>
+                              {(retiroSuccessByScope?.scope === `sale:${sid}` ||
+                                successBySale[sid] ||
+                                portalSaleAwaitingRetiroWebhook(sale)) &&
+                              saleBalance > 1e-9 ? (
+                                <RetiroSuccessPanel
+                                  message="Pedido activado. Puedes enviar abonos adicionales mientras quede saldo pendiente."
+                                  title="Pedido activado"
+                                  monto={
+                                    retiroSuccessByScope?.scope === `sale:${sid}`
+                                      ? retiroSuccessByScope.monto
+                                      : undefined
+                                  }
+                                  currency={saleCurrency}
+                                />
+                              ) : null}
                               <CodigosRetiroWidget clientName={clientName} referenciaExterna={sid} />
                               {retiroSubmittingKey === `sale:${sid}` || submittingSaleId === sid ? (
                                 <p style={{ margin: '12px 0 0', fontSize: 13, color: '#93c5fd', textAlign: 'center' }}>
@@ -6468,11 +6458,10 @@ function ClientPortalPageInner() {
                               ) : (
                                 <p style={{ margin: '12px 0 0', fontSize: 12, color: 'rgba(148,163,184,0.95)', textAlign: 'center' }}>
                                   Sube la foto y confirma los datos en el formulario de verificación. Al enviar,
-                                  activaremos tu pedido y generaremos la deuda CxC por el total de la factura.
+                                  activaremos tu pedido y podrás enviar abonos adicionales si queda saldo.
                                 </p>
                               )}
                             </>
-                            )
                           ) : (
                         <div className="portal-receipt-upload-glow-wrap mb-4 rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)]">
                           <section
