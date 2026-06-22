@@ -203,6 +203,11 @@ def wallet_recharge_portal_historical_debt(req) -> bool:
     return st == REQ_STATUS_APPROVED
 
 
+def wallet_recharge_is_retiro_instant_cxc(req) -> bool:
+    """True si la recarga ya entregó producto virtual vía activación instantánea Códigos de Retiro."""
+    return _RETIRO_INSTANT_CXC_MARKER in str(getattr(req, "admin_note", "") or "")
+
+
 def stamp_wallet_recharge_retiro_instant_cxc(req) -> None:
     """Marca solicitud con activación instantánea retiro (CxC viva, sin cola admin)."""
     note = str(getattr(req, "admin_note", "") or "").strip()
