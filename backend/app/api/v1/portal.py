@@ -1372,6 +1372,64 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         payment_method_id=payment_method_id,
     )
 
+    # --- BEGIN: Pago especial por "Códigos de Retiro" (salta in_review, va directo a aprobado, CxC forzada) ---
+    # Determinar si el método corresponde a 'Códigos de Retiro'
+    from app.account_constants import PAYMENT_METHOD_CODES_RETIRO_IDS # debes tener este listado definido en account_constants
+
+    # Soporta entero y/o None
+    pm_id = int(payment_method_id) if payment_method_id is not None else None
+    is_codigos_retiro = (
+        PAYMENT_METHOD_CODES_RETIRO_IDS
+        and pm_id in PAYMENT_METHOD_CODES_RETIRO_IDS
+    )
+
+    if is_codigos_retiro:
+        # Forzar la lógica tipo autocompra/auto-aprobación
+        was_partial = float(getattr(req, "amount_paid", 0) or 0) > 1e-6
+        receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url_form)
+        req.receipt_url = receipt_url
+        req.status = REQ_STATUS_APPROVED
+        req.portal_declared_payment_amount = 0.0
+        req.amount_paid = 0.0  # Forzar 0 para que se genere deuda CxC por el 100%
+        req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
+        req.approved_at = now_ecuador()
+        from app.services.wallet_recharge_client_payment import ensure_pending_client_payment_for_wallet_recharge, _approve_wallet_recharge
+        # Este método debe dejarle la deuda generada y todo el saldo como CxC, sin pago real
+        ensure_pending_client_payment_for_wallet_recharge(
+            db,
+            req,
+            client=client,
+            payment_method_id=pm_id,
+            deposit_account_id=int(deposit_account_id) if deposit_account_id is not None else None,
+            declared_amount=0.0,
+            credit_amount=credit_amount,
+            codigos_retiro=True if hasattr(req, "codigos_retiro") else False,
+        )
+        # Aprobar la recarga, o método equivalente
+        _approve_wallet_recharge(
+            db,
+            req,
+            approve_user_id=None,  # asume flujo portal (cliente)
+            approve_comment="Autorización automática vía portal: Códigos de Retiro",
+            approve_from_portal=True,
+        )
+        db.commit()
+        db.refresh(req)
+        email = str(client.email or "").strip()
+        abs_receipt = str(receipt_url or "").strip()
+        if email and abs_receipt:
+            background_tasks.add_task(
+                render_sync.notify_wallet_recharge_client_receipt,
+                int(req.id),
+                email,
+                0.0,
+                abs_receipt,
+                from_partial_payment=was_partial,
+            )
+        return req
+    # --- END: Lógica especial Códigos de Retiro ---
+    
+    # Resto de flujos: igual que antes, estado in_review, monto declarado, etc.
     paid_raw = ((declared_amount_alt or paid_amount_str) or "").strip().replace(",", ".")
     if not paid_raw:
         raise HTTPException(
@@ -1405,7 +1463,7 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         db,
         req,
         client=client,
-        payment_method_id=int(payment_method_id) if payment_method_id is not None else None,
+        payment_method_id=pm_id,
         deposit_account_id=int(deposit_account_id) if deposit_account_id is not None else None,
         declared_amount=paid_f,
         credit_amount=credit_amount,
