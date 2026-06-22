@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class TransactionClassCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        t = (v or "").strip()
+        if not t:
+            raise ValueError("El nombre es obligatorio.")
+        return t
+
+
+class TransactionClassUpdate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        t = (v or "").strip()
+        if not t:
+            raise ValueError("El nombre es obligatorio.")
+        return t
+
+
+class TransactionClassResponse(BaseModel):
+    id: int
+    name: str
+    is_active: bool
+
+    model_config = {"from_attributes": True}
