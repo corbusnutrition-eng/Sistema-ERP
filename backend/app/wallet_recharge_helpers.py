@@ -32,6 +32,7 @@ _WR_BALANCE_EPS = 1e-6
 
 # Recarga activada en portal con Códigos de Retiro: billetera entregada, cobro pendiente de webhook.
 _RETIRO_INSTANT_CXC_MARKER = "META_RETIRO_INSTANT_CXC=1"
+_PORTAL_RECEIPT_PENDING_MARKER = "PORTAL_RECEIPT_PENDING_REVIEW=1"
 
 
 def wallet_recharge_billing_currency(req) -> str:
@@ -161,13 +162,11 @@ def wallet_recharge_codigos_retiro_initial_portal_activation(req, db: Optional[S
 
 def wallet_recharge_virtual_product_already_delivered(db: Session, req) -> bool:
     """
-    Candado de acreditación: True si el saldo virtual ya fue entregado para esta solicitud.
+    Candado de acreditación: True solo si la billetera ya recibió el producto completo.
 
-    Tras la primera entrega (100% del ``amount_requested``), abonos parciales posteriores
-    solo liquidan CxC y no vuelven a sumar billetera.
+    Basado en movimientos auditables vinculados a la solicitud (no en estado ``in_review``
+    ni en flags de revisión portal, que bloqueaban la entrega al primer abono).
     """
-    if wallet_recharge_portal_abono_requires_manual_review(req):
-        return True
     try:
         product = float(getattr(req, "amount_requested", 0) or 0)
     except (TypeError, ValueError):
@@ -178,6 +177,28 @@ def wallet_recharge_virtual_product_already_delivered(db: Session, req) -> bool:
 
     credited = _wallet_credited_for_recharge_request(db, req)
     return credited >= product - _WR_BALANCE_EPS
+
+
+def mark_wallet_recharge_portal_receipt_submitted(req) -> None:
+    """
+    Tras comprobante portal: mueve la solicitud a cola admin «En revisión».
+
+    - ``pending`` → ``in_review`` (primer comprobante).
+    - ``partially_paid`` → ``in_review`` (abono adicional con nuevo comprobante).
+    """
+    st = str(getattr(req, "status", "") or "")
+    if st in (REQ_STATUS_PENDING, REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_APPROVED):
+        req.status = REQ_STATUS_IN_REVIEW
+    elif st != REQ_STATUS_IN_REVIEW:
+        req.status = REQ_STATUS_IN_REVIEW
+
+    note = str(getattr(req, "admin_note", "") or "").strip()
+    if _PORTAL_RECEIPT_PENDING_MARKER not in note:
+        req.admin_note = (
+            f"{note}\n{_PORTAL_RECEIPT_PENDING_MARKER}".strip()
+            if note
+            else _PORTAL_RECEIPT_PENDING_MARKER
+        )
 
 
 def wallet_recharge_portal_may_deliver_virtual_product(db: Session, req) -> bool:

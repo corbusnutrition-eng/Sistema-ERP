@@ -909,11 +909,16 @@ def _apply_allocation_slice_to_obligation(
         )
         if cap <= _FP_EPS:
             return None
+        try:
+            amount_paid_before = float(getattr(wallet_recharge, "amount_paid", 0) or 0)
+        except (TypeError, ValueError):
+            amount_paid_before = 0.0
         credit_wallet_on_baas_fifo_allocation(
             db,
             wallet_recharge,
             cap,
             payment=payment,
+            amount_paid_before=amount_paid_before,
         )
         _apply_amount_to_wallet_recharge(db, wallet_recharge, payment, cap)
         alloc = PaymentAllocation(
@@ -3476,6 +3481,7 @@ def credit_wallet_on_baas_fifo_allocation(
     allocated_amount: Decimal,
     *,
     payment: Optional[ClientPayment] = None,
+    amount_paid_before: Optional[float] = None,
 ) -> float:
     """
     Modelo crédito BaaS: en el **primer** abono FIFO entrega el 100% del producto solicitado.
@@ -3494,6 +3500,20 @@ def credit_wallet_on_baas_fifo_allocation(
     if _q_amt(allocated_amount) <= _FP_EPS:
         return 0.0
     if wallet_recharge_virtual_product_already_delivered(db, req):
+        return 0.0
+
+    if amount_paid_before is None:
+        try:
+            amount_paid_before = float(getattr(req, "amount_paid", 0) or 0)
+        except (TypeError, ValueError):
+            amount_paid_before = 0.0
+
+    excl_pid = int(payment.id) if payment is not None and getattr(payment, "id", None) else None
+    approved_before = _approved_alloc_sum_for_wallet_recharge(
+        db, int(req.id), exclude_payment_id=excl_pid
+    )
+    is_first_abono = amount_paid_before <= _WR_EPS and approved_before <= _FP_EPS
+    if not is_first_abono:
         return 0.0
 
     client = db.get(Client, int(req.client_id))

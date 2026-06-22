@@ -1333,7 +1333,10 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
     req.receipt_url = receipt_url
     req.portal_declared_payment_amount = paid_f
     req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
-    req.status = REQ_STATUS_IN_REVIEW
+
+    from app.wallet_recharge_helpers import mark_wallet_recharge_portal_receipt_submitted
+
+    mark_wallet_recharge_portal_receipt_submitted(req)
 
     from app.services.wallet_recharge_client_payment import ensure_pending_client_payment_for_wallet_recharge
 
