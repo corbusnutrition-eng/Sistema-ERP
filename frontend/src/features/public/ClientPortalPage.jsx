@@ -6681,7 +6681,7 @@ function ClientPortalPageInner() {
                           </p>
                         : null}
 
-                        {clientCreditAvail > 1e-9 && !paysOnlyWithCredit && !reservationExpired && !done ? (
+                        {clientCreditAvail > 1e-9 && !paysOnlyWithCredit && !reservationExpired && canShowPayForm ? (
                           <button
                             type="button"
                             disabled={submittingSaleId === sid}
