@@ -391,6 +391,10 @@ class PortalHomeResponse(BaseModel):
         default_factory=list,
         description="Cuentas de depósito vinculadas a los métodos asignados (moneda del cliente).",
     )
+    allowed_payment_account_ids: list[int] = Field(
+        default_factory=list,
+        description="IDs de cuentas habilitadas por CRM; vacío = portal usa configuración global por venta.",
+    )
 
 
 class PortalPaymentSubmitResponse(BaseModel):

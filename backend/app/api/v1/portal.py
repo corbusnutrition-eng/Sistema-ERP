@@ -700,17 +700,14 @@ def _portal_resolve_payment_picks_for_client(
     sale: Optional[Sale] = None,
     recharge_raw_pm: Optional[list] = None,
 ) -> tuple[list[PortalPaymentMethodPick], list[PortalDepositPick], list[PortalAssignedPaymentMethod]]:
-    """Métodos/cuentas del portal: prioriza asignación CRM; si no hay, lógica por venta/recarga."""
+    """Métodos/cuentas del portal: prioriza asignación CRM granular; si no hay, lógica por venta/recarga."""
     from app.services.client_payment_method_service import (
         client_has_custom_payment_account_prefs,
-        get_client_assigned_payment_method_ids,
         get_client_assigned_payment_methods_with_accounts,
     )
 
     cur = normalize_currency_code(currency, "USD")
-    has_custom_accounts = client_has_custom_payment_account_prefs(db, int(client.id))
-    legacy_assigned_pm = get_client_assigned_payment_method_ids(db, int(client.id))
-    if has_custom_accounts or legacy_assigned_pm:
+    if client_has_custom_payment_account_prefs(db, int(client.id)):
         nested = get_client_assigned_payment_methods_with_accounts(
             db,
             int(client.id),
@@ -1235,17 +1232,15 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
     out: list[PortalWalletRechargeItem] = []
     from app.services.client_payment_method_service import (
         client_has_custom_payment_account_prefs,
-        get_client_assigned_payment_method_ids,
         get_client_assigned_payment_methods_with_accounts,
     )
 
-    client_has_assigned_pm = client_has_custom_payment_account_prefs(db, int(client.id)) or bool(
-        get_client_assigned_payment_method_ids(db, int(client.id))
-    )
+    client_has_custom_accounts = client_has_custom_payment_account_prefs(db, int(client.id))
     for r in rows:
         recharge_cur = normalize_currency_code(getattr(r, "recharge_currency", None), "USD")
         pm_tree: list[PortalAssignedPaymentMethod] = []
-        if client_has_assigned_pm:
+        nested = None
+        if client_has_custom_accounts:
             nested = get_client_assigned_payment_methods_with_accounts(
                 db,
                 int(client.id),
@@ -1267,10 +1262,6 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
                         seen_dep.add(int(dep.id))
                         dep_picks.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
                 pm_tree = nested
-            else:
-                nested = None
-        else:
-            nested = None
 
         if not nested:
             raw_pm = r.allowed_payment_methods if isinstance(r.allowed_payment_methods, list) else None
@@ -2087,21 +2078,33 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     from app.services.client_product_price_service import list_client_assigned_package_prices
     from app.services.client_payment_method_service import (
         build_client_assigned_deposit_picks,
+        client_has_custom_payment_account_prefs,
+        get_client_assigned_account_ids,
         get_client_assigned_payment_methods_with_accounts,
     )
     from app.schemas.client_product_prices import PortalAssignedPackagePrice
 
     client_currency = get_client_currency(client)
-    assigned_pm_models = get_client_assigned_payment_methods_with_accounts(
-        db,
-        int(client.id),
-        currency=client_currency,
-    )
-    assigned_dep_models = build_client_assigned_deposit_picks(
-        db,
-        int(client.id),
-        currency=client_currency,
-    )
+    if client_has_custom_payment_account_prefs(db, int(client.id)):
+        assigned_pm_models = get_client_assigned_payment_methods_with_accounts(
+            db,
+            int(client.id),
+            currency=client_currency,
+        )
+        assigned_dep_models = build_client_assigned_deposit_picks(
+            db,
+            int(client.id),
+            currency=client_currency,
+        )
+        allowed_payment_account_ids = get_client_assigned_account_ids(
+            db,
+            int(client.id),
+            currency=client_currency,
+        )
+    else:
+        assigned_pm_models = []
+        assigned_dep_models = []
+        allowed_payment_account_ids = []
 
     for s in sales_all:
         try:
@@ -2254,6 +2257,7 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
             precios_asignados=precios_asignados,
             assigned_payment_methods=list(assigned_pm_models or []),
             assigned_deposit_accounts=list(assigned_dep_models or []),
+            allowed_payment_account_ids=list(allowed_payment_account_ids or []),
         )
     except Exception:
         logger.exception("portal_home response build failed client_id=%s", client.id)

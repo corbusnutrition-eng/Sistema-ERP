@@ -3,27 +3,34 @@ import { ChevronDown, ChevronRight, CreditCard, Loader2, X } from 'lucide-react'
 import api from '../../api/axios'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
 
-function selectionsToDraft(selections) {
-  const draft = {}
-  for (const row of selections || []) {
-    const methodId = Number(row?.payment_method_id)
-    if (!Number.isFinite(methodId) || methodId < 1) continue
-    const ids = Array.isArray(row?.account_ids)
-      ? row.account_ids.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
-      : []
-    if (ids.length) draft[String(methodId)] = new Set(ids)
+function draftToAccountIds(draft) {
+  const ids = new Set()
+  for (const idSet of Object.values(draft || {})) {
+    if (!(idSet instanceof Set)) continue
+    for (const id of idSet) {
+      const n = Number(id)
+      if (Number.isFinite(n) && n > 0) ids.add(n)
+    }
   }
-  return draft
+  return Array.from(ids).sort((a, b) => a - b)
 }
 
-function draftToSelections(draft) {
-  return Object.entries(draft)
-    .map(([methodId, idSet]) => ({
-      payment_method_id: Number(methodId),
-      account_ids: Array.from(idSet || []).sort((a, b) => a - b),
-    }))
-    .filter((row) => row.account_ids.length > 0)
-    .sort((a, b) => a.payment_method_id - b.payment_method_id)
+function accountIdsToDraft(accountIds, available) {
+  const allowed = new Set(
+    (Array.isArray(accountIds) ? accountIds : [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  )
+  const draft = {}
+  for (const pm of available || []) {
+    const methodId = Number(pm?.id)
+    if (!Number.isFinite(methodId) || methodId < 1) continue
+    const matched = (Array.isArray(pm?.accounts) ? pm.accounts : [])
+      .map((a) => Number(a?.id))
+      .filter((id) => Number.isFinite(id) && id > 0 && allowed.has(id))
+    if (matched.length) draft[String(methodId)] = new Set(matched)
+  }
+  return draft
 }
 
 export default function ClientPaymentMethodsModal({ open, client, onClose, onSaved, onToast }) {
@@ -61,10 +68,19 @@ export default function ClientPaymentMethodsModal({ open, client, onClose, onSav
     setLoading(true)
     setError('')
     try {
-      const { data } = await api.get(`/api/v1/admin/clients/${clientId}/payment-methods`)
-      const list = Array.isArray(data?.available_payment_methods) ? data.available_payment_methods : []
-      const assigned = Array.isArray(data?.assigned_selections) ? data.assigned_selections : []
-      const draft = selectionsToDraft(assigned)
+      const [methodsRes, accountsRes] = await Promise.all([
+        api.get(`/api/v1/admin/clients/${clientId}/payment-methods`),
+        api.get(`/api/v1/admin/clients/${clientId}/payment-accounts`),
+      ])
+      const list = Array.isArray(methodsRes.data?.available_payment_methods)
+        ? methodsRes.data.available_payment_methods
+        : []
+      const assignedIds = Array.isArray(accountsRes.data?.account_ids)
+        ? accountsRes.data.account_ids
+        : Array.isArray(methodsRes.data?.assigned_account_ids)
+          ? methodsRes.data.assigned_account_ids
+          : []
+      const draft = accountIdsToDraft(assignedIds, list)
       const expanded = {}
       for (const key of Object.keys(draft)) expanded[key] = true
       setAvailable(list)
@@ -126,12 +142,12 @@ export default function ClientPaymentMethodsModal({ open, client, onClose, onSav
 
   async function handleSave() {
     if (!clientId) return
-    const selections = draftToSelections(selectedByMethod)
+    const account_ids = draftToAccountIds(selectedByMethod)
     setSaving(true)
     setError('')
     try {
-      const { data } = await api.put(`/api/v1/admin/clients/${clientId}/payment-methods`, {
-        selections,
+      const { data } = await api.put(`/api/v1/admin/clients/${clientId}/payment-accounts`, {
+        account_ids,
       })
       onToast?.(data?.message || 'Cuentas de pago guardadas.')
       onSaved?.()
