@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
 import re
 import os
 import uuid as uuid_pkg
@@ -62,6 +63,7 @@ from app.schemas.portal_public import (
     PortalActiveScreen,
     PortalClientBrief,
     PortalCxcBalanceResponse,
+    PortalCheckoutLinePublic,
     PortalDepositPick,
     PortalHomeResponse,
     PortalInstantActivationResponse,
@@ -201,13 +203,188 @@ _FP_EPS = Decimal("0.00005")
 
 
 def _portal_money_float(val: object | None, *, default: float = 0.0) -> float:
-    """Convierte montos ORM/Decimal a ``float`` JSON-safe (2 decimales)."""
+    """Convierte montos ORM/Decimal a ``float`` JSON-safe (2 decimales, finito)."""
     if val is None:
         return default
     try:
-        return float(Decimal(str(val)).quantize(Decimal("0.01")))
+        f = float(Decimal(str(val)).quantize(Decimal("0.01")))
+        if not math.isfinite(f):
+            return default
+        return f
     except Exception:
         return default
+
+
+_PORTAL_SALE_STATUS_PUBLIC = frozenset(
+    {"pending", "payment_submitted", "partially_paid", "approved", "expired", "cancelled"}
+)
+
+
+def _portal_sale_status_public(s: Sale) -> str:
+    """Estado legible para el portal (string estable, minúsculas con guión bajo)."""
+    raw = s.status.value if hasattr(s.status, "value") else str(getattr(s, "status", "") or "pending")
+    st = str(raw).strip().lower().replace("-", "_")
+    if st not in _PORTAL_SALE_STATUS_PUBLIC:
+        return "pending"
+    return st
+
+
+def _portal_sanitize_checkout_lines(
+    lines: list,
+    *,
+    invoice_total: float = 0.0,
+) -> list[PortalCheckoutLinePublic]:
+    """Fuerza líneas del portal a texto/montos finitos (ventas reactivadas / legado)."""
+    out: list[PortalCheckoutLinePublic] = []
+    for chunk in lines or []:
+        try:
+            if isinstance(chunk, PortalCheckoutLinePublic):
+                desc = (chunk.description or "Pedido").strip() or "Pedido"
+                qty = max(0.0, _portal_money_float(chunk.qty, default=1.0))
+                rate = max(0.0, _portal_money_float(chunk.rate, default=0.0))
+                amt = _portal_money_float(chunk.amount, default=0.0)
+            elif isinstance(chunk, dict):
+                desc = str(chunk.get("description") or chunk.get("name") or "Pedido").strip() or "Pedido"
+                qty = max(0.0, _portal_money_float(chunk.get("qty") or chunk.get("quantity"), default=1.0))
+                rate = max(
+                    0.0,
+                    _portal_money_float(
+                        chunk.get("rate") or chunk.get("price") or chunk.get("unit_price"),
+                        default=0.0,
+                    ),
+                )
+                amt = _portal_money_float(
+                    chunk.get("amount") or chunk.get("subtotal") or chunk.get("line_total"),
+                    default=0.0,
+                )
+            else:
+                desc = str(getattr(chunk, "description", None) or "Pedido").strip() or "Pedido"
+                qty = max(0.0, _portal_money_float(getattr(chunk, "qty", None), default=1.0))
+                rate = max(0.0, _portal_money_float(getattr(chunk, "rate", None), default=0.0))
+                amt = _portal_money_float(getattr(chunk, "amount", None), default=0.0)
+            if amt <= 1e-9 and qty > 0 and rate > 0:
+                amt = round(qty * rate, 2)
+            if qty <= 1e-9:
+                qty = 1.0
+            out.append(
+                PortalCheckoutLinePublic(
+                    description=desc[:2000],
+                    qty=qty,
+                    rate=rate,
+                    amount=max(0.0, amt),
+                )
+            )
+        except Exception:
+            continue
+    if out and invoice_total > 1e-9:
+        line_sum = sum(l.amount for l in out)
+        if line_sum <= 1e-9:
+            head = (out[0].description or "Pedido").strip() or "Pedido"
+            out = [
+                PortalCheckoutLinePublic(
+                    description=head[:2000],
+                    qty=1.0,
+                    rate=invoice_total,
+                    amount=invoice_total,
+                )
+            ]
+    if not out:
+        total = max(0.0, _portal_money_float(invoice_total, default=0.0))
+        out.append(
+            PortalCheckoutLinePublic(
+                description="Pedido",
+                qty=1.0,
+                rate=total,
+                amount=total,
+            )
+        )
+    return out
+
+
+def _portal_sanitize_payment_events(events: list[SalePaymentEvent]) -> list[SalePaymentEvent]:
+    safe: list[SalePaymentEvent] = []
+    for ev in events or []:
+        try:
+            safe.append(
+                SalePaymentEvent(
+                    occurred_at=str(getattr(ev, "occurred_at", None) or ""),
+                    amount=max(0.0, _portal_money_float(getattr(ev, "amount", 0), default=0.0)),
+                    currency=normalize_currency_code(str(getattr(ev, "currency", None) or "USD")),
+                    status=str(getattr(ev, "status", None) or "En revisión").strip() or "En revisión",
+                    receipt_url=getattr(ev, "receipt_url", None),
+                )
+            )
+        except Exception:
+            continue
+    return safe
+
+
+def _portal_sanitize_client_payments(rows: list[PortalSalePaymentBrief]) -> list[PortalSalePaymentBrief]:
+    safe: list[PortalSalePaymentBrief] = []
+    for row in rows or []:
+        try:
+            st_raw = getattr(row, "status", None) or "pending_review"
+            st = str(st_raw).strip().lower().replace("-", "_") or "pending_review"
+            safe.append(
+                PortalSalePaymentBrief(
+                    id=int(row.id),
+                    payment_number=getattr(row, "payment_number", None),
+                    amount=max(0.0, _portal_money_float(getattr(row, "amount", 0), default=0.0)),
+                    currency=normalize_currency_code(str(getattr(row, "currency", None) or "USD")),
+                    status=st,
+                    created_at=getattr(row, "created_at", None),
+                )
+            )
+        except Exception:
+            continue
+    return safe
+
+
+def _portal_sanitize_outstanding_sale(row: PortalOutstandingSale) -> PortalOutstandingSale:
+    """Re-valida una fila de venta antes de serializar al cliente."""
+    invoice_total = max(0.0, _portal_money_float(row.invoice_total, default=0.0))
+    local_raw = row.local_amount
+    local_amount: Optional[float] = None
+    if local_raw is not None:
+        local_amount = max(0.0, _portal_money_float(local_raw, default=0.0))
+    elif invoice_total > 1e-9:
+        local_amount = invoice_total
+    try:
+        return PortalOutstandingSale(
+            sale_id=int(row.sale_id),
+            status=_portal_sale_status_public_from_str(row.status),
+            invoice_created_at=row.invoice_created_at,
+            expires_at=row.expires_at,
+            currency=normalize_currency_code(str(row.currency or "USD")),
+            invoice_total=invoice_total,
+            local_amount=local_amount,
+            amount_paid=max(0.0, _portal_money_float(row.amount_paid, default=0.0)),
+            balance_due=max(0.0, _portal_money_float(row.balance_due, default=0.0)),
+            payment_token=row.payment_token,
+            lines=_portal_sanitize_checkout_lines(row.lines, invoice_total=invoice_total),
+            allowed_payment_methods=list(row.allowed_payment_methods or []),
+            allowed_deposit_accounts=list(row.allowed_deposit_accounts or []),
+            payment_events=_portal_sanitize_payment_events(list(row.payment_events or [])),
+            client_payments=_portal_sanitize_client_payments(list(row.client_payments or [])),
+        )
+    except Exception as exc:
+        logger.warning("portal sale sanitize fallback sale_id=%s: %s", getattr(row, "sale_id", "?"), exc)
+        return PortalOutstandingSale(
+            sale_id=int(getattr(row, "sale_id", 0) or 0),
+            status="pending",
+            currency="USD",
+            invoice_total=invoice_total,
+            local_amount=local_amount,
+            balance_due=max(0.0, _portal_money_float(getattr(row, "balance_due", 0), default=0.0)),
+            lines=_portal_sanitize_checkout_lines([], invoice_total=invoice_total),
+            payment_events=[],
+            client_payments=[],
+        )
+
+
+def _portal_sale_status_public_from_str(raw: object) -> str:
+    st = str(raw or "pending").strip().lower().replace("-", "_")
+    return st if st in _PORTAL_SALE_STATUS_PUBLIC else "pending"
 
 
 def _portal_form_int_optional(raw: Optional[object]) -> Optional[int]:
@@ -420,7 +597,7 @@ def _portal_client_payments_for_sale(
                 created_at=r.created_at.isoformat() if r.created_at else None,
             )
         )
-    return out
+    return _portal_sanitize_client_payments(out)
 
 
 def _debt_payment_item_from_client_payment(cp: ClientPayment) -> DebtPaymentItem:
@@ -458,25 +635,28 @@ def _get_recent_client_payments_for_portal(
 
 def _build_payment_events(sale: Sale) -> list[SalePaymentEvent]:
     raw = getattr(sale, "payment_events", None)
-    if not isinstance(raw, list):
+    if raw is None or not isinstance(raw, list):
         return []
     events: list[SalePaymentEvent] = []
     for ev in raw:
         if not isinstance(ev, dict):
             continue
         try:
+            amt_raw = ev.get("amount")
+            if amt_raw is None:
+                amt_raw = 0
             events.append(
                 SalePaymentEvent(
-                    occurred_at=str(ev.get("occurred_at", "")),
-                    amount=float(ev.get("amount", 0)),
-                    currency=str(ev.get("currency", "USD")),
-                    status=str(ev.get("status", "En revisión")),
-                    receipt_url=ev.get("receipt_url"),
+                    occurred_at=str(ev.get("occurred_at") or ""),
+                    amount=max(0.0, _portal_money_float(amt_raw, default=0.0)),
+                    currency=normalize_currency_code(str(ev.get("currency") or "USD")),
+                    status=str(ev.get("status") or "En revisión").strip() or "En revisión",
+                    receipt_url=ev.get("receipt_url") if ev.get("receipt_url") else None,
                 )
             )
         except Exception:
-            pass
-    return events
+            continue
+    return _portal_sanitize_payment_events(events)
 
 
 def _portal_resolve_payment_picks_for_client(
@@ -546,36 +726,93 @@ def _portal_resolve_payment_picks_for_client(
 
 
 def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple[PortalOutstandingSale, Decimal]:
-    cur = normalize_currency_code(str(s.currency or "USD"))
-    lines = _checkout_lines_public(db, s, product=s.product, stock_row=s.screen_stock_row)
-    lines = [_finalize_checkout_line_amount(ln) for ln in lines]
+    cur = normalize_currency_code(str(getattr(s, "currency", None) or "USD"))
+    try:
+        lines_raw = _checkout_lines_public(db, s, product=s.product, stock_row=s.screen_stock_row)
+    except Exception:
+        logger.exception("portal checkout lines failed sale_id=%s", getattr(s, "id", "?"))
+        lines_raw = []
+    lines_raw = [_finalize_checkout_line_amount(ln) for ln in (lines_raw or [])]
 
     real_total, balance_due_out = _compute_portal_balance(db, s)
     ap_d = _portal_effective_amount_paid(db, s)
 
-    methods, deps = _portal_resolve_payment_picks_for_client(db, client, currency=cur, sale=s)
+    try:
+        methods, deps = _portal_resolve_payment_picks_for_client(db, client, currency=cur, sale=s)
+    except Exception:
+        logger.exception("portal payment picks failed sale_id=%s", getattr(s, "id", "?"))
+        methods, deps = [], []
 
-    invoice_total_f = _portal_money_float(real_total)
+    invoice_total_f = max(0.0, _portal_money_float(real_total, default=0.0))
     local_amount_f: Optional[float] = invoice_total_f if invoice_total_f > 1e-9 else None
+    balance_f = max(0.0, _portal_money_float(balance_due_out, default=0.0))
+
+    status_str = _portal_sale_status_public(s)
+    expires_out: Optional[datetime] = None
+    if status_str == "pending":
+        exp = getattr(s, "expires_at", None)
+        if isinstance(exp, datetime):
+            expires_out = exp
+
+    payment_token_out = getattr(s, "payment_token", None)
+    try:
+        payment_events = _build_payment_events(s)
+    except Exception:
+        logger.exception("portal payment_events failed sale_id=%s", getattr(s, "id", "?"))
+        payment_events = []
+    try:
+        client_payments = _portal_client_payments_for_sale(db, int(s.id), int(client.id))
+    except Exception:
+        logger.exception("portal client_payments failed sale_id=%s", getattr(s, "id", "?"))
+        client_payments = []
 
     row = PortalOutstandingSale(
         sale_id=int(s.id),
-        status=s.status.value if hasattr(s.status, "value") else str(s.status or "pending"),
+        status=status_str,
         invoice_created_at=s.created_at if isinstance(getattr(s, "created_at", None), datetime) else None,
-        expires_at=s.expires_at if s.status == SaleStatus.pending else None,
+        expires_at=expires_out,
         currency=cur,
         invoice_total=invoice_total_f,
         local_amount=local_amount_f,
-        amount_paid=_portal_money_float(ap_d),
-        balance_due=_portal_money_float(balance_due_out),
-        payment_token=getattr(s, "payment_token", None),
-        lines=lines,
-        allowed_payment_methods=methods,
-        allowed_deposit_accounts=deps,
-        payment_events=_build_payment_events(s),
-        client_payments=_portal_client_payments_for_sale(db, int(s.id), int(client.id)),
+        amount_paid=max(0.0, _portal_money_float(ap_d, default=0.0)),
+        balance_due=balance_f,
+        payment_token=payment_token_out,
+        lines=_portal_sanitize_checkout_lines(lines_raw, invoice_total=invoice_total_f),
+        allowed_payment_methods=list(methods or []),
+        allowed_deposit_accounts=list(deps or []),
+        payment_events=list(payment_events or []),
+        client_payments=list(client_payments or []),
     )
-    return row, balance_due_out
+    return _portal_sanitize_outstanding_sale(row), balance_due_out
+
+
+def _portal_safe_outstanding_row(db: Session, client: Client, s: Sale) -> tuple[PortalOutstandingSale, Decimal]:
+    """Construye fila de venta con fallback mínimo si el legado/reactivación rompe datos."""
+    try:
+        return _build_portal_outstanding_row(db, client, s)
+    except Exception:
+        logger.exception("portal outstanding row failed sale_id=%s", getattr(s, "id", "?"))
+        sid = int(getattr(s, "id", 0) or 0)
+        cur = normalize_currency_code(str(getattr(s, "currency", None) or "USD"))
+        try:
+            real_total, balance_due_out = _compute_portal_balance(db, s)
+        except Exception:
+            real_total, balance_due_out = Decimal("0"), Decimal("0")
+        invoice_total_f = max(0.0, _portal_money_float(real_total, default=0.0))
+        balance_f = max(0.0, _portal_money_float(balance_due_out, default=0.0))
+        fallback = PortalOutstandingSale(
+            sale_id=sid,
+            status=_portal_sale_status_public(s),
+            currency=cur,
+            invoice_total=invoice_total_f,
+            local_amount=invoice_total_f if invoice_total_f > 1e-9 else None,
+            amount_paid=0.0,
+            balance_due=balance_f,
+            lines=_portal_sanitize_checkout_lines([], invoice_total=invoice_total_f),
+            payment_events=[],
+            client_payments=[],
+        )
+        return _portal_sanitize_outstanding_sale(fallback), balance_due_out
 
 
 def _short_public_account_note(text: object | None, max_len: int = 220) -> Optional[str]:
@@ -1817,13 +2054,23 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     )
 
     for s in sales_all:
-        row, bal = _build_portal_outstanding_row(db, client, s)
-        pending_sales.append(row)
+        try:
+            row, bal = _portal_safe_outstanding_row(db, client, s)
+        except Exception:
+            logger.exception("portal sale row skipped client_id=%s sale_id=%s", client.id, getattr(s, "id", "?"))
+            continue
+        # Excluir activadas ya saldadas (ruido tras reactivación de otra venta del mismo cliente).
+        show_in_pending = bal > _FP_EPS or s.status in (
+            SaleStatus.pending,
+            SaleStatus.payment_submitted,
+            SaleStatus.partially_paid,
+        )
+        if show_in_pending:
+            pending_sales.append(row)
         if bal > _FP_EPS:
             cur = normalize_currency_code(str(s.currency or "USD"))
             agg[cur] = agg.get(cur, Decimal("0")) + bal
             out_sales.append(row)
-            # Cualquier venta con saldo pendiente puede cobrarse desde «Nuevos pedidos para pago».
             new_order_sales.append(row)
         if s.status in (SaleStatus.approved, SaleStatus.payment_submitted) and bal > _FP_EPS:
             historical_debt_sales.append(row)
@@ -1841,12 +2088,36 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     pending_debt_payments = _get_pending_debt_payments_for_client(db, client.id)
     recent_client_payments = _get_recent_client_payments_for_portal(db, int(client.id))
 
-    ledger_rows = _portal_client_ledger(db, client.id)
-    active_screens = _portal_active_screens_for_client(db, int(client.id))
+    try:
+        ledger_rows = _portal_client_ledger(db, client.id)
+    except Exception:
+        logger.exception("portal ledger failed client_id=%s", client.id)
+        ledger_rows = []
+    try:
+        active_screens = _portal_active_screens_for_client(db, int(client.id))
+    except Exception:
+        logger.exception("portal active_screens failed client_id=%s", client.id)
+        active_screens = []
 
-    credit_summary = compute_client_credit_summary(db, int(client.id), sync=True)
-    credit_rows = list(credit_summary.get("credit_balances_by_currency") or [])
-    primary_credit = float(credit_summary.get("credit_balance") or 0)
+    try:
+        credit_summary = compute_client_credit_summary(db, int(client.id), sync=True)
+    except Exception:
+        logger.exception("portal credit_summary failed client_id=%s", client.id)
+        credit_summary = {
+            "credit_balance": 0.0,
+            "credit_balance_currency": "USD",
+            "credit_balances_by_currency": [],
+            "available_credit_by_currency": [],
+        }
+    credit_rows = [
+        {
+            "currency": normalize_currency_code(str(r.get("currency") or "USD")),
+            "amount": max(0.0, _portal_money_float(r.get("amount"), default=0.0)),
+        }
+        for r in (credit_summary.get("credit_balances_by_currency") or [])
+        if isinstance(r, dict)
+    ]
+    primary_credit = max(0.0, _portal_money_float(credit_summary.get("credit_balance"), default=0.0))
     primary_credit_cur = str(credit_summary.get("credit_balance_currency") or "USD")
 
     from app.services.wallet_balance_service import compute_client_wallet_summary
@@ -1854,9 +2125,21 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     from app.schemas.client_product_prices import PortalAssignedPackagePrice
 
     wallet_summary = compute_client_wallet_summary(client)
-    wallet_rows = list(wallet_summary.get("wallet_balances_by_currency") or [])
+    wallet_rows = [
+        {
+            "currency": normalize_currency_code(str(r.get("currency") or "USD")),
+            "amount": max(0.0, _portal_money_float(r.get("amount"), default=0.0)),
+        }
+        for r in (wallet_summary.get("wallet_balances_by_currency") or [])
+        if isinstance(r, dict)
+    ]
     assigned_rows = list_client_assigned_package_prices(db, int(client.id))
-    assigned_models = [PortalAssignedPackagePrice.model_validate(r) for r in assigned_rows]
+    assigned_models: list[PortalAssignedPackagePrice] = []
+    for r in assigned_rows:
+        try:
+            assigned_models.append(PortalAssignedPackagePrice.model_validate(r))
+        except Exception:
+            continue
     precios_asignados: dict[str, float] = {}
     for r in assigned_rows:
         pkg_id = r.get("package_catalog_id")
@@ -1870,43 +2153,64 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
 
     db.commit()
 
-    return PortalHomeResponse(
-        client=PortalClientBrief(
-            name=client.display_name(),
-            email=str(client.email or ""),
-            parent_id=int(client.parent_id) if client.parent_id is not None else None,
+    def _sanitize_sale_list(rows: list[PortalOutstandingSale]) -> list[PortalOutstandingSale]:
+        out: list[PortalOutstandingSale] = []
+        for row in rows or []:
+            try:
+                out.append(_portal_sanitize_outstanding_sale(row))
+            except Exception:
+                logger.exception("portal sale list sanitize skip sale_id=%s", getattr(row, "sale_id", "?"))
+        return out
+
+    pending_sales = _sanitize_sale_list(pending_sales)
+    out_sales = _sanitize_sale_list(out_sales)
+    new_order_sales = _sanitize_sale_list(new_order_sales)
+    historical_debt_sales = _sanitize_sale_list(historical_debt_sales)
+
+    try:
+        return PortalHomeResponse(
+            client=PortalClientBrief(
+                name=client.display_name() or "Cliente",
+                email=str(client.email or ""),
+                parent_id=int(client.parent_id) if client.parent_id is not None else None,
+                credit_balance=primary_credit,
+                credit_balance_currency=primary_credit_cur,
+                credit_balances_by_currency=credit_rows,
+                available_credit=primary_credit,
+                wallet_balance=max(0.0, _portal_money_float(wallet_summary.get("wallet_balance"), default=0.0)),
+                wallet_balance_currency=str(wallet_summary.get("wallet_balance_currency") or client_currency),
+                wallet_balances_by_currency=wallet_rows,
+                currency=client_currency,
+            ),
+            credit_balance_total=max(0.0, _portal_money_float(client.total_credits, default=0.0)),
             credit_balance=primary_credit,
             credit_balance_currency=primary_credit_cur,
             credit_balances_by_currency=credit_rows,
+            available_credit_by_currency=credit_rows,
             available_credit=primary_credit,
-            wallet_balance=float(wallet_summary.get("wallet_balance") or 0),
-            wallet_balance_currency=str(wallet_summary.get("wallet_balance_currency") or client_currency),
-            wallet_balances_by_currency=wallet_rows,
-            currency=client_currency,
-        ),
-        credit_balance_total=float(client.total_credits or 0),
-        credit_balance=primary_credit,
-        credit_balance_currency=primary_credit_cur,
-        credit_balances_by_currency=credit_rows,
-        available_credit_by_currency=credit_rows,
-        available_credit=primary_credit,
-        total_debt_by_currency=debt_rows,
-        total_debt=primary_debt,
-        pending_sales=pending_sales,
-        outstanding_sales=out_sales,
-        new_order_sales=new_order_sales,
-        historical_debt_sales=historical_debt_sales,
-        outstanding_balance=outstanding_balance,
-        historical_debt_by_currency=hist_rows,
-        pending_debt_payments=pending_debt_payments,
-        recent_client_payments=recent_client_payments,
-        ledger=ledger_rows,
-        active_screens=active_screens,
-        assigned_package_prices=assigned_models,
-        precios_asignados=precios_asignados,
-        assigned_payment_methods=assigned_pm_models,
-        assigned_deposit_accounts=assigned_dep_models,
-    )
+            total_debt_by_currency=debt_rows,
+            total_debt=primary_debt,
+            pending_sales=pending_sales,
+            outstanding_sales=out_sales,
+            new_order_sales=new_order_sales,
+            historical_debt_sales=historical_debt_sales,
+            outstanding_balance=outstanding_balance,
+            historical_debt_by_currency=hist_rows,
+            pending_debt_payments=list(pending_debt_payments or []),
+            recent_client_payments=list(recent_client_payments or []),
+            ledger=list(ledger_rows or []),
+            active_screens=list(active_screens or []),
+            assigned_package_prices=assigned_models,
+            precios_asignados=precios_asignados,
+            assigned_payment_methods=list(assigned_pm_models or []),
+            assigned_deposit_accounts=list(assigned_dep_models or []),
+        )
+    except Exception:
+        logger.exception("portal_home response build failed client_id=%s", client.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo preparar el portal del cliente.",
+        ) from None
 
 
 def _get_pending_debt_payments_for_client(db: Session, client_id: int) -> list[DebtPaymentItem]:

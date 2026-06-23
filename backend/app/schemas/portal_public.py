@@ -4,10 +4,18 @@ import datetime
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
-from app.schemas.checkout_public import CheckoutLinePublic
 from app.schemas.client_product_prices import PortalAssignedPackagePrice
+
+
+class PortalCheckoutLinePublic(BaseModel):
+    """Línea de factura para el portal: siempre JSON-safe (sin ``null`` en montos)."""
+
+    description: str = Field(default="Pedido", max_length=2000)
+    qty: float = Field(default=1.0, ge=0)
+    rate: float = Field(default=0.0, ge=0)
+    amount: float = Field(default=0.0, ge=0)
 
 
 class PortalClientBrief(BaseModel):
@@ -59,10 +67,10 @@ class PortalDepositPick(BaseModel):
 
 
 class SalePaymentEvent(BaseModel):
-    occurred_at: str
-    amount: float
-    currency: str
-    status: str
+    occurred_at: str = ""
+    amount: float = Field(default=0.0, ge=0)
+    currency: str = "USD"
+    status: str = "En revisión"
     receipt_url: Optional[str] = None
 
 
@@ -102,7 +110,7 @@ class PortalOutstandingSale(BaseModel):
         description="Saldo CxC pendiente en moneda de la venta.",
     )
     payment_token: Optional[UUID] = None
-    lines: list[CheckoutLinePublic] = Field(default_factory=list)
+    lines: list[PortalCheckoutLinePublic] = Field(default_factory=list)
     allowed_payment_methods: list[PortalPaymentMethodPick] = Field(default_factory=list)
     allowed_deposit_accounts: list[PortalDepositPick] = Field(default_factory=list)
     payment_events: list[SalePaymentEvent] = Field(default_factory=list)
@@ -110,6 +118,26 @@ class PortalOutstandingSale(BaseModel):
         default_factory=list,
         description="Pagos del cliente ligados a esta venta, más recientes primero.",
     )
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, v: object) -> str:
+        s = str(v or "pending").strip().lower().replace("-", "_")
+        allowed = frozenset(
+            {"pending", "payment_submitted", "partially_paid", "approved", "expired", "cancelled"}
+        )
+        return s if s in allowed else "pending"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coalesce_null_lists(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        for key in ("lines", "payment_events", "client_payments", "allowed_payment_methods", "allowed_deposit_accounts"):
+            if out.get(key) is None:
+                out[key] = []
+        return out
 
 
 class PortalLedgerEntry(BaseModel):
