@@ -507,7 +507,35 @@ function isPortalNewOrderSale(sale) {
   return portalSaleOpenBalance(sale) > 1e-9
 }
 
-/** Recarga destacada en «Nuevos pedidos»: cualquier solicitud con saldo CxC vivo. */
+/** Estado de formulario de pago por recarga BaaS (key = request id). */
+function defaultRechargePayFormState() {
+  return {
+    method: '',
+    account: '',
+    amount: '',
+    submitting: false,
+    error: null,
+    success: false,
+    aiResult: null,
+    analyzing: false,
+    dragOver: false,
+  }
+}
+
+function rechargePayFormFromMap(map, rechargeId) {
+  const k = String(rechargeId)
+  return map[k] ?? defaultRechargePayFormState()
+}
+
+function patchRechargePayForm(setter, rechargeId, patch) {
+  const k = String(rechargeId)
+  setter((prev) => ({
+    ...prev,
+    [k]: { ...rechargePayFormFromMap(prev, rechargeId), ...(typeof patch === 'function' ? patch(rechargePayFormFromMap(prev, rechargeId)) : patch) },
+  }))
+}
+
+/** Recarga BaaS destacada en «Nuevos pedidos»: cualquier solicitud con saldo CxC vivo. */
 function isPortalNewOrderWalletRecharge(r) {
   const open = portalRechargeOpenBalance(r)
   if (!(open > 1e-9)) return false
@@ -1336,22 +1364,14 @@ function ClientPortalPageInner() {
   debtReceiptFilesRef.current = debtReceiptFiles
   const [debtReceiptThumbUrls, setDebtReceiptThumbUrls] = useState([])
 
-  /** Bloque inferior fijo («recarga prioritaria»): comprobante vía `/recharges/{id}/pay`, independiente del menú superior. */
-  const [featuredReceiptFiles, setFeaturedReceiptFiles] = useState([])
-  const featuredReceiptFilesRef = useRef([])
-  featuredReceiptFilesRef.current = featuredReceiptFiles
-  const [featuredReceiptThumbUrls, setFeaturedReceiptThumbUrls] = useState([])
-  const [featuredDebtForm, setFeaturedDebtForm] = useState({
-    method: '',
-    account: '',
-    amount: '',
-    submitting: false,
-    error: null,
-    success: false,
-    aiResult: null,
-    analyzing: false,
-    dragOver: false,
-  })
+  /** Comprobantes por recarga BaaS (key = request id). */
+  const [receiptFilesByRecharge, setReceiptFilesByRecharge] = useState({})
+  const receiptFilesByRechargeRef = useRef({})
+  receiptFilesByRechargeRef.current = receiptFilesByRecharge
+  const [receiptThumbUrlsByRecharge, setReceiptThumbUrlsByRecharge] = useState({})
+  const [rechargeFormById, setRechargeFormById] = useState({})
+  const [payMethodByRecharge, setPayMethodByRecharge] = useState({})
+  const [payAccountByRecharge, setPayAccountByRecharge] = useState({})
 
   const [portalClock, setPortalClock] = useState(0)
 
@@ -1361,6 +1381,7 @@ function ClientPortalPageInner() {
   const [retiroSubmittingKey, setRetiroSubmittingKey] = useState(null)
   const [retiroSuccessByScope, setRetiroSuccessByScope] = useState(null)
   const featuredWalletRechargeRowRef = useRef(null)
+  const newOrderWalletRechargesRef = useRef([])
 
   useEffect(() => {
     const onMessage = (event) => {
@@ -2048,7 +2069,22 @@ function ClientPortalPageInner() {
   const newOrderSales = Array.isArray(data?.new_order_sales) ? data.new_order_sales : []
   const historicalDebtSales = Array.isArray(data?.historical_debt_sales) ? data.historical_debt_sales : []
   const walletRechargesDisplay = useMemo(() => {
-    const base = Array.isArray(walletRecharges) ? walletRecharges : []
+    const fromHome = Array.isArray(data?.outstanding_wallet_recharges) ? data.outstanding_wallet_recharges : []
+    const fromFetch = Array.isArray(walletRecharges) ? walletRecharges : []
+    const merged = new Map()
+    for (const r of fromHome) {
+      const id = Number(r?.id)
+      if (Number.isFinite(id)) merged.set(id, r)
+    }
+    for (const r of fromFetch) {
+      const id = Number(r?.id)
+      if (Number.isFinite(id)) merged.set(id, r)
+    }
+    const base = [...merged.values()].sort((a, b) => {
+      const ta = a?.created_at ? new Date(a.created_at).getTime() : 0
+      const tb = b?.created_at ? new Date(b.created_at).getTime() : 0
+      return tb - ta
+    })
     return base.map((r) => {
       const pid = Number(r?.id)
       const patch = Number.isFinite(pid) ? walletRechargePatchById[pid] : null
@@ -2057,21 +2093,21 @@ function ClientPortalPageInner() {
         status: patch?.status ?? r.status,
       }
     })
-  }, [walletRecharges, walletRechargePatchById])
+  }, [data?.outstanding_wallet_recharges, walletRecharges, walletRechargePatchById])
 
   const ordersToShow = useMemo(
     () => newOrderSales.filter((s) => isPortalNewOrderSale(s)),
     [newOrderSales],
   )
 
-  /** Recarga BaaS reciente con saldo abierto (incluye abonos parciales con saldo a favor). */
-  const featuredWalletRechargeRow = useMemo(() => {
+  /** Todas las recargas BaaS abiertas en «Nuevos pedidos para pago». */
+  const newOrderWalletRecharges = useMemo(() => {
     const xs = Array.isArray(walletRechargesDisplay) ? walletRechargesDisplay : []
-    const cand = xs.filter((r) => isPortalNewOrderWalletRecharge(r))
-    return cand.length ? cand[0] : null
+    return xs.filter((r) => isPortalNewOrderWalletRecharge(r))
   }, [walletRechargesDisplay])
 
-  featuredWalletRechargeRowRef.current = featuredWalletRechargeRow
+  newOrderWalletRechargesRef.current = newOrderWalletRecharges
+  featuredWalletRechargeRowRef.current = newOrderWalletRecharges[0] ?? null
 
   useEffect(() => {
     if (!data) return
@@ -2101,8 +2137,12 @@ function ClientPortalPageInner() {
       if (prev.scope === 'debt') {
         return portalHasBlockingDebtPayment(data) ? prev : null
       }
-      if (prev.scope === 'featured') {
-        const fr = featuredWalletRechargeRowRef.current
+      if (prev.scope === 'featured' || /^recharge:\d+$/.test(String(prev.scope))) {
+        const m = /^recharge:(\d+)$/.exec(String(prev.scope))
+        const fr =
+          m ?
+            (newOrderWalletRechargesRef.current || []).find((r) => Number(r.id) === Number(m[1]))
+          : featuredWalletRechargeRowRef.current
         if (fr && portalRechargeHasBlockingPayment(fr)) return prev
         return null
       }
@@ -2120,11 +2160,18 @@ function ClientPortalPageInner() {
       setDebtForm((p) => (p.success ? { ...p, success: false } : p))
     }
 
-    const fr = featuredWalletRechargeRowRef.current
-    if (fr && !portalRechargeHasBlockingPayment(fr)) {
-      setFeaturedDebtForm((p) => (p.success ? { ...p, success: false } : p))
+    for (const fr of newOrderWalletRechargesRef.current || []) {
+      const rid = Number(fr?.id)
+      if (!Number.isFinite(rid)) continue
+      if (!portalRechargeHasBlockingPayment(fr)) {
+        setRechargeFormById((prev) => {
+          const cur = rechargePayFormFromMap(prev, rid)
+          if (!cur.success) return prev
+          return { ...prev, [String(rid)]: { ...cur, success: false } }
+        })
+      }
     }
-  }, [data, featuredWalletRechargeRow])
+  }, [data, newOrderWalletRecharges])
 
   useEffect(() => {
     if (!token || !data) return undefined
@@ -2132,15 +2179,16 @@ function ClientPortalPageInner() {
       ...(Array.isArray(data.new_order_sales) ? data.new_order_sales : []),
       ...(Array.isArray(data.historical_debt_sales) ? data.historical_debt_sales : []),
     ]
-    const fr = featuredWalletRechargeRowRef.current
+    const rechargeAwaiting = (newOrderWalletRechargesRef.current || []).some(
+      (r) => portalRechargeHasBlockingPayment(r) || rechargePayFormFromMap(rechargeFormById, r?.id).success,
+    )
     const awaitingWebhook =
       Object.keys(successBySale).length > 0
       || Boolean(retiroSuccessByScope?.scope)
       || Boolean(debtForm.success)
-      || Boolean(featuredDebtForm.success)
+      || rechargeAwaiting
       || sales.some((s) => portalSaleHasBlockingPayment(s))
       || portalHasBlockingDebtPayment(data)
-      || (fr != null && portalRechargeHasBlockingPayment(fr))
     if (!awaitingWebhook) return undefined
     const id = setInterval(() => {
       void loadPortal({ silent: true })
@@ -2152,66 +2200,13 @@ function ClientPortalPageInner() {
     successBySale,
     retiroSuccessByScope,
     debtForm.success,
-    featuredDebtForm.success,
-    featuredWalletRechargeRow,
+    rechargeFormById,
+    newOrderWalletRecharges,
     loadPortal,
   ])
 
   const primaryNewOrder = ordersToShow[0] ?? null
-  /** Incluye ventas inicial-pendientes con $0 pagado y, si existe, sólo una recarga en el mismo criterio. */
-  const hasNewOrders =
-    ordersToShow.length > 0 || featuredWalletRechargeRow != null
-
-  const featuredRechargeCurrency = useMemo(() => {
-    const r = featuredWalletRechargeRow
-    if (!r) return 'USD'
-    const raw = r.recharge_currency
-    return raw != null && String(raw).trim().length >= 3 ? String(raw).trim().toUpperCase().slice(0, 10) : 'USD'
-  }, [featuredWalletRechargeRow])
-
-  const featuredPaymentTree = useMemo(() => {
-    if (!featuredWalletRechargeRow) return []
-    return buildPortalPaymentTree(
-      data,
-      featuredWalletRechargeRow?.allowed_payment_methods,
-      featuredWalletRechargeRow?.allowed_deposit_accounts,
-      featuredRechargeCurrency,
-      featuredWalletRechargeRow?.payment_methods_tree,
-    )
-  }, [data, featuredWalletRechargeRow, featuredRechargeCurrency])
-
-  const featuredPaymentMethods = useMemo(
-    () => portalParentMethods(featuredPaymentTree),
-    [featuredPaymentTree],
-  )
-
-  const featuredDepositAccounts = useMemo(
-    () => portalAccountsForMethod(featuredPaymentTree, featuredDebtForm.method),
-    [featuredPaymentTree, featuredDebtForm.method],
-  )
-
-  /** Al cambiar la recarga prioritaria, limpiar el formulario independiente inferior. */
-  useEffect(() => {
-    const rid = featuredWalletRechargeRow?.id
-    if (rid == null) return undefined
-    setFeaturedDebtForm({
-      method: '',
-      account: '',
-      amount: '',
-      submitting: false,
-      error: null,
-      success: false,
-      aiResult: null,
-      analyzing: false,
-      dragOver: false,
-    })
-    setFeaturedReceiptThumbUrls((prev) => {
-      revokeThumbnailList(prev)
-      return []
-    })
-    setFeaturedReceiptFiles([])
-    return undefined
-  }, [featuredWalletRechargeRow?.id])
+  const hasNewOrders = ordersToShow.length > 0 || newOrderWalletRecharges.length > 0
 
   /** Saldo pendiente distinto del histórico (pedidos nuevos en portal). */
   const hasUnpaidNewOrderBalance = useMemo(() => {
@@ -2744,13 +2739,22 @@ function ClientPortalPageInner() {
     } else if (sidList.length > 0) {
       chunks.push(`${sidList.length} pedido${sidList.length !== 1 ? 's' : ''}`)
     }
-    if (featuredWalletRechargeRow) {
-      const amt = parseMoneyNum(featuredWalletRechargeRow.amount_requested)
-      chunks.push(`Recarga ${formatMoney(Number.isFinite(amt) ? amt : 0, featuredRechargeCurrency)}`)
+    if (newOrderWalletRecharges.length > 0) {
+      if (newOrderWalletRecharges.length === 1) {
+        const r0 = newOrderWalletRecharges[0]
+        const cur =
+          r0.recharge_currency && String(r0.recharge_currency).trim().length >= 3
+            ? String(r0.recharge_currency).trim().toUpperCase().slice(0, 10)
+            : 'USD'
+        const amt = parseMoneyNum(r0.amount_requested)
+        chunks.push(`Recarga ${formatMoney(Number.isFinite(amt) ? amt : 0, cur)}`)
+      } else {
+        chunks.push(`${newOrderWalletRecharges.length} recargas`)
+      }
     }
     if (!chunks.length) return ''
     return chunks.join(' · ')
-  }, [ordersToShow, primaryNewOrder, featuredWalletRechargeRow, featuredRechargeCurrency])
+  }, [ordersToShow, primaryNewOrder, newOrderWalletRecharges])
 
   useEffect(() => {
     if (!ordersToShow.length) return
@@ -2801,6 +2805,56 @@ function ClientPortalPageInner() {
       return next
     })
   }, [ordersToShow, data])
+
+  useEffect(() => {
+    if (!newOrderWalletRecharges.length) return
+    setPayMethodByRecharge((prev) => {
+      const next = { ...prev }
+      for (const r of newOrderWalletRecharges) {
+        const rid = Number(r?.id)
+        if (!Number.isFinite(rid)) continue
+        if (next[rid] != null && next[rid] !== '') continue
+        const cur =
+          r.recharge_currency && String(r.recharge_currency).trim().length >= 3
+            ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
+            : 'USD'
+        const tree = buildPortalPaymentTree(
+          data,
+          r?.allowed_payment_methods,
+          r?.allowed_deposit_accounts,
+          cur,
+          r?.payment_methods_tree,
+        )
+        const methods = portalParentMethods(tree)
+        if (methods[0]?.id != null) next[rid] = String(methods[0].id)
+      }
+      return next
+    })
+    setPayAccountByRecharge((prev) => {
+      const next = { ...prev }
+      for (const r of newOrderWalletRecharges) {
+        const rid = Number(r?.id)
+        if (!Number.isFinite(rid)) continue
+        if (next[rid] != null && next[rid] !== '') continue
+        const cur =
+          r.recharge_currency && String(r.recharge_currency).trim().length >= 3
+            ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
+            : 'USD'
+        const tree = buildPortalPaymentTree(
+          data,
+          r?.allowed_payment_methods,
+          r?.allowed_deposit_accounts,
+          cur,
+          r?.payment_methods_tree,
+        )
+        const methods = portalParentMethods(tree)
+        const methodId = next[rid] || prev[rid] || methods[0]?.id
+        const accs = portalAccountsForMethod(tree, methodId)
+        if (accs.length === 1) next[rid] = String(accs[0].id)
+      }
+      return next
+    })
+  }, [newOrderWalletRecharges, data])
 
   /** Si la cuenta guardada no pertenece al método seleccionado, limpiarla (evita envíos inconsistentes). */
   useEffect(() => {
@@ -3533,20 +3587,21 @@ function ClientPortalPageInner() {
     ],
   )
 
-  const analyzeFeaturedReceiptWithAI = useCallback(
-    async (files, expectedAmount, expectedCurrency) => {
+  const analyzeRechargeReceiptWithAI = useCallback(
+    async (rechargeId, files, expectedAmount, expectedCurrency) => {
+      const rid = Number(rechargeId)
+      if (!Number.isFinite(rid)) return
       const images = Array.isArray(files)
         ? files.filter((file) => /^image\/(jpeg|png)$/i.test(file?.type || ''))
         : []
-      setFeaturedDebtForm((p) => ({ ...p, analyzing: true, aiResult: null }))
+      patchRechargePayForm(setRechargeFormById, rid, { analyzing: true, aiResult: null })
       try {
         if (images.length === 0) {
           const merged = mergeReceiptAnalysisResults([])
-          setFeaturedDebtForm((p) => ({
-            ...p,
+          patchRechargePayForm(setRechargeFormById, rid, {
             aiResult: merged,
             amount: '',
-          }))
+          })
         } else {
           const parts = []
           for (const img of images.slice(0, 1)) {
@@ -3555,225 +3610,208 @@ function ClientPortalPageInner() {
             if (expectedAmount != null) fd.append('expected_amount', String(expectedAmount))
             if (expectedCurrency) fd.append('expected_currency', String(expectedCurrency))
             try {
-              const { data } = await api.post('/api/v1/portal/analyze-receipt', fd)
-              parts.push(data)
+              const { data: aiData } = await api.post('/api/v1/portal/analyze-receipt', fd)
+              parts.push(aiData)
             } catch {
               parts.push({ is_readable: false })
             }
           }
           const merged = mergeReceiptAnalysisResults(parts)
-          setFeaturedDebtForm((p) => ({
-            ...p,
+          patchRechargePayForm(setRechargeFormById, rid, {
             aiResult: merged,
             amount: merged.is_readable && merged.extracted_amount > 0 ? String(merged.extracted_amount) : '',
-          }))
+          })
         }
       } catch {
-        setFeaturedDebtForm((p) => ({
-          ...p,
+        patchRechargePayForm(setRechargeFormById, rid, {
           aiResult: { is_readable: false, _error: true },
           amount: '',
-        }))
+        })
       } finally {
-        setFeaturedDebtForm((p) => ({ ...p, analyzing: false }))
+        patchRechargePayForm(setRechargeFormById, rid, { analyzing: false })
       }
     },
     [api],
   )
 
-  function replaceFeaturedReceiptFiles(nextFiles, expectedAmount, expectedCurrency) {
-    const capped =
-      Array.isArray(nextFiles) && nextFiles.length ? nextFiles.filter(Boolean).slice(0, 1) : []
-    setFeaturedReceiptThumbUrls((prev) => {
-      revokeThumbnailList(prev)
-      if (!capped.length) return []
-      return capped.map((f) => (/^image\/(jpeg|png)$/i.test(f?.type || '') ? URL.createObjectURL(f) : null))
-    })
-    setFeaturedReceiptFiles(capped.length ? capped : [])
-    setFeaturedDebtForm((p) => ({ ...p, error: null, aiResult: null, amount: '' }))
-    if (capped.length)
-      analyzeFeaturedReceiptWithAI(capped, expectedAmount, expectedCurrency)
-  }
-
-  function pickFeaturedReceipt(fileList) {
-    const incomingRaw = [...(fileList || [])].filter(Boolean)
-    const ok = incomingRaw.filter(
-      (f) =>
-        /^image\/(jpeg|png)$/i.test(f.type || '') || /^application\/pdf$/i.test(f.type || ''),
-    )
-    if (!ok.length && incomingRaw.length) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'Solo JPG, PNG o PDF (un comprobante).' }))
-      return
-    }
-    const next = ok.slice(0, 1)
-    if (incomingRaw.length !== ok.length)
-      setFeaturedDebtForm((p) => ({
-        ...p,
-        error: 'Formato no válido. Usa JPG, PNG o PDF (un solo archivo).',
-      }))
-    if (!next.length) return
-    const expected = featuredWalletRechargeRow ?
-      parseMoneyNum(featuredWalletRechargeRow.amount_requested)
-    : null
-    replaceFeaturedReceiptFiles(next, expected, featuredRechargeCurrency)
-  }
-
-  function removeFeaturedReceiptAt(idx) {
-    const next = [...featuredReceiptFiles]
-    next.splice(idx, 1)
-    const expected = featuredWalletRechargeRow ?
-      parseMoneyNum(featuredWalletRechargeRow.amount_requested)
-    : null
-    replaceFeaturedReceiptFiles(next, expected, featuredRechargeCurrency)
-  }
-
-  const submitFeaturedRechargePayment = useCallback(async () => {
-    const row = featuredWalletRechargeRow
-    if (!row) {
-      setFeaturedDebtForm((p) => ({
-        ...p,
-        error: 'No hay una solicitud de recarga activa para esta sección.',
-      }))
-      return
-    }
-    const rid = Number(row.id)
-    if (!Number.isFinite(rid)) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'Identificador de recarga inválido.' }))
-      return
-    }
-    const pendingBal = parseMoneyNum(row.balance_pending)
-    if (!(portalCanShowPayFormForRecharge(row) && pendingBal > 1e-9)) {
-      setFeaturedDebtForm((p) => ({
-        ...p,
-        error: 'Esta solicitud no tiene saldo pendiente por cubrir o no admite nuevos comprobantes.',
-      }))
-      return
-    }
-
-    const { method, account, amount, aiResult } = featuredDebtForm
-    const receiptList = [...featuredReceiptFiles].slice(0, 1).filter(Boolean)
-    if (!method) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'Elige un método de pago.' }))
-      return
-    }
-    const depId =
-      account || (featuredDepositAccounts[0]?.id != null ? String(featuredDepositAccounts[0].id) : '')
-    if (!depId) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'Elige la cuenta donde realizaste el depósito.' }))
-      return
-    }
-    const allowedPmIds = new Set(featuredPaymentMethods.map((m) => Number(m.id)))
-    if (allowedPmIds.size && !allowedPmIds.has(Number(method))) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'Método de pago no permitido para esta recarga.' }))
-      return
-    }
-    const allowedAccIds = new Set(featuredDepositAccounts.map((a) => Number(a.id)))
-    if (allowedAccIds.size && !allowedAccIds.has(Number(depId))) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'Cuenta de depósito no permitida para esta recarga.' }))
-      return
-    }
-    const selAcc = featuredDepositAccounts.find((d) => String(d.id) === String(depId))
-    const amt = parseFloat(String(amount).trim().replace(',', '.'))
-    const featMm = portalCurrencyMismatchMessage(aiResult?.extracted_currency, selAcc?.currency)
-    if (featMm) {
-      setFeaturedDebtForm((p) => ({ ...p, error: featMm }))
-      return
-    }
-    if (aiResult?._multi_currency) {
-      setFeaturedDebtForm((p) => ({
-        ...p,
-        error:
-          'No pudimos interpretar una moneda clara del comprobante; prueba una imagen JPG o PNG legible.',
-      }))
-      return
-    }
-    if (!Number.isFinite(amt) || amt <= 0) {
-      setFeaturedDebtForm((p) => ({
-        ...p,
-        error: 'Esperamos el importe detectado por IA en tu comprobante.',
-      }))
-      return
-    }
-    if (!receiptList.length) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'Adjunta el comprobante (imagen o PDF).' }))
-      return
-    }
-    setFeaturedDebtForm((p) => ({ ...p, submitting: true, error: null }))
-    try {
-      const fd = new FormData()
-      fd.append('file', receiptList[0])
-      fd.append('payment_method_id', String(method))
-      fd.append('deposit_account_id', depId)
-      fd.append('paid_amount', String(amt))
-      fd.append('id_erp', String(rid))
-      const featCreditAvail = portalCreditForCurrency(data, creditRowsDisplay, featuredRechargeCurrency)
-      const featOpen = portalRechargeOpenBalance(row)
-      const featCreditApply = Math.min(featCreditAvail, Math.max(0, featOpen))
-      if (featCreditApply > 1e-9) {
-        fd.append('apply_credit_balance', '1')
-        fd.append('use_credit_balance', '1')
-      }
-      await api.post(
-        `/api/v1/portal/${encodeURIComponent(token)}/recharges/${encodeURIComponent(String(rid))}/pay`,
-        fd,
-      )
-      setWalletRechargePatchById((prev) => ({ ...prev, [rid]: { status: 'in_review' } }))
-      setFeaturedReceiptThumbUrls((prev) => {
-        revokeThumbnailList(prev)
-        return []
+  const replaceRechargeReceiptFiles = useCallback(
+    (rechargeId, row, nextFiles) => {
+      const rid = Number(rechargeId)
+      if (!Number.isFinite(rid)) return
+      const capped =
+        Array.isArray(nextFiles) && nextFiles.length ? nextFiles.filter(Boolean).slice(0, 1) : []
+      setReceiptThumbUrlsByRecharge((prev) => {
+        revokeThumbnailList(prev[rid] || [])
+        return {
+          ...prev,
+          [rid]: capped.length
+            ? capped.map((f) => (/^image\/(jpeg|png)$/i.test(f?.type || '') ? URL.createObjectURL(f) : null))
+            : [],
+        }
       })
-      setFeaturedReceiptFiles([])
-      setFeaturedDebtForm((p) => ({ ...p, success: true, amount: '', aiResult: null }))
-      await loadWalletRecharges()
-      await loadPortal()
-    } catch (err) {
-      const d = err?.response?.data?.detail
-      setFeaturedDebtForm((p) => ({
-        ...p,
-        error: typeof d === 'string' ? d : 'No se pudo enviar el comprobante para esta recarga.',
-      }))
-    } finally {
-      setFeaturedDebtForm((p) => ({ ...p, submitting: false }))
-    }
-  }, [
-    featuredWalletRechargeRow,
-    featuredDebtForm,
-    featuredReceiptFiles,
-    featuredPaymentMethods,
-    featuredDepositAccounts,
-    featuredRechargeCurrency,
-    api,
-    token,
-    loadPortal,
-    loadWalletRecharges,
-  ])
+      setReceiptFilesByRecharge((prev) => ({ ...prev, [rid]: capped.length ? capped : [] }))
+      patchRechargePayForm(setRechargeFormById, rid, { error: null, aiResult: null, amount: '' })
+      if (capped.length) {
+        const cur =
+          row?.recharge_currency && String(row.recharge_currency).trim().length >= 3
+            ? String(row.recharge_currency).trim().toUpperCase().slice(0, 10)
+            : 'USD'
+        void analyzeRechargeReceiptWithAI(rid, capped, parseMoneyNum(row?.amount_requested), cur)
+      }
+    },
+    [analyzeRechargeReceiptWithAI],
+  )
 
-  const submitFeaturedRechargeWithCredit = useCallback(async () => {
-    const row = featuredWalletRechargeRow
-    if (!row) {
-      setFeaturedDebtForm((p) => ({ ...p, error: 'No hay una solicitud de recarga activa.' }))
-      return
-    }
-    setFeaturedDebtForm((p) => ({ ...p, submitting: true, error: null }))
-    try {
-      await applyPortalOpenOrderCredit({ kind: 'recharge', rechargeRow: row, paymentIntent: 'new_order' })
-      setFeaturedDebtForm((p) => ({ ...p, success: true, amount: '', aiResult: null }))
-    } catch (err) {
-      const d = err?.response?.data?.detail
-      setFeaturedDebtForm((p) => ({
-        ...p,
-        error: typeof d === 'string' ? d : err?.message || 'No se pudo aplicar el saldo a favor a la recarga.',
-      }))
-    } finally {
-      setFeaturedDebtForm((p) => ({ ...p, submitting: false }))
-    }
-  }, [applyPortalOpenOrderCredit, featuredWalletRechargeRow])
+  const submitRechargePayment = useCallback(
+    async (row) => {
+      if (!row) return
+      const rid = Number(row.id)
+      if (!Number.isFinite(rid)) {
+        patchRechargePayForm(setRechargeFormById, rid, { error: 'Identificador de recarga inválido.' })
+        return
+      }
+      const pendingBal = parseMoneyNum(row.balance_pending)
+      if (!(portalCanShowPayFormForRecharge(row) && pendingBal > 1e-9)) {
+        patchRechargePayForm(setRechargeFormById, rid, {
+          error: 'Esta solicitud no tiene saldo pendiente por cubrir o no admite nuevos comprobantes.',
+        })
+        return
+      }
+
+      const form = rechargePayFormFromMap(rechargeFormById, rid)
+      const effectiveMethod = form.method || payMethodByRecharge[rid] || ''
+      const receiptList = [...(receiptFilesByRecharge[rid] || [])].slice(0, 1).filter(Boolean)
+      const cur =
+        row?.recharge_currency && String(row.recharge_currency).trim().length >= 3
+          ? String(row.recharge_currency).trim().toUpperCase().slice(0, 10)
+          : 'USD'
+      const payTree = buildPortalPaymentTree(
+        data,
+        row?.allowed_payment_methods,
+        row?.allowed_deposit_accounts,
+        cur,
+        row?.payment_methods_tree,
+      )
+      const pmList = portalParentMethods(payTree)
+      const depList = portalAccountsForMethod(payTree, effectiveMethod)
+
+      if (!effectiveMethod) {
+        patchRechargePayForm(setRechargeFormById, rid, { error: 'Elige un método de pago.' })
+        return
+      }
+      const depId = form.account || payAccountByRecharge[rid] || (depList[0]?.id != null ? String(depList[0].id) : '')
+      if (!depId) {
+        patchRechargePayForm(setRechargeFormById, rid, { error: 'Elige la cuenta donde realizaste el depósito.' })
+        return
+      }
+      const allowedPmIds = new Set(pmList.map((m) => Number(m.id)))
+      if (allowedPmIds.size && !allowedPmIds.has(Number(effectiveMethod))) {
+        patchRechargePayForm(setRechargeFormById, rid, { error: 'Método de pago no permitido para esta recarga.' })
+        return
+      }
+      const allowedAccIds = new Set(depList.map((a) => Number(a.id)))
+      if (allowedAccIds.size && !allowedAccIds.has(Number(depId))) {
+        patchRechargePayForm(setRechargeFormById, rid, { error: 'Cuenta de depósito no permitida para esta recarga.' })
+        return
+      }
+      const selAcc = depList.find((d) => String(d.id) === String(depId))
+      const amt = parseFloat(String(form.amount).trim().replace(',', '.'))
+      const featMm = portalCurrencyMismatchMessage(form.aiResult?.extracted_currency, selAcc?.currency)
+      if (featMm) {
+        patchRechargePayForm(setRechargeFormById, rid, { error: featMm })
+        return
+      }
+      if (form.aiResult?._multi_currency) {
+        patchRechargePayForm(setRechargeFormById, rid, {
+          error:
+            'No pudimos interpretar una moneda clara del comprobante; prueba una imagen JPG o PNG legible.',
+        })
+        return
+      }
+      if (!Number.isFinite(amt) || amt <= 0) {
+        patchRechargePayForm(setRechargeFormById, rid, {
+          error: 'Esperamos el importe detectado por IA en tu comprobante.',
+        })
+        return
+      }
+      if (!receiptList.length) {
+        patchRechargePayForm(setRechargeFormById, rid, { error: 'Adjunta el comprobante (imagen o PDF).' })
+        return
+      }
+      patchRechargePayForm(setRechargeFormById, rid, { submitting: true, error: null })
+      try {
+        const fd = new FormData()
+        fd.append('file', receiptList[0])
+        fd.append('payment_method_id', String(effectiveMethod))
+        fd.append('deposit_account_id', depId)
+        fd.append('paid_amount', String(amt))
+        fd.append('id_erp', String(rid))
+        const featCreditAvail = portalCreditForCurrency(data, creditRowsDisplay, cur)
+        const featOpen = portalRechargeOpenBalance(row)
+        const featCreditApply = Math.min(featCreditAvail, Math.max(0, featOpen))
+        if (featCreditApply > 1e-9) {
+          fd.append('apply_credit_balance', '1')
+          fd.append('use_credit_balance', '1')
+        }
+        await api.post(
+          `/api/v1/portal/${encodeURIComponent(token)}/recharges/${encodeURIComponent(String(rid))}/pay`,
+          fd,
+        )
+        setWalletRechargePatchById((prev) => ({ ...prev, [rid]: { status: 'in_review' } }))
+        setReceiptThumbUrlsByRecharge((prev) => {
+          revokeThumbnailList(prev[rid] || [])
+          return { ...prev, [rid]: [] }
+        })
+        setReceiptFilesByRecharge((prev) => ({ ...prev, [rid]: [] }))
+        patchRechargePayForm(setRechargeFormById, rid, { success: true, amount: '', aiResult: null })
+        await loadWalletRecharges()
+        await loadPortal()
+      } catch (err) {
+        const d = err?.response?.data?.detail
+        patchRechargePayForm(setRechargeFormById, rid, {
+          error: typeof d === 'string' ? d : 'No se pudo enviar el comprobante para esta recarga.',
+        })
+      } finally {
+        patchRechargePayForm(setRechargeFormById, rid, { submitting: false })
+      }
+    },
+    [
+      rechargeFormById,
+      receiptFilesByRecharge,
+      payMethodByRecharge,
+      payAccountByRecharge,
+      data,
+      creditRowsDisplay,
+      api,
+      token,
+      loadPortal,
+      loadWalletRecharges,
+    ],
+  )
+
+  const submitRechargeWithCredit = useCallback(
+    async (row) => {
+      if (!row) {
+        return
+      }
+      const rid = Number(row.id)
+      patchRechargePayForm(setRechargeFormById, rid, { submitting: true, error: null })
+      try {
+        await applyPortalOpenOrderCredit({ kind: 'recharge', rechargeRow: row, paymentIntent: 'new_order' })
+        patchRechargePayForm(setRechargeFormById, rid, { success: true, amount: '', aiResult: null })
+      } catch (err) {
+        const d = err?.response?.data?.detail
+        patchRechargePayForm(setRechargeFormById, rid, {
+          error: typeof d === 'string' ? d : err?.message || 'No se pudo aplicar el saldo a favor a la recarga.',
+        })
+      } finally {
+        patchRechargePayForm(setRechargeFormById, rid, { submitting: false })
+      }
+    },
+    [applyPortalOpenOrderCredit],
+  )
 
   const isDebtRetiroMethod = isCodigosRetiroMethodId(debtPaymentMethods, debtForm.method)
-  const isFeaturedRetiroMethod = isCodigosRetiroMethodId(
-    featuredPaymentMethods,
-    featuredDebtForm.method,
-  )
 
   const handleDebtRetiroCompletado = useCallback(
     async (payload) => {
@@ -3842,70 +3880,73 @@ function ClientPortalPageInner() {
     ],
   )
 
-  const handleFeaturedRetiroCompletado = useCallback(
-    async (payload) => {
-      const row = featuredWalletRechargeRow
+  const handleRechargeRetiroCompletado = useCallback(
+    async (row, payload) => {
       if (!row) return
       const rid = Number(row.id)
+      if (!Number.isFinite(rid)) return
       const { monto, receiptUrl, codigo } = payload
       if (!Number.isFinite(monto) || monto <= 0) {
-        setFeaturedDebtForm((p) => ({ ...p, error: 'El widget no devolvió un importe válido.' }))
+        patchRechargePayForm(setRechargeFormById, rid, { error: 'El widget no devolvió un importe válido.' })
         return
       }
       if (!receiptUrl) {
-        setFeaturedDebtForm((p) => ({ ...p, error: 'El widget no devolvió la URL del comprobante.' }))
+        patchRechargePayForm(setRechargeFormById, rid, { error: 'El widget no devolvió la URL del comprobante.' })
         return
       }
-      const method = featuredDebtForm.method
-      const depId =
-        featuredDebtForm.account ||
-        (featuredDepositAccounts[0]?.id != null ? String(featuredDepositAccounts[0].id) : '')
+      const form = rechargePayFormFromMap(rechargeFormById, rid)
+      const cur =
+        row?.recharge_currency && String(row.recharge_currency).trim().length >= 3
+          ? String(row.recharge_currency).trim().toUpperCase().slice(0, 10)
+          : 'USD'
+      const payTree = buildPortalPaymentTree(
+        data,
+        row?.allowed_payment_methods,
+        row?.allowed_deposit_accounts,
+        cur,
+        row?.payment_methods_tree,
+      )
+      const depList = portalAccountsForMethod(payTree, form.method || payMethodByRecharge[rid])
+      const method = form.method
+      const depId = form.account || (depList[0]?.id != null ? String(depList[0].id) : '')
       if (!method || !depId) {
-        setFeaturedDebtForm((p) => ({ ...p, error: 'Selecciona método y cuenta de retiro antes de continuar.' }))
+        patchRechargePayForm(setRechargeFormById, rid, {
+          error: 'Selecciona método y cuenta de retiro antes de continuar.',
+        })
         return
       }
-      setRetiroSubmittingKey('featured')
-      setFeaturedDebtForm((p) => ({ ...p, submitting: true, error: null, success: false }))
+      const retiroScope = `recharge:${rid}`
+      setRetiroSubmittingKey(retiroScope)
+      patchRechargePayForm(setRechargeFormById, rid, { submitting: true, error: null, success: false })
       try {
         await submitCodigosRetiroPortalPayment(api, token, {
           paymentIntent: 'abono',
           paymentMethodId: method,
           depositAccountId: depId,
           paidAmount: monto,
-          currency: featuredRechargeCurrency,
+          currency: cur,
           receiptUrl,
           portalDebtKind: 'wallet_recharge',
           portalWalletRechargeId: rid,
           notes: codigo ? `codigo_retiro=${codigo}` : undefined,
         })
         setWalletRechargePatchById((prev) => ({ ...prev, [rid]: { status: 'in_review' } }))
-        setFeaturedReceiptFiles([])
-        setFeaturedDebtForm((p) => ({ ...p, success: true, amount: '', aiResult: null }))
-        setRetiroSuccessByScope({ scope: 'featured', monto, currency: featuredRechargeCurrency })
+        setReceiptFilesByRecharge((prev) => ({ ...prev, [rid]: [] }))
+        patchRechargePayForm(setRechargeFormById, rid, { success: true, amount: '', aiResult: null })
+        setRetiroSuccessByScope({ scope: retiroScope, monto, currency: cur })
         await loadWalletRecharges()
         await loadPortal()
       } catch (err) {
         const d = err?.response?.data?.detail
-        setFeaturedDebtForm((p) => ({
-          ...p,
+        patchRechargePayForm(setRechargeFormById, rid, {
           error: typeof d === 'string' ? d : 'No se pudo registrar el pago con códigos de retiro.',
-        }))
+        })
       } finally {
         setRetiroSubmittingKey(null)
-        setFeaturedDebtForm((p) => ({ ...p, submitting: false }))
+        patchRechargePayForm(setRechargeFormById, rid, { submitting: false })
       }
     },
-    [
-      api,
-      featuredDebtForm.account,
-      featuredDebtForm.method,
-      featuredDepositAccounts,
-      featuredRechargeCurrency,
-      featuredWalletRechargeRow,
-      loadPortal,
-      loadWalletRecharges,
-      token,
-    ],
+    [api, data, payMethodByRecharge, rechargeFormById, loadPortal, loadWalletRecharges, token],
   )
 
   const submitSaleRetiroFromWidget = useCallback(
@@ -4000,10 +4041,28 @@ function ClientPortalPageInner() {
         if (retiroSlotRef.current === handleDebtRetiroCompletado) retiroSlotRef.current = null
       }
     }
-    if (isFeaturedRetiroMethod && featuredWalletRechargeRow) {
-      retiroSlotRef.current = handleFeaturedRetiroCompletado
-      return () => {
-        if (retiroSlotRef.current === handleFeaturedRetiroCompletado) retiroSlotRef.current = null
+    for (const fr of newOrderWalletRecharges) {
+      const rid = Number(fr?.id)
+      if (!Number.isFinite(rid)) continue
+      const frCur =
+        fr?.recharge_currency && String(fr.recharge_currency).trim().length >= 3
+          ? String(fr.recharge_currency).trim().toUpperCase().slice(0, 10)
+          : 'USD'
+      const tree = buildPortalPaymentTree(
+        data,
+        fr?.allowed_payment_methods,
+        fr?.allowed_deposit_accounts,
+        frCur,
+        fr?.payment_methods_tree,
+      )
+      const pmList = portalParentMethods(tree)
+      const mid = payMethodByRecharge[rid] ?? rechargePayFormFromMap(rechargeFormById, rid).method
+      if (isCodigosRetiroMethodId(pmList, mid)) {
+        const handler = (payload) => handleRechargeRetiroCompletado(fr, payload)
+        retiroSlotRef.current = handler
+        return () => {
+          if (retiroSlotRef.current === handler) retiroSlotRef.current = null
+        }
       }
     }
     for (const sale of ordersToShow) {
@@ -4035,13 +4094,14 @@ function ClientPortalPageInner() {
   }, [
     currentDebtPayObligation,
     data,
-    featuredWalletRechargeRow,
+    newOrderWalletRecharges,
     handleDebtRetiroCompletado,
-    handleFeaturedRetiroCompletado,
+    handleRechargeRetiroCompletado,
     isDebtRetiroMethod,
-    isFeaturedRetiroMethod,
     ordersToShow,
+    payMethodByRecharge,
     payMethodBySale,
+    rechargeFormById,
     submitSaleRetiroFromWidget,
   ])
 
@@ -5516,56 +5576,75 @@ function ClientPortalPageInner() {
         >
         <div className="rounded-[18px] border border-indigo-400/35 bg-gradient-to-br from-slate-950/70 to-indigo-950/35 p-[14px] transition-all duration-300 shadow-[inset_0_1px_0_rgba(199,210,254,0.07),0_14px_40px_rgba(0,0,0,0.28)]">
 
-        {showNewOrderForms && featuredWalletRechargeRow ?
-          (() => {
-            const fr = featuredWalletRechargeRow
+        {showNewOrderForms && newOrderWalletRecharges.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginBottom: 28 }}>
+          {newOrderWalletRecharges.map((fr) => {
             const frId = Number(fr.id)
-            const refStr = Number.isFinite(frId) ? walletRechargeLedgerRef(frId) : 'REC—'
-            const cur = featuredRechargeCurrency
+            if (!Number.isFinite(frId)) return null
+            const rechargeForm = rechargePayFormFromMap(rechargeFormById, frId)
+            const setRechargeForm = (patch) => patchRechargePayForm(setRechargeFormById, frId, patch)
+            const rechargeReceiptFiles = receiptFilesByRecharge[frId] || []
+            const rechargeReceiptThumbUrls = receiptThumbUrlsByRecharge[frId] || []
+            const refStr = walletRechargeLedgerRef(frId)
+            const cur =
+              fr?.recharge_currency && String(fr.recharge_currency).trim().length >= 3
+                ? String(fr.recharge_currency).trim().toUpperCase().slice(0, 10)
+                : 'USD'
+            const payTree = buildPortalPaymentTree(
+              data,
+              fr?.allowed_payment_methods,
+              fr?.allowed_deposit_accounts,
+              cur,
+              fr?.payment_methods_tree,
+            )
+            const rechargePaymentMethods = portalParentMethods(payTree)
+            const methodForDeps = rechargeForm.method || payMethodByRecharge[frId] || ''
+            const rechargeDepositAccounts = portalAccountsForMethod(payTree, methodForDeps)
+            const isRechargeRetiroMethod = isCodigosRetiroMethodId(rechargePaymentMethods, methodForDeps)
+            const retiroScope = `recharge:${frId}`
             const amountReq = parseMoneyNum(fr.amount_requested)
             const pend = parseMoneyNum(fr.balance_pending)
             const featPaid = Math.max(0, parseMoneyNum(fr?.amount_paid) || 0)
             const isFeatPartial = featPaid > 1e-9 && pend > 1e-9
-            const stLc = String(fr.status ?? '').toLowerCase()
             const showPayForm = portalCanShowPayFormForRecharge(fr)
             const featLastPaymentRejected = portalRechargeLastPaymentRejected(fr)
             const featPaymentsInReview = portalRechargeHasPaymentsInReview(fr)
             const featShowReviewBanner =
-              (featuredDebtForm.success || featPaymentsInReview) && showPayForm
-            const featuredDepResolved =
-              featuredDebtForm.account ||
-              (featuredDepositAccounts[0]?.id != null ? String(featuredDepositAccounts[0].id) : '')
-            const selectedFeaturedAcc = featuredDepositAccounts.find((d) => String(d.id) === String(featuredDepResolved))
-            const needsDepositPickFeat = featuredDepositAccounts.length > 0
+              (rechargeForm.success || featPaymentsInReview) && showPayForm
+            const rechargeDepResolved =
+              rechargeForm.account ||
+              payAccountByRecharge[frId] ||
+              (rechargeDepositAccounts[0]?.id != null ? String(rechargeDepositAccounts[0].id) : '')
+            const selectedRechargeAcc = rechargeDepositAccounts.find((d) => String(d.id) === String(rechargeDepResolved))
+            const needsDepositPickFeat = rechargeDepositAccounts.length > 0
             const featMismatchMsg = portalCurrencyMismatchMessage(
-              featuredDebtForm.aiResult?.extracted_currency,
-              selectedFeaturedAcc?.currency,
+              rechargeForm.aiResult?.extracted_currency,
+              selectedRechargeAcc?.currency,
             )
             const featMultiMsg =
-              featuredDebtForm.aiResult?._multi_currency ?
+              rechargeForm.aiResult?._multi_currency ?
                 'No pudimos interpretar una moneda clara del comprobante; prueba otra foto legible.'
               : null
             const featPaidOk = Number.isFinite(
-              parseFloat(String(featuredDebtForm.amount ?? '').trim().replace(',', '.')),
+              parseFloat(String(rechargeForm.amount ?? '').trim().replace(',', '.')),
             )
-              ? parseFloat(String(featuredDebtForm.amount ?? '').trim().replace(',', '.'))
+              ? parseFloat(String(rechargeForm.amount ?? '').trim().replace(',', '.'))
               : NaN
             const featDisableBtn =
-              featuredDebtForm.submitting ||
+              rechargeForm.submitting ||
               !showPayForm ||
-              featuredPaymentMethods.length === 0 ||
-              featuredDepositAccounts.length === 0 ||
-              !String(featuredDebtForm.method || '').trim() ||
-              (needsDepositPickFeat && featuredDepositAccounts.length > 1 && !String(featuredDepResolved || '').trim()) ||
+              rechargePaymentMethods.length === 0 ||
+              rechargeDepositAccounts.length === 0 ||
+              !String(rechargeForm.method || methodForDeps || '').trim() ||
+              (needsDepositPickFeat && rechargeDepositAccounts.length > 1 && !String(rechargeDepResolved || '').trim()) ||
               !(pend > 1e-9) ||
-              (isFeaturedRetiroMethod
+              (isRechargeRetiroMethod
                 ? false
-                : featuredReceiptFiles.length === 0 ||
+                : rechargeReceiptFiles.length === 0 ||
                   !Number.isFinite(featPaidOk) ||
                   !(featPaidOk > 0) ||
                   Boolean(featMismatchMsg || featMultiMsg))
-            const isFeaturedRetiro = isFeaturedRetiroMethod
-            const dragOverFeat = Boolean(featuredDebtForm.dragOver)
+            const dragOverFeat = Boolean(rechargeForm.dragOver)
             const headlineAmt =
               isFeatPartial ? pend
               : Number.isFinite(amountReq) && amountReq > 1e-9 ? amountReq
@@ -5576,18 +5655,18 @@ function ClientPortalPageInner() {
               : isFeatPartial ? 'Saldo pendiente'
               : 'Total a pagar'
             const featUxHint = portalNewOrderPayMissingHint({
-              submitting: featuredDebtForm.submitting,
+              submitting: rechargeForm.submitting,
               reservationExpired: false,
               paysOnlyWithCreditBalance: false,
-              pmListLen: featuredPaymentMethods.length,
-              hasMethodId: Boolean(String(featuredDebtForm.method || '').trim()),
+              pmListLen: rechargePaymentMethods.length,
+              hasMethodId: Boolean(String(rechargeForm.method || methodForDeps || '').trim()),
               needsDepositPick: needsDepositPickFeat,
-              depListLen: featuredDepositAccounts.length,
-              resolvedDepId: featuredDepResolved,
+              depListLen: rechargeDepositAccounts.length,
+              resolvedDepId: rechargeDepResolved,
               totalPayablePositive: pend > 1e-9,
-              fileArrLen: featuredReceiptFiles.length,
-              firstFileMime: featuredReceiptFiles[0]?.type || '',
-              isAnalyzing: featuredDebtForm.analyzing,
+              fileArrLen: rechargeReceiptFiles.length,
+              firstFileMime: rechargeReceiptFiles[0]?.type || '',
+              isAnalyzing: rechargeForm.analyzing,
               paidOk: Number.isFinite(featPaidOk) && featPaidOk > 0,
               hasBlockingCurrencyError: Boolean(featMismatchMsg || featMultiMsg),
             })
@@ -5595,8 +5674,32 @@ function ClientPortalPageInner() {
             const featCreditApply = Math.min(featCreditAvail, Math.max(0, pend))
             const showFeatCreditBtn = showPayForm && featCreditAvail > 1e-9
 
+            const pickRechargeReceipt = (fileList) => {
+              const incomingRaw = [...(fileList || [])].filter(Boolean)
+              const ok = incomingRaw.filter(
+                (f) =>
+                  /^image\/(jpeg|png)$/i.test(f.type || '') || /^application\/pdf$/i.test(f.type || ''),
+              )
+              if (!ok.length && incomingRaw.length) {
+                setRechargeForm({ error: 'Solo JPG, PNG o PDF (un comprobante).' })
+                return
+              }
+              const next = ok.slice(0, 1)
+              if (incomingRaw.length !== ok.length) {
+                setRechargeForm({ error: 'Formato no válido. Usa JPG, PNG o PDF (un solo archivo).' })
+              }
+              if (!next.length) return
+              replaceRechargeReceiptFiles(frId, fr, next)
+            }
+
+            const removeRechargeReceiptAt = (idx) => {
+              const next = [...rechargeReceiptFiles]
+              next.splice(idx, 1)
+              replaceRechargeReceiptFiles(frId, fr, next)
+            }
+
             return (
-              <div style={{ marginTop: 12, marginBottom: 28 }}>
+              <div key={`new-order-recharge-${frId}`} style={{ marginTop: 12 }}>
                 {!showPayForm ? (
                   <p
                     style={{
@@ -5626,7 +5729,7 @@ function ClientPortalPageInner() {
                   <form
                     onSubmit={(e) => {
                       e.preventDefault()
-                      submitFeaturedRechargePayment()
+                      void submitRechargePayment(fr)
                     }}
                     style={{ display: 'flex', flexDirection: 'column', gap: 0 }}
                   >
@@ -5672,11 +5775,11 @@ function ClientPortalPageInner() {
                       <>
                         <button
                           type="button"
-                          disabled={featuredDebtForm.submitting}
-                          onClick={submitFeaturedRechargeWithCredit}
+                          disabled={rechargeForm.submitting}
+                          onClick={() => void submitRechargeWithCredit(fr)}
                           className="mb-3 w-full rounded-2xl border border-emerald-400/45 bg-emerald-950/35 px-4 py-3.5 text-[15px] font-bold leading-tight text-emerald-50 outline-none transition hover:bg-emerald-950/50 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {featuredDebtForm.submitting
+                          {rechargeForm.submitting
                             ? 'Aplicando saldo a favor…'
                             : `Pagar con mi Saldo a Favor (hasta ${formatMoney(featCreditApply, cur)})`}
                         </button>
@@ -5696,7 +5799,7 @@ function ClientPortalPageInner() {
                       }}
                     >
                       <label
-                        htmlFor="featured-baas-pm"
+                        htmlFor={`recharge-baas-pm-${frId}`}
                         style={{
                           display: 'block',
                           fontSize: 12,
@@ -5709,21 +5812,20 @@ function ClientPortalPageInner() {
                         Método de pago
                       </label>
                       <Select
-                        inputId="featured-baas-pm"
+                        inputId={`recharge-baas-pm-${frId}`}
                         classNamePrefix="portal-rs"
-                        options={portalPaymentMethodOptions(featuredPaymentMethods)}
+                        options={portalPaymentMethodOptions(rechargePaymentMethods)}
                         value={portalPaymentMethodSelectValue(
-                          featuredPaymentMethods,
-                          featuredDebtForm.method,
+                          rechargePaymentMethods,
+                          rechargeForm.method || methodForDeps,
                         )}
-                        onChange={(selectedOption) =>
-                          setFeaturedDebtForm((p) => ({
-                            ...p,
-                            method: selectedOption ? String(selectedOption.value) : '',
-                            account: '',
-                          }))
-                        }
-                        isDisabled={featuredPaymentMethods.length === 0}
+                        onChange={(selectedOption) => {
+                          const mid = selectedOption ? String(selectedOption.value) : ''
+                          setRechargeForm({ method: mid, account: '' })
+                          setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
+                          setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
+                        }}
+                        isDisabled={rechargePaymentMethods.length === 0}
                         isClearable={false}
                         placeholder="Seleccionar…"
                         styles={{
@@ -5737,7 +5839,7 @@ function ClientPortalPageInner() {
                         menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
                         menuPosition="fixed"
                       />
-                      {featuredPaymentMethods.length === 0 ?
+                      {rechargePaymentMethods.length === 0 ?
                         <p style={{ margin: '12px 0 0', fontSize: 13, color: '#fbbf24', opacity: 0.92 }}>
                           No hay métodos de pago habilitados para esta recarga.
                         </p>
@@ -5768,12 +5870,12 @@ function ClientPortalPageInner() {
                         <p style={{ margin: '0 0 12px', fontSize: 12, opacity: 0.55, lineHeight: 1.45 }}>
                           Cuentas habilitadas por el proveedor para esta solicitud.
                         </p>
-                        {featuredDepositAccounts.length === 0 ?
+                        {rechargeDepositAccounts.length === 0 ?
                           <p style={{ margin: 0, fontSize: 14, color: '#fbbf24', lineHeight: 1.45 }}>
                             No hay cuentas configuradas. Contacta al proveedor.
                           </p>
-                        : featuredDepositAccounts.length === 1 ?
-                          featuredDepositAccounts.map((d) => (
+                        : rechargeDepositAccounts.length === 1 ?
+                          rechargeDepositAccounts.map((d) => (
                             <div
                               key={d.id}
                               style={{
@@ -5797,24 +5899,28 @@ function ClientPortalPageInner() {
                         : (
                           <>
                             <label
-                              htmlFor="featured-baas-dep"
+                              htmlFor={`recharge-baas-dep-${frId}`}
                               style={{ display: 'block', fontSize: 12, opacity: 0.55, marginBottom: 8 }}
                             >
                               Elige la cuenta donde transferiste:
                             </label>
                             <select
-                              id="featured-baas-dep"
-                              value={featuredDebtForm.account}
+                              id={`recharge-baas-dep-${frId}`}
+                              value={rechargeForm.account}
                               required
                               onChange={(ev) => {
                                 const depVal = ev.target.value
-                                setFeaturedDebtForm((p) => ({ ...p, account: depVal }))
-                                const filesNow = featuredReceiptFilesRef.current
-                                const expected = featuredWalletRechargeRow ?
-                                  parseMoneyNum(featuredWalletRechargeRow.amount_requested)
-                                : null
-                                if (filesNow?.length)
-                                  analyzeFeaturedReceiptWithAI(filesNow, expected, featuredRechargeCurrency)
+                                setRechargeForm({ account: depVal })
+                                setPayAccountByRecharge((p) => ({ ...p, [frId]: depVal }))
+                                const filesNow = receiptFilesByRecharge[frId] || []
+                                if (filesNow.length) {
+                                  void analyzeRechargeReceiptWithAI(
+                                    frId,
+                                    filesNow,
+                                    parseMoneyNum(fr.amount_requested),
+                                    cur,
+                                  )
+                                }
                               }}
                               style={{
                                 width: '100%',
@@ -5830,7 +5936,7 @@ function ClientPortalPageInner() {
                               <option value="" disabled>
                                 Seleccionar cuenta…
                               </option>
-                              {featuredDepositAccounts.map((d) => (
+                              {rechargeDepositAccounts.map((d) => (
                                 <option key={d.id} value={String(d.id)}>
                                   {d.bank_name}
                                   {d.account_number ? ` · ${d.account_number}` : ''}
@@ -5842,20 +5948,20 @@ function ClientPortalPageInner() {
                       </section>
                     ) : null}
 
-                    {isFeaturedRetiro ? (
+                    {isRechargeRetiroMethod ? (
                       <>
-                        {(retiroSuccessByScope?.scope === 'featured' || featuredDebtForm.success) &&
+                        {(retiroSuccessByScope?.scope === retiroScope || rechargeForm.success) &&
                         showPayForm ? (
                           <RetiroSuccessPanel
                             message="Pedido activado. Puedes enviar abonos adicionales mientras quede saldo pendiente."
                             monto={
-                              retiroSuccessByScope?.scope === 'featured' ? retiroSuccessByScope.monto : undefined
+                              retiroSuccessByScope?.scope === retiroScope ? retiroSuccessByScope.monto : undefined
                             }
                             currency={cur}
                           />
                         ) : null}
-                        <CodigosRetiroWidget clientName={clientName} />
-                        {retiroSubmittingKey === 'featured' || featuredDebtForm.submitting ? (
+                        <CodigosRetiroWidget clientName={clientName} referenciaExterna={frId} />
+                        {retiroSubmittingKey === retiroScope || rechargeForm.submitting ? (
                           <p style={{ margin: '12px 0 0', fontSize: 13, color: '#93c5fd', textAlign: 'center' }}>
                             Registrando tu pago…
                           </p>
@@ -5873,13 +5979,13 @@ function ClientPortalPageInner() {
                         className="portal-receipt-upload-card"
                         onDragOver={(e) => {
                           e.preventDefault()
-                          setFeaturedDebtForm((p) => ({ ...p, dragOver: true }))
+                          setRechargeForm({ dragOver: true })
                         }}
-                        onDragLeave={() => setFeaturedDebtForm((p) => ({ ...p, dragOver: false }))}
+                        onDragLeave={() => setRechargeForm({ dragOver: false })}
                         onDrop={(e) => {
                           e.preventDefault()
-                          setFeaturedDebtForm((p) => ({ ...p, dragOver: false }))
-                          pickFeaturedReceipt(e.dataTransfer.files)
+                          setRechargeForm({ dragOver: false })
+                          pickRechargeReceipt(e.dataTransfer.files)
                         }}
                       >
                         <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
@@ -5894,12 +6000,12 @@ function ClientPortalPageInner() {
                           <input
                             type="file"
                             accept="image/jpeg,image/png,application/pdf"
-                            id="featured-recharge-rcv"
+                            id={`recharge-rcv-${frId}`}
                             style={{ display: 'none' }}
-                            onChange={(e) => pickFeaturedReceipt(e.target.files)}
+                            onChange={(e) => pickRechargeReceipt(e.target.files)}
                           />
                           <label
-                            htmlFor="featured-recharge-rcv"
+                            htmlFor={`recharge-rcv-${frId}`}
                             className={`flex cursor-pointer flex-col items-center justify-center gap-2.5 rounded-2xl border border-dashed px-5 py-6 text-center transition-colors duration-200 ${
                               dragOverFeat ?
                                 'border-green-400/65 bg-black/45 text-green-50'
@@ -5913,13 +6019,13 @@ function ClientPortalPageInner() {
                               Arrastra tu cupón aquí y tócalo para elegir
                             </span>
                           </label>
-                          {featuredReceiptFiles.length ?
+                          {rechargeReceiptFiles.length ?
                             <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-3">
-                              {featuredReceiptFiles.map((df, fi) => {
-                                const thumb = featuredReceiptThumbUrls[fi]
+                              {rechargeReceiptFiles.map((df, fi) => {
+                                const thumb = rechargeReceiptThumbUrls[fi]
                                 const isPdf = /^application\/pdf$/i.test(df?.type || '')
                                 return (
-                                  <div key={`feat-thumb-${fi}-${df.lastModified}-${df.name}`} className="relative">
+                                  <div key={`recharge-thumb-${frId}-${fi}-${df.lastModified}-${df.name}`} className="relative">
                                     {isPdf || !thumb ?
                                       <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-white/25 bg-black/35 text-[10px] font-bold uppercase text-green-100">
                                         PDF
@@ -5938,7 +6044,7 @@ function ClientPortalPageInner() {
                                       onClick={(evt) => {
                                         evt.preventDefault()
                                         evt.stopPropagation()
-                                        removeFeaturedReceiptAt(fi)
+                                        removeRechargeReceiptAt(fi)
                                       }}
                                     >
                                       ×
@@ -5975,7 +6081,7 @@ function ClientPortalPageInner() {
                         min="0.01"
                         step="0.01"
                         placeholder="—"
-                        value={featuredDebtForm.amount}
+                        value={rechargeForm.amount}
                         className="w-full rounded-xl border border-white/18 bg-gray-950/55 px-4 py-3 text-[15px] text-fuchsia-50 opacity-80 cursor-not-allowed box-border"
                       />
                       {featMultiMsg ?
@@ -5986,7 +6092,7 @@ function ClientPortalPageInner() {
                       : null}
                     </div>
 
-                    {featuredDebtForm.analyzing ?
+                    {rechargeForm.analyzing ?
                       <p
                         style={{
                           margin: '0 0 12px',
@@ -5998,11 +6104,11 @@ function ClientPortalPageInner() {
                       >
                         Analizando comprobante con IA… 🤖
                       </p>
-                    : featuredDebtForm.aiResult != null ?
-                      featuredDebtForm.aiResult.is_readable ?
+                    : rechargeForm.aiResult != null ?
+                      rechargeForm.aiResult.is_readable ?
                         (() => {
-                          const detectedAmt = featuredDebtForm.aiResult.extracted_amount
-                          const detectedCur = featuredDebtForm.aiResult.extracted_currency || cur
+                          const detectedAmt = rechargeForm.aiResult.extracted_amount
+                          const detectedCur = rechargeForm.aiResult.extracted_currency || cur
                           return (
                             <p
                               style={{
@@ -6036,7 +6142,7 @@ function ClientPortalPageInner() {
                     </>
                     )}
 
-                    {featuredDebtForm.error ?
+                    {rechargeForm.error ?
                       <p
                         style={{
                           margin: '0 0 12px',
@@ -6046,17 +6152,17 @@ function ClientPortalPageInner() {
                           lineHeight: 1.4,
                         }}
                       >
-                        {featuredDebtForm.error}
+                        {rechargeForm.error}
                       </p>
                     : null}
 
-                    {featUxHint && !isFeaturedRetiro ?
+                    {featUxHint && !isRechargeRetiroMethod ?
                       <p className="mb-3 px-1 text-center text-sm font-medium leading-relaxed text-amber-400">
                         {featUxHint}
                       </p>
                     : null}
 
-                    {!isFeaturedRetiro ? (
+                    {!isRechargeRetiroMethod ? (
                     <button
                       type="submit"
                       disabled={featDisableBtn}
@@ -6066,18 +6172,19 @@ function ClientPortalPageInner() {
                         boxShadow: '0 18px 40px rgba(99,102,241,0.35)',
                       }}
                     >
-                      {featuredDebtForm.submitting ? 'Enviando…' : 'Enviar comprobante de esta recarga'}
+                      {rechargeForm.submitting ? 'Enviando…' : 'Enviar comprobante de esta recarga'}
                     </button>
                     ) : null}
                   </form>
                 )}
               </div>
             )
-          })()
-        : null}
+          })}
+          </div>
+        ) : null}
 
         {showNewOrderForms && ordersToShow.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginTop: featuredWalletRechargeRow ? 20 : 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginTop: newOrderWalletRecharges.length > 0 ? 20 : 0 }}>
             {ordersToShow
               .filter((sale) => Number.isFinite(Number(sale?.sale_id)))
               .map((sale) => {

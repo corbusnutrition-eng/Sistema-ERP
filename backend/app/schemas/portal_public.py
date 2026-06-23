@@ -395,6 +395,10 @@ class PortalHomeResponse(BaseModel):
         default_factory=list,
         description="IDs de cuentas habilitadas por CRM; vacío = portal usa configuración global por venta.",
     )
+    outstanding_wallet_recharges: list[PortalWalletRechargeItem] = Field(
+        default_factory=list,
+        description="Todas las solicitudes BaaS abiertas del cliente (portal checkout).",
+    )
 
 
 class PortalPaymentSubmitResponse(BaseModel):

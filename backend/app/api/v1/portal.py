@@ -1223,12 +1223,14 @@ def _validate_wallet_recharge_declared_payment_method(
 # ── Wallet recharge (BaaS) ────────────────────────────────────────────────────
 
 
-@router.get("/{portal_token}/recharges", response_model=list[PortalWalletRechargeItem])
-def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list[PortalWalletRechargeItem]:
-    """Solicitudes de recarga abiertas para el cliente (incluye pagos parciales en curso)."""
-    client = _portal_client_from_token(db, portal_token)
-
+def _portal_wallet_recharge_items_for_client(db: Session, client: Client) -> list[PortalWalletRechargeItem]:
+    """Todas las solicitudes BaaS abiertas del cliente (sin limitar a una sola fila)."""
     from sqlalchemy import and_, or_
+
+    from app.services.client_payment_method_service import (
+        client_has_custom_payment_account_prefs,
+        get_client_assigned_payment_methods_with_accounts,
+    )
 
     rows = (
         db.query(WalletRechargeRequest)
@@ -1246,16 +1248,14 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
         .all()
     )
     out: list[PortalWalletRechargeItem] = []
-    from app.services.client_payment_method_service import (
-        client_has_custom_payment_account_prefs,
-        get_client_assigned_payment_methods_with_accounts,
-    )
-
     client_has_custom_accounts = client_has_custom_payment_account_prefs(db, int(client.id))
     for r in rows:
         recharge_cur = normalize_currency_code(getattr(r, "recharge_currency", None), "USD")
         pm_tree: list[PortalAssignedPaymentMethod] = []
         nested = None
+        pm_picks: list[PortalPaymentMethodPick] = []
+        dep_picks: list[PortalDepositPick] = []
+        pm_disp = ""
         if client_has_custom_accounts:
             nested = get_client_assigned_payment_methods_with_accounts(
                 db,
@@ -1269,7 +1269,6 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
                     if m.deposit_accounts
                 ]
                 pm_disp = ", ".join(p.name for p in pm_picks) if pm_picks else ""
-                dep_picks: list[PortalDepositPick] = []
                 seen_dep: set[int] = set()
                 for method in nested:
                     for dep in method.deposit_accounts:
@@ -1309,6 +1308,13 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
             )
         )
     return out
+
+
+@router.get("/{portal_token}/recharges", response_model=list[PortalWalletRechargeItem])
+def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list[PortalWalletRechargeItem]:
+    """Solicitudes de recarga abiertas para el cliente (incluye pagos parciales en curso)."""
+    client = _portal_client_from_token(db, portal_token)
+    return _portal_wallet_recharge_items_for_client(db, client)
 
 
 def _is_portal_client_blocked(client: Client) -> bool:
@@ -2237,6 +2243,12 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     historical_debt_sales = _sanitize_sale_list(historical_debt_sales)
 
     try:
+        outstanding_wallet_recharges = _portal_wallet_recharge_items_for_client(db, client)
+    except Exception:
+        logger.exception("portal wallet recharges list failed client_id=%s", client.id)
+        outstanding_wallet_recharges = []
+
+    try:
         return PortalHomeResponse(
             client=PortalClientBrief(
                 name=client.display_name() or "Cliente",
@@ -2274,6 +2286,7 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
             assigned_payment_methods=list(assigned_pm_models or []),
             assigned_deposit_accounts=list(assigned_dep_models or []),
             allowed_payment_account_ids=list(allowed_payment_account_ids or []),
+            outstanding_wallet_recharges=list(outstanding_wallet_recharges or []),
         )
     except Exception:
         logger.exception("portal_home response build failed client_id=%s", client.id)
