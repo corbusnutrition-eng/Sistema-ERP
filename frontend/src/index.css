@@ -270,6 +270,7 @@ body.erp-web-sync-pulse {
   width: 100%;
   max-width: 100%;
   height: fit-content;
+  overflow: visible;
 }
 
 .portal-codigos-retiro-iframe-shell {
@@ -279,7 +280,7 @@ body.erp-web-sync-pulse {
   height: fit-content;
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
   border-radius: 1rem;
   border: 1px dashed rgba(255, 255, 255, 0.25);
   background: rgba(0, 0, 0, 0.35);
@@ -299,8 +300,7 @@ body.erp-web-sync-pulse {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  height: 300px;
-  min-height: 0;
+  min-height: 720px;
   margin: 0;
   padding: 0;
   border: none;
@@ -308,4 +308,5 @@ body.erp-web-sync-pulse {
   background: transparent;
   color-scheme: dark;
   vertical-align: top;
+  overflow: visible;
 }
