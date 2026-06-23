@@ -35,6 +35,14 @@ class ClientPaymentMethodsConfigResponse(BaseModel):
     )
     #: Compatibilidad con UI anterior (métodos con al menos una cuenta asignada).
     assigned_payment_method_ids: list[int] = Field(default_factory=list)
+    assigned_account_ids: list[int] = Field(
+        default_factory=list,
+        description="IDs planos de cuentas de depósito habilitadas para el portal del cliente.",
+    )
+    has_custom_payment_accounts: bool = Field(
+        default=False,
+        description="True si el admin definió cuentas específicas (tabla granular); False = portal usa config global.",
+    )
 
 
 class ClientPaymentMethodsUpsertBody(BaseModel):
@@ -42,6 +50,26 @@ class ClientPaymentMethodsUpsertBody(BaseModel):
 
 
 class ClientPaymentMethodsUpsertResponse(BaseModel):
+    ok: bool = True
+    updated: int = 0
+    message: str = ""
+
+
+class ClientPaymentAccountsConfigResponse(BaseModel):
+    client_id: int
+    client_currency: str
+    account_ids: list[int] = Field(default_factory=list)
+    has_custom_payment_accounts: bool = False
+
+
+class ClientPaymentAccountsUpsertBody(BaseModel):
+    account_ids: list[int] = Field(
+        default_factory=list,
+        description="Reemplaza las preferencias del cliente. Array vacío = usar configuración global en portal.",
+    )
+
+
+class ClientPaymentAccountsUpsertResponse(BaseModel):
     ok: bool = True
     updated: int = 0
     message: str = ""

@@ -15,6 +15,9 @@ from app.database import get_db
 from app.models.client import CLIENT_STATUSES, Client
 from app.models.wallet_transaction import WalletTransaction
 from app.schemas.client_payment_methods import (
+    ClientPaymentAccountsConfigResponse,
+    ClientPaymentAccountsUpsertBody,
+    ClientPaymentAccountsUpsertResponse,
     ClientPaymentMethodsConfigResponse,
     ClientPaymentMethodsUpsertBody,
     ClientPaymentMethodsUpsertResponse,
@@ -26,7 +29,9 @@ from app.schemas.client_product_prices import (
     AdminClientPackagePricesUpsertResponse,
 )
 from app.services.client_payment_method_service import (
+    get_client_payment_accounts_config,
     get_client_payment_methods_config,
+    set_client_payment_accounts_from_ids,
     set_client_payment_methods,
 )
 from app.services.client_product_price_service import (
@@ -268,3 +273,40 @@ def admin_set_client_payment_methods(
         updated=touched,
         message=f"Cuentas de pago actualizadas para {label} ({touched} cuenta(s)).",
     )
+
+
+@router.get("/{client_id}/payment-accounts", response_model=ClientPaymentAccountsConfigResponse)
+def admin_get_client_payment_accounts(
+    client_id: int,
+    db: DbDep,
+    _: AdminDep,
+) -> ClientPaymentAccountsConfigResponse:
+    """Preferencias planas de cuentas de depósito habilitadas para el portal del cliente."""
+    cfg = get_client_payment_accounts_config(db, int(client_id))
+    return ClientPaymentAccountsConfigResponse(**cfg)
+
+
+@router.put("/{client_id}/payment-accounts", response_model=ClientPaymentAccountsUpsertResponse)
+def admin_set_client_payment_accounts(
+    client_id: int,
+    payload: ClientPaymentAccountsUpsertBody,
+    db: DbDep,
+    _: AdminDep,
+) -> ClientPaymentAccountsUpsertResponse:
+    """Reemplaza las cuentas de pago del cliente (array vacío = configuración global en portal)."""
+    client = db.get(Client, int(client_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
+
+    touched = set_client_payment_accounts_from_ids(
+        db,
+        client_id=int(client_id),
+        account_ids=payload.account_ids,
+    )
+    db.commit()
+    label = client.display_name()
+    if touched == 0:
+        msg = f"Preferencias de cuentas eliminadas para {label}. El portal usará la configuración global."
+    else:
+        msg = f"Cuentas de pago actualizadas para {label} ({touched} cuenta(s))."
+    return ClientPaymentAccountsUpsertResponse(updated=touched, message=msg)

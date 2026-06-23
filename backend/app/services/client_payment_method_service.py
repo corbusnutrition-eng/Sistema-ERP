@@ -382,6 +382,93 @@ def build_client_assigned_deposit_picks(
     return out_legacy
 
 
+def _payment_method_ids_for_account(db: Session, account_id: int) -> list[int]:
+    """Métodos de pago activos a los que pertenece una cuenta de depósito."""
+    aid = int(account_id)
+    rows = (
+        db.query(PaymentMethod)
+        .filter(PaymentMethod.is_active.is_(True))
+        .order_by(PaymentMethod.id.asc())
+        .all()
+    )
+    return [int(pm.id) for pm in rows if _account_belongs_to_payment_method(db, pm, aid)]
+
+
+def account_ids_to_payment_method_selections(
+    db: Session,
+    client_id: int,
+    account_ids: list[int],
+) -> list[ClientPaymentMethodSelection]:
+    """Convierte IDs planos de cuentas en selecciones agrupadas por método padre."""
+    from app.services.client_currency_service import get_client_currency
+
+    client = db.get(Client, int(client_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
+    cur = get_client_currency(client)
+    unique_ids = sorted({int(x) for x in account_ids if int(x) > 0})
+    if not unique_ids:
+        return []
+
+    grouped: dict[int, set[int]] = defaultdict(set)
+    for aid in unique_ids:
+        acc = db.get(Account, aid)
+        if acc is None or not acc.is_active or not is_liquid_deposit_account(acc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cuenta de depósito #{aid} no encontrada o inactiva.",
+            )
+        if normalize_currency_code(str(acc.currency or "USD"), "USD") != cur:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"La cuenta «{(acc.name or '').strip()}» no opera en {cur}.",
+            )
+        pm_ids = _payment_method_ids_for_account(db, aid)
+        if not pm_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"La cuenta «{(acc.name or '').strip()}» no está vinculada a ningún método de pago.",
+            )
+        grouped[int(pm_ids[0])].add(aid)
+
+    return [
+        ClientPaymentMethodSelection(payment_method_id=int(pid), account_ids=sorted(grouped[pid]))
+        for pid in sorted(grouped)
+    ]
+
+
+def set_client_payment_accounts_from_ids(
+    db: Session,
+    *,
+    client_id: int,
+    account_ids: list[int],
+) -> int:
+    """Reemplaza preferencias del cliente a partir de un array plano de account_ids."""
+    selections = account_ids_to_payment_method_selections(db, int(client_id), account_ids)
+    return set_client_payment_methods(db, client_id=int(client_id), selections=selections)
+
+
+def client_has_custom_payment_account_prefs(db: Session, client_id: int) -> bool:
+    """True si el admin guardó cuentas granulares en CRM (client_payment_method_accounts)."""
+    return _client_has_granular_account_assignments(db, int(client_id))
+
+
+def get_client_payment_accounts_config(db: Session, client_id: int) -> dict[str, object]:
+    from app.services.client_currency_service import get_client_currency
+
+    client = db.get(Client, int(client_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
+    cur = get_client_currency(client)
+    account_ids = get_client_assigned_account_ids(db, int(client_id), currency=cur)
+    return {
+        "client_id": int(client_id),
+        "client_currency": cur,
+        "account_ids": account_ids,
+        "has_custom_payment_accounts": client_has_custom_payment_account_prefs(db, int(client_id)),
+    }
+
+
 def get_client_payment_methods_config(db: Session, client_id: int) -> dict[str, object]:
     from app.services.client_currency_service import get_client_currency
 
@@ -392,12 +479,15 @@ def get_client_payment_methods_config(db: Session, client_id: int) -> dict[str, 
     assigned_selections = get_client_assigned_selections(db, int(client_id))
     available = list_payment_methods_with_accounts_for_currency(db, cur)
     assigned_pm_ids = sorted({int(s.payment_method_id) for s in assigned_selections if s.account_ids})
+    assigned_account_ids = get_client_assigned_account_ids(db, int(client_id), currency=cur)
     return {
         "client_id": int(client_id),
         "client_currency": cur,
         "assigned_selections": assigned_selections,
         "available_payment_methods": available,
         "assigned_payment_method_ids": assigned_pm_ids,
+        "assigned_account_ids": assigned_account_ids,
+        "has_custom_payment_accounts": client_has_custom_payment_account_prefs(db, int(client_id)),
     }
 
 

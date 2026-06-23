@@ -702,33 +702,35 @@ def _portal_resolve_payment_picks_for_client(
 ) -> tuple[list[PortalPaymentMethodPick], list[PortalDepositPick], list[PortalAssignedPaymentMethod]]:
     """Métodos/cuentas del portal: prioriza asignación CRM; si no hay, lógica por venta/recarga."""
     from app.services.client_payment_method_service import (
-        build_client_assigned_deposit_picks,
+        client_has_custom_payment_account_prefs,
         get_client_assigned_payment_method_ids,
         get_client_assigned_payment_methods_with_accounts,
     )
 
     cur = normalize_currency_code(currency, "USD")
-    assigned_ids = get_client_assigned_payment_method_ids(db, int(client.id))
-    if assigned_ids:
+    has_custom_accounts = client_has_custom_payment_account_prefs(db, int(client.id))
+    legacy_assigned_pm = get_client_assigned_payment_method_ids(db, int(client.id))
+    if has_custom_accounts or legacy_assigned_pm:
         nested = get_client_assigned_payment_methods_with_accounts(
             db,
             int(client.id),
             currency=cur,
         )
-        methods = [
-            PortalPaymentMethodPick(id=int(m.id), name=m.name)
-            for m in nested
-            if m.deposit_accounts
-        ]
-        deps: list[PortalDepositPick] = []
-        seen_dep: set[int] = set()
-        for method in nested:
-            for dep in method.deposit_accounts:
-                if int(dep.id) in seen_dep:
-                    continue
-                seen_dep.add(int(dep.id))
-                deps.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
-        return methods, deps, nested
+        if nested:
+            methods = [
+                PortalPaymentMethodPick(id=int(m.id), name=m.name)
+                for m in nested
+                if m.deposit_accounts
+            ]
+            deps: list[PortalDepositPick] = []
+            seen_dep: set[int] = set()
+            for method in nested:
+                for dep in method.deposit_accounts:
+                    if int(dep.id) in seen_dep:
+                        continue
+                    seen_dep.add(int(dep.id))
+                    deps.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
+            return methods, deps, nested
 
     if recharge_raw_pm is not None:
         pm_picks = _portal_wallet_recharge_method_picks(db, recharge_raw_pm)
@@ -1232,35 +1234,45 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
     )
     out: list[PortalWalletRechargeItem] = []
     from app.services.client_payment_method_service import (
+        client_has_custom_payment_account_prefs,
         get_client_assigned_payment_method_ids,
         get_client_assigned_payment_methods_with_accounts,
     )
 
-    client_has_assigned_pm = bool(get_client_assigned_payment_method_ids(db, int(client.id)))
+    client_has_assigned_pm = client_has_custom_payment_account_prefs(db, int(client.id)) or bool(
+        get_client_assigned_payment_method_ids(db, int(client.id))
+    )
     for r in rows:
         recharge_cur = normalize_currency_code(getattr(r, "recharge_currency", None), "USD")
+        pm_tree: list[PortalAssignedPaymentMethod] = []
         if client_has_assigned_pm:
             nested = get_client_assigned_payment_methods_with_accounts(
                 db,
                 int(client.id),
                 currency=recharge_cur,
             )
-            pm_picks = [
-                PortalPaymentMethodPick(id=int(m.id), name=m.name)
-                for m in nested
-                if m.deposit_accounts
-            ]
-            pm_disp = ", ".join(p.name for p in pm_picks) if pm_picks else ""
-            dep_picks: list[PortalDepositPick] = []
-            seen_dep: set[int] = set()
-            for method in nested:
-                for dep in method.deposit_accounts:
-                    if int(dep.id) in seen_dep:
-                        continue
-                    seen_dep.add(int(dep.id))
-                    dep_picks.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
-            pm_tree = nested
+            if nested:
+                pm_picks = [
+                    PortalPaymentMethodPick(id=int(m.id), name=m.name)
+                    for m in nested
+                    if m.deposit_accounts
+                ]
+                pm_disp = ", ".join(p.name for p in pm_picks) if pm_picks else ""
+                dep_picks: list[PortalDepositPick] = []
+                seen_dep: set[int] = set()
+                for method in nested:
+                    for dep in method.deposit_accounts:
+                        if int(dep.id) in seen_dep:
+                            continue
+                        seen_dep.add(int(dep.id))
+                        dep_picks.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
+                pm_tree = nested
+            else:
+                nested = None
         else:
+            nested = None
+
+        if not nested:
             raw_pm = r.allowed_payment_methods if isinstance(r.allowed_payment_methods, list) else None
             pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm)
             pm_disp = payment_methods_display(db, raw_pm)
