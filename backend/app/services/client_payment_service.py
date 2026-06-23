@@ -3296,7 +3296,11 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
         )
 
     from app.models.wallet_transaction import WalletTransaction
-    from app.services.baas_commission_cascade_service import TX_NETWORK_PROFIT
+    from app.services.baas_commission_cascade_service import (
+        BAAS_COMMISSION_LEDGER_TYPES,
+        TX_NETWORK_PROFIT,
+        TX_WALLET_DEPOSIT,
+    )
     from app.services.client_reseller_service import (
         TX_BAAS_TRANSFER_IN,
         TX_BAAS_TRANSFER_OUT,
@@ -3316,7 +3320,9 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
         .filter(
             WalletTransaction.client_id == int(client_id),
             WalletTransaction.transaction_type.in_(
-                tuple(BAAS_TRANSFER_LEDGER_TYPES) + (TX_NETWORK_PROFIT, TX_AUTO_PURCHASE)
+                tuple(BAAS_TRANSFER_LEDGER_TYPES)
+                + tuple(BAAS_COMMISSION_LEDGER_TYPES)
+                + (TX_AUTO_PURCHASE,)
             ),
         )
         .order_by(WalletTransaction.created_at.desc())
@@ -3357,7 +3363,7 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
             type_label = "Reversión transferencia BaaS"
             status_label = "Revertida"
             revert_ok = False
-        elif tx_type == TX_NETWORK_PROFIT:
+        elif tx_type in (TX_WALLET_DEPOSIT, TX_NETWORK_PROFIT):
             type_label = "Comisión de red BaaS"
             status_label = "Acreditada"
             revert_ok = False
@@ -3378,7 +3384,7 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
                 if tx_type in BAAS_TRANSFER_LEDGER_TYPES
                 else (
                     f"COM-{int(wtx.id):05d}"
-                    if tx_type == TX_NETWORK_PROFIT
+                    if tx_type in (TX_WALLET_DEPOSIT, TX_NETWORK_PROFIT)
                     else f"AUT-{int(wtx.id):05d}"
                 ),
                 "note": note,
@@ -3388,7 +3394,7 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
                 "entity_id": int(wtx.id),
                 "entity_kind": "wallet_transfer"
                 if tx_type in BAAS_TRANSFER_LEDGER_TYPES
-                else ("network_commission" if tx_type == TX_NETWORK_PROFIT else "auto_purchase"),
+                else ("network_commission" if tx_type in (TX_WALLET_DEPOSIT, TX_NETWORK_PROFIT) else "auto_purchase"),
                 "wallet_transaction_id": int(wtx.id),
                 "can_revert": revert_ok,
                 "revert_counterparty_id": cp_id,

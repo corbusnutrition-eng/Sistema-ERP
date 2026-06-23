@@ -94,7 +94,7 @@ from app.services.client_product_price_service import _package_display_name
 from app.services import render_sync
 from app.services.client_product_price_service import list_portal_auto_purchase_products
 from app.services.portal_auto_purchase_service import execute_portal_auto_purchase, TX_AUTO_PURCHASE
-from app.services.baas_commission_cascade_service import TX_NETWORK_PROFIT
+from app.services.baas_commission_cascade_service import BAAS_COMMISSION_LEDGER_TYPES, TX_NETWORK_PROFIT, TX_WALLET_DEPOSIT
 from app.services.client_reseller_service import (
     TX_BAAS_TRANSFER_IN,
     TX_BAAS_TRANSFER_OUT,
@@ -1119,7 +1119,7 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
         .filter(
             WalletTransaction.client_id == int(client_id),
             WalletTransaction.transaction_type.in_(
-                (TX_BAAS_TRANSFER_OUT, TX_BAAS_TRANSFER_IN, TX_NETWORK_PROFIT, TX_AUTO_PURCHASE)
+                (TX_BAAS_TRANSFER_OUT, TX_BAAS_TRANSFER_IN, TX_WALLET_DEPOSIT, TX_NETWORK_PROFIT, TX_AUTO_PURCHASE)
             ),
         )
         .order_by(WalletTransaction.created_at.desc())
@@ -1146,9 +1146,9 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
             description = desc_raw or "Transferencia a sub-cliente"
             status_label = "Transferencia BaaS"
             ref = f"TXF-{int(wtx.id):05d}"
-        elif tx_type == TX_NETWORK_PROFIT:
+        elif tx_type in (TX_WALLET_DEPOSIT, TX_NETWORK_PROFIT):
             description = desc_raw or "Comisión por ventas de tu red"
-            status_label = "Comisión de red BaaS"
+            status_label = "Depósito BaaS · comisión de red"
             ref = f"COM-{int(wtx.id):05d}"
         elif tx_type == TX_AUTO_PURCHASE:
             description = desc_raw or "Autocompra BaaS"

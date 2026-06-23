@@ -1419,11 +1419,21 @@ def ensure_customer_advance_liability(db: Session, currency: str) -> Account:
     )
 
 
+def is_baas_wallet_settlement_payment(payment) -> bool:
+    """Cobro virtual BaaS (autocompra portal): cierra CxC sin banco ni anticipos."""
+    notes = str(getattr(payment, "notes", None) or "")
+    return "BAAS_WALLET_AUTO_PURCHASE=1" in notes
+
+
 def is_credit_only_client_payment(payment) -> bool:
     """Pagos con saldo a favor del cliente: no hay movimiento bancario."""
     pm = (getattr(payment, "payment_method", None) or "").strip().lower()
     notes = str(getattr(payment, "notes", None) or "")
-    return pm == "saldo a favor" or "PARTE_SALDO_FAVOR=" in notes or "credit_auto_portal" in notes
+    return (
+        pm == "saldo a favor"
+        or "PARTE_SALDO_FAVOR=" in notes
+        or "credit_auto_portal" in notes
+    )
 
 
 def _client_payment_applied_to_ar_amount(db: Session, payment) -> Decimal:

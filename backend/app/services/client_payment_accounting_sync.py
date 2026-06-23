@@ -22,11 +22,14 @@ def sync_client_payment_accounting_ledgers(
 ) -> Optional[JournalEntry]:
     """Registra cobro CxC: banco/anticipos según tipo de pago (sin ``commit``)."""
     from app.services.accounting_engine import (
+        is_baas_wallet_settlement_payment,
         is_credit_only_client_payment,
         sync_client_credit_balance_payment_journal,
         sync_client_payment_journal,
     )
 
+    if is_baas_wallet_settlement_payment(payment):
+        return None
     if is_credit_only_client_payment(payment):
         return sync_client_credit_balance_payment_journal(db, payment, strict=strict)
     return sync_client_payment_journal(db, payment, strict=strict)

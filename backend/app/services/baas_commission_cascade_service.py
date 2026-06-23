@@ -8,19 +8,18 @@ from sqlalchemy.orm import Session
 
 from app.currency_utils import normalize_currency_code
 from app.models.client import Client
-from app.models.client_notification import ClientNotification
 from app.models.product import Product, ProductPackageCatalog
 from app.models.wallet_transaction import WalletTransaction
+from app.services.client_notification_service import enqueue_client_network_commission_notification
 from app.services.client_product_price_service import (
     _package_base_cost_usd,
     get_client_package_price_row,
     resolve_client_package_sale_price,
 )
 
+TX_WALLET_DEPOSIT = "wallet_deposit"
 TX_NETWORK_PROFIT = "network_profit"
-NOTIFICATION_TARGET_NETWORK_COMMISSION = "network_commission"
-COMMISSION_NOTIFICATION_TITLE = "¡Nueva comisión por red! 💸"
-BAAS_COMMISSION_LEDGER_TYPES = frozenset({TX_NETWORK_PROFIT})
+BAAS_COMMISSION_LEDGER_TYPES = frozenset({TX_WALLET_DEPOSIT, TX_NETWORK_PROFIT})
 
 _MAX_CASCADE_HOPS = 256
 
@@ -90,23 +89,6 @@ def _buyer_label_for_commission(buyer: Client) -> str:
     return f"#{cid}"
 
 
-def _format_commission_profit_label(amount: float, currency: str) -> str:
-    """Etiqueta legible del importe acreditado (ej. ``US$ 5.00``, ``BOB 34.50``)."""
-    cur = normalize_currency_code(currency, "USD")
-    amt = round(float(amount), 2)
-    if cur == "USD":
-        return f"US$ {amt:,.2f}"
-    return f"{cur} {amt:,.2f}"
-
-
-def _commission_notification_message(*, profit: float, currency: str, product_name: str) -> str:
-    profit_label = _format_commission_profit_label(profit, currency)
-    pkg = (product_name or "").strip() or "un paquete"
-    return (
-        f"Has ganado {profit_label} de comisión por la compra de {pkg} "
-        f"en tu red de sub-distribuidores."
-    )
-
 def distribute_baas_commission_cascade(
     db: Session,
     *,
@@ -124,10 +106,15 @@ def distribute_baas_commission_cascade(
     Recorre la cadena ``buyer → parent → … → root`` y acredita el spread de margen
     en la billetera BaaS de cada distribuidor superior.
 
-    ACID: no ejecuta ``db.commit()`` ni ``db.rollback()``. Solo ``db.add`` / ``flush``
-    vía helpers de saldo y notificaciones de bandeja. El llamador debe confirmar o
-    revertir la transacción completa (cobro + comisiones + historiales + avisos)
-    en un único ``commit`` / ``rollback`` externo.
+    Acción financiera permitida por padre (estricto):
+    - ``add_client_wallet_balance`` (saldo virtual BaaS en ``wallet_balances_by_currency``).
+    - ``WalletTransaction`` tipo ``wallet_deposit`` (ingreso / depósito).
+    - ``ClientNotification`` para la bandeja del portal.
+
+    Prohibido: ``Sale``, ``Invoice``, facturación o cualquier obligación CxC al padre.
+
+    ACID: no ejecuta ``db.commit()`` ni ``db.rollback()``. Solo ``db.add`` / ``flush``.
+    El llamador confirma o revierte la transacción completa en un único ``commit`` externo.
     """
     from app.services.wallet_balance_service import add_client_wallet_balance
 
@@ -167,7 +154,7 @@ def distribute_baas_commission_cascade(
                 user_id=None,
                 client_id=int(parent.id),
                 amount=float(total_profit),
-                transaction_type=TX_NETWORK_PROFIT,
+                transaction_type=TX_WALLET_DEPOSIT,
                 description=(
                     f"Comisión por red: Compra de {product_name} por el usuario {buyer_label} "
                     f"(venta #{int(sale_id)}) · {cur}"
@@ -175,21 +162,15 @@ def distribute_baas_commission_cascade(
             )
             db.add(tx)
             db.add(parent)
-            db.add(
-                ClientNotification(
-                    client_id=int(parent.id),
-                    batch_id=None,
-                    title=COMMISSION_NOTIFICATION_TITLE,
-                    message=_commission_notification_message(
-                        profit=total_profit,
-                        currency=cur,
-                        product_name=product_name,
-                    ),
-                    target_type=NOTIFICATION_TARGET_NETWORK_COMMISSION,
-                    target_value=str(int(sale_id)),
-                    is_read=False,
-                )
+            enqueue_client_network_commission_notification(
+                db,
+                client_id=int(parent.id),
+                profit=total_profit,
+                currency=cur,
+                product_name=product_name,
+                sale_id=int(sale_id),
             )
+            db.flush()
             created.append(tx)
 
         current_node = parent

@@ -100,6 +100,69 @@ def _pick_free_flujo_package_screens(
     return list(rows)
 
 
+BAAS_WALLET_AUTO_PURCHASE_NOTE = "Autocompra portal BaaS — Flujo"
+
+
+def _settle_baas_wallet_auto_purchase_sale_cxc(
+    db: Session,
+    client: Client,
+    sale: Sale,
+) -> None:
+    """
+    Cierra CxC de la autocompra BaaS: el cobro ya ocurrió vía débito de billetera.
+
+    Registra ``ClientPayment`` aprobado + ``PaymentAllocation`` sin asiento bancario.
+    """
+    from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
+    from app.services.client_payment_service import (
+        next_payment_number,
+        refresh_sale_status_after_payment,
+        sync_sale_amount_paid_from_allocations,
+        _sale_invoice_total,
+    )
+    from app.timezone_utils import now_ecuador
+
+    real_total = _sale_invoice_total(db, sale)
+    if real_total <= Decimal("0.00005"):
+        return
+
+    now = now_ecuador()
+    cur = normalize_currency_code(str(sale.currency or "USD"))
+    cp = ClientPayment(
+        payment_number=next_payment_number(db),
+        client_id=int(client.id),
+        amount=real_total,
+        currency=cur,
+        exchange_rate=float(sale.exchange_rate or 1.0),
+        status=ClientPaymentStatus.approved,
+        payment_method_id=None,
+        payment_method="Saldo BaaS",
+        reference_number=f"BAAS-AUT-{int(sale.id)}",
+        receipt_file_url=None,
+        deposit_account_id=None,
+        notes=(
+            f"BAAS_WALLET_AUTO_PURCHASE=1\n"
+            f"META_SALE_ID={int(sale.id)}\n"
+            f"{BAAS_WALLET_AUTO_PURCHASE_NOTE} — cobro con billetera virtual."
+        ),
+        created_at=now,
+        approved_at=now,
+    )
+    db.add(cp)
+    db.flush()
+    db.add(
+        PaymentAllocation(
+            payment_id=int(cp.id),
+            sale_id=int(sale.id),
+            amount_applied=real_total,
+        )
+    )
+    db.flush()
+    sync_sale_amount_paid_from_allocations(db, sale)
+    refresh_sale_status_after_payment(db, sale)
+    db.add(sale)
+
+
 def _debit_client_wallet(
     db: Session,
     client: Client,
@@ -253,7 +316,7 @@ def execute_portal_auto_purchase(
             class_id=getattr(product, "transaction_class_id", None),
             payment_method_id=None,
             deposit_account_id=None,
-            notes="Autocompra portal BaaS — Flujo",
+            notes=BAAS_WALLET_AUTO_PURCHASE_NOTE,
             invoice_lines=inv_base,
             allowed_payment_methods=None,
             allowed_deposit_accounts=None,
@@ -269,6 +332,8 @@ def execute_portal_auto_purchase(
             product_name=display,
             sale_id=int(sale.id),
         )
+
+        _settle_baas_wallet_auto_purchase_sale_cxc(db, client, sale)
 
         from app.services.baas_commission_cascade_service import distribute_baas_commission_cascade
 

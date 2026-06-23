@@ -308,6 +308,61 @@ def delete_notification_batches(db: Session, *, batch_ids: list[str]) -> tuple[i
     return len(distinct_batches), int(deleted_rows)
 
 
+NOTIFICATION_TARGET_NETWORK_COMMISSION = "network_commission"
+COMMISSION_NOTIFICATION_TITLE = "¡Nueva comisión por red! 💸"
+
+
+def _format_commission_profit_label(amount: float, currency: str) -> str:
+    from app.currency_utils import normalize_currency_code
+
+    cur = normalize_currency_code(currency, "USD")
+    amt = round(float(amount), 2)
+    if cur == "USD":
+        return f"US$ {amt:,.2f}"
+    return f"{cur} {amt:,.2f}"
+
+
+def commission_notification_message(*, profit: float, currency: str, product_name: str) -> str:
+    profit_label = _format_commission_profit_label(profit, currency)
+    pkg = (product_name or "").strip() or "un paquete"
+    return (
+        f"Has ganado {profit_label} de comisión por la compra de {pkg} "
+        f"en tu red de sub-distribuidores."
+    )
+
+
+def enqueue_client_network_commission_notification(
+    db: Session,
+    *,
+    client_id: int,
+    profit: float,
+    currency: str,
+    product_name: str,
+    sale_id: int,
+) -> ClientNotification:
+    """
+    Inserta aviso en bandeja del portal (``ClientNotification``).
+
+    ACID: solo ``db.add``; el llamador confirma con ``commit`` externo.
+    """
+    row = ClientNotification(
+        client_id=int(client_id),
+        batch_id=None,
+        title=COMMISSION_NOTIFICATION_TITLE,
+        message=commission_notification_message(
+            profit=profit,
+            currency=currency,
+            product_name=product_name,
+        ),
+        target_type=NOTIFICATION_TARGET_NETWORK_COMMISSION,
+        target_value=str(int(sale_id)),
+        is_read=False,
+        created_at=now_ecuador(),
+    )
+    db.add(row)
+    return row
+
+
 def list_client_notifications(db: Session, client_id: int) -> list[ClientNotification]:
     return (
         db.query(ClientNotification)
