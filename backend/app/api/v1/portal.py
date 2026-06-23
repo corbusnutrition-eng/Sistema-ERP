@@ -121,11 +121,27 @@ from app.wallet_recharge_helpers import (
     REQ_STATUS_IN_REVIEW,
     REQ_STATUS_PARTIALLY_PAID,
     REQ_STATUS_PENDING,
+    mark_wallet_recharge_portal_receipt_submitted,
     payment_methods_display,
     wallet_recharge_accepts_client_receipt,
 )
 
 router = APIRouter(prefix="/portal", tags=["public-client-portal"])
+
+
+def _portal_commit_wallet_recharge_after_receipt(db: Session, req: WalletRechargeRequest) -> WalletRechargeRequest:
+    """
+    Fallback: si tras subir comprobante la solicitud sigue ``pending``, pasa a ``in_review``.
+
+    Garantiza que el panel admin mueva la fila a «En revisión» sin tocar FIFO ni métodos de pago.
+    """
+    receipt = str(getattr(req, "receipt_url", "") or "").strip()
+    if receipt and str(getattr(req, "status", "") or "") == REQ_STATUS_PENDING:
+        req.status = REQ_STATUS_IN_REVIEW
+        mark_wallet_recharge_portal_receipt_submitted(req)
+        commit_db_or_rollback(db)
+        db.refresh(req)
+    return req
 
 
 # ── OpenAI receipt analyzer ───────────────────────────────────────────────────
@@ -1646,8 +1662,7 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
     req.portal_declared_payment_amount = paid_f
     req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
 
-    from app.wallet_recharge_helpers import mark_wallet_recharge_portal_receipt_submitted
-
+    req.status = REQ_STATUS_IN_REVIEW
     mark_wallet_recharge_portal_receipt_submitted(req)
 
     from app.services.wallet_recharge_client_payment import ensure_pending_client_payment_for_wallet_recharge
@@ -1662,7 +1677,7 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
         credit_amount=credit_amount,
         always_create_new=True,
     )
-    db.commit()
+    commit_db_or_rollback(db)
     db.refresh(req)
     return req
 
@@ -1908,7 +1923,7 @@ async def portal_pay_wallet_recharge(
         cb_wr = float(get_client_credit_balance(client, wr_cur, db=db))
         credit_on_receipt = min(cb_wr, pending_wr)
 
-    return await apply_portal_wallet_recharge_client_receipt_upload(
+    req_out = await apply_portal_wallet_recharge_client_receipt_upload(
         db,
         client,
         req=req,
@@ -1922,6 +1937,7 @@ async def portal_pay_wallet_recharge(
         id_erp_optional=id_erp,
         credit_amount=credit_on_receipt if credit_on_receipt > 1e-9 else None,
     )
+    return _portal_commit_wallet_recharge_after_receipt(db, req_out)
 
 
 def _portal_package_label_for_screen(db: Session, row: ScreenStock, sale: Sale) -> str:
@@ -2605,10 +2621,11 @@ async def portal_submit_payment(
                 url_request_id_for_id_erp=int(tgt_wr_ab),
                 id_erp_optional=id_erp,
             )
+            req_done = _portal_commit_wallet_recharge_after_receipt(db, req_done)
             receipt_out = str(req_done.receipt_url or "").strip() or None
             return PortalPaymentSubmitResponse(
                 message="Recibimos tu comprobante para la recarga solicitada. Un operador lo validará pronto.",
-                status=str(REQ_STATUS_IN_REVIEW),
+                status=str(req_done.status or REQ_STATUS_IN_REVIEW),
                 receipt_url=receipt_out,
                 payment_id=None,
                 payment_number=None,
