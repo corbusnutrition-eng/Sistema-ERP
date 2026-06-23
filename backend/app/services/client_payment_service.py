@@ -555,13 +555,50 @@ def _effective_open_balance_for_apply(
 
 
 def _payment_applied_total(db: Session, payment: ClientPayment) -> Decimal:
-    """Suma de ``PaymentAllocation`` persistidas para un cobro."""
-    agg = (
-        db.query(func.coalesce(func.sum(PaymentAllocation.amount_applied), 0))
-        .filter(PaymentAllocation.payment_id == int(payment.id))
-        .scalar()
-    )
-    return _q_amt(agg)
+    """
+    Suma de ``PaymentAllocation`` del cobro (persistidas + pendientes de flush).
+
+    Fusiona filas en BD con objetos en la sesión SQLAlchemy para que el barrido
+    y el FIFO no sobre-asignen fondos antes del ``flush``.
+    """
+    pid = int(payment.id)
+    by_id: dict[int, Decimal] = {}
+    pending_new: list[Decimal] = []
+
+    for row in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == pid):
+        if row.id is not None:
+            by_id[int(row.id)] = _q_amt(row.amount_applied)
+
+    for obj in db:
+        if not isinstance(obj, PaymentAllocation) or int(obj.payment_id) != pid:
+            continue
+        if obj.id is None:
+            pending_new.append(_q_amt(obj.amount_applied))
+        else:
+            by_id[int(obj.id)] = _q_amt(obj.amount_applied)
+
+    total = sum(by_id.values(), Decimal("0")) + sum(pending_new, Decimal("0"))
+    return _q_amt(total)
+
+
+def _payment_allocatable_remainder(db: Session, payment: ClientPayment) -> Decimal:
+    """
+    Remanente estricto del cobro: ``payment.amount − sum(allocations)``.
+
+    Aplica en aprobación, barrido y FIFO; excluye pagos solo-saldo-a-favor.
+    """
+    if is_client_payment_credit_only(payment):
+        return Decimal("0")
+    paid = _q_amt(payment.amount)
+    applied = _payment_applied_total(db, payment)
+    return max(Decimal("0"), _q_amt(paid - applied))
+
+
+def _payment_unallocated_balance(db: Session, payment: ClientPayment) -> Decimal:
+    """Remanente de un cobro aprobado (depósito) no asignado a facturas/recargas."""
+    if payment.status != ClientPaymentStatus.approved:
+        return Decimal("0")
+    return _payment_allocatable_remainder(db, payment)
 
 
 def cap_allocation_for_sale(
@@ -575,7 +612,7 @@ def cap_allocation_for_sale(
     """
     Tope seguro antes de crear ``PaymentAllocation``.
 
-    Devuelve 0 si la factura ya no tiene saldo CxC pendiente.
+    Devuelve 0 si la factura ya no tiene saldo CxC pendiente o el cobro no tiene remanente.
     """
     balance = _effective_open_balance_for_apply(db, sale, payment, session_allocated)
     if balance <= _FP_EPS:
@@ -583,7 +620,10 @@ def cap_allocation_for_sale(
     req = _q_amt(requested)
     if req <= _FP_EPS:
         return Decimal("0")
-    return min(req, balance)
+    pay_cap = _payment_allocatable_remainder(db, payment)
+    if pay_cap <= _FP_EPS:
+        return Decimal("0")
+    return min(req, balance, pay_cap)
 
 
 def cap_allocation_for_wallet_recharge(
@@ -603,18 +643,10 @@ def cap_allocation_for_wallet_recharge(
     req_amt = _q_amt(requested)
     if req_amt <= _FP_EPS:
         return Decimal("0")
-    return min(req_amt, balance)
-
-
-def _payment_unallocated_balance(db: Session, payment: ClientPayment) -> Decimal:
-    """Remanente de un cobro aprobado (depósito) no asignado a facturas."""
-    if payment.status != ClientPaymentStatus.approved:
+    pay_cap = _payment_allocatable_remainder(db, payment)
+    if pay_cap <= _FP_EPS:
         return Decimal("0")
-    if is_client_payment_credit_only(payment):
-        return Decimal("0")
-    paid = _q_amt(payment.amount)
-    applied = _payment_applied_total(db, payment)
-    return max(Decimal("0"), _q_amt(paid - applied))
+    return min(req_amt, balance, pay_cap)
 
 
 def list_client_payments_with_unallocated_balance(
@@ -683,7 +715,7 @@ def allocate_client_credit_remainder_to_sale(
     ):
         if remaining <= _FP_EPS:
             break
-        avail = min(_payment_unallocated_balance(db, source_pay), remaining)
+        avail = min(_payment_allocatable_remainder(db, source_pay), remaining)
         if avail <= _FP_EPS:
             continue
         slice_amt = cap_allocation_for_sale(
@@ -699,6 +731,8 @@ def allocate_client_credit_remainder_to_sale(
             sale_id=int(sale.id),
             amount=slice_amt,
         )
+        if alloc is None:
+            continue
         created.append(alloc)
         if source_pay not in touched_payments:
             touched_payments.append(source_pay)
@@ -918,14 +952,17 @@ def _record_payment_allocation(
     sale_id: Optional[int] = None,
     wallet_recharge_id: Optional[int] = None,
     amount: Decimal,
-) -> PaymentAllocation:
+) -> Optional[PaymentAllocation]:
     """
     Registra monto aplicado consolidando en una sola fila por (cobro, obligación).
 
-    Evita duplicados visuales cuando el FIFO o el barrido aplican varios tramos
-    del mismo pago a la misma factura/recarga en un mismo ciclo.
+    Nunca asigna más del remanente estricto ``payment.amount − sum(allocations)``.
     """
-    amt = _q_amt(amount)
+    remainder = _payment_allocatable_remainder(db, payment)
+    amt = min(_q_amt(amount), remainder)
+    if amt <= _FP_EPS:
+        return None
+
     existing = _find_payment_allocation_for_obligation(
         db,
         int(payment.id),
@@ -947,6 +984,17 @@ def _record_payment_allocation(
     alloc = PaymentAllocation(**kwargs)
     db.add(alloc)
     return alloc
+
+
+def _assert_payment_allocation_in_bounds(db: Session, payment: ClientPayment) -> None:
+    """Candado final: ningún cobro puede tener allocations por encima de su monto."""
+    applied = _payment_applied_total(db, payment)
+    paid = _q_amt(payment.amount)
+    if applied > paid + _FP_EPS:
+        raise ValueError(
+            f"Sobre-asignación contable en cobro {payment.payment_number}: "
+            f"aplicado={float(applied):.2f} > monto={float(paid):.2f}."
+        )
 
 
 def _apply_allocation_slice_to_obligation(
@@ -976,6 +1024,8 @@ def _apply_allocation_slice_to_obligation(
             sale_id=int(sale.id),
             amount=cap,
         )
+        if alloc is None:
+            return None
         if session_allocated is not None:
             sid = int(sale.id)
             session_allocated[sid] = _q_amt(session_allocated.get(sid, Decimal("0")) + cap)
@@ -1009,6 +1059,8 @@ def _apply_allocation_slice_to_obligation(
             wallet_recharge_id=int(wallet_recharge.id),
             amount=cap,
         )
+        if alloc is None:
+            return None
         if session_allocated_wr is not None:
             rid = int(wallet_recharge.id)
             session_allocated_wr[rid] = _q_amt(session_allocated_wr.get(rid, Decimal("0")) + cap)
@@ -1093,7 +1145,11 @@ def allocate_client_payment_fifo_cross_module(
     """
     created: list[PaymentAllocation] = []
     cur = normalize_currency_code(str(payment.currency or "USD"))
-    pool_amt = _q_amt(pool if pool is not None else payment.amount)
+    paid_cap = _payment_allocatable_remainder(db, payment)
+    if pool is not None:
+        pool_amt = min(_q_amt(pool), paid_cap)
+    else:
+        pool_amt = paid_cap if paid_cap > _FP_EPS else _q_amt(payment.amount)
     in_session: dict[int, Decimal] = dict(session_allocated or {})
     in_session_wr: dict[int, Decimal] = dict(session_allocated_wr or {})
     skip_ids: set[int] = set(skip_sale_ids or ())
@@ -1139,7 +1195,13 @@ def allocate_client_payment_fifo_cross_module(
         else:
             return Decimal("0")
 
-        slice_cap = min(_q_amt(cap), pool_amt)
+        slice_cap = min(
+            _q_amt(cap),
+            pool_amt,
+            _payment_allocatable_remainder(db, payment),
+        )
+        if slice_cap <= _FP_EPS:
+            return Decimal("0")
         alloc = _apply_allocation_slice_to_obligation(
             db,
             payment,
@@ -1192,6 +1254,7 @@ def allocate_client_payment_fifo_cross_module(
 
     if created:
         db.flush()
+    _assert_payment_allocation_in_bounds(db, payment)
     return created, pool_amt
 
 
@@ -1264,11 +1327,13 @@ def sweep_client_unallocated_funds_to_obligations_fifo(
                     break
 
                 source_pay, _hint = sources[0]
-                avail = _payment_unallocated_balance(db, source_pay)
-                if avail <= _FP_EPS:
+                apply_amt = min(
+                    _payment_allocatable_remainder(db, source_pay),
+                    open_bal,
+                )
+                if apply_amt <= _FP_EPS:
                     break
 
-                apply_amt = min(avail, open_bal)
                 alloc = _apply_allocation_slice_to_obligation(
                     db,
                     source_pay,
@@ -1287,6 +1352,7 @@ def sweep_client_unallocated_funds_to_obligations_fifo(
                     touched_sale_ids.add(int(alloc.sale_id))
                 if alloc.wallet_recharge_id is not None:
                     touched_wr_ids.add(int(alloc.wallet_recharge_id))
+                db.flush()
 
         if created_all:
             db.flush()
@@ -1311,6 +1377,7 @@ def sweep_client_unallocated_funds_to_obligations_fifo(
             except Exception:
                 if strict_accounting:
                     raise
+            _assert_payment_allocation_in_bounds(db, pay)
 
     sync_client_credit_from_overpay(db, client)
     db.flush()
@@ -2231,6 +2298,7 @@ def finalize_client_payment_approval(
 
     schedule_codigos_retiro_erp_notify_from_payment_approval(db, payment, created)
 
+    _assert_payment_allocation_in_bounds(db, payment)
     return created, remainder
 
 
@@ -2472,7 +2540,7 @@ def _reconcile_initial_payment_allocations(
     if balance <= _FP_EPS:
         return created, pool_remainder
 
-    apply = min(pool, balance)
+    apply = min(pool, balance, _payment_allocatable_remainder(db, payment))
     if apply <= _FP_EPS:
         return created, pool_remainder
 
@@ -2485,6 +2553,8 @@ def _reconcile_initial_payment_allocations(
         sale_id=int(sale.id),
         amount=apply,
     )
+    if alloc is None:
+        return created, pool_remainder
     db.flush()
     return [alloc], _q_amt(pool - apply)
 
