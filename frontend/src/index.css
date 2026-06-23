@@ -255,3 +255,53 @@ body.erp-web-sync-pulse {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cg fill='none' stroke-width='0.55'%3E%3Cg stroke='%2322c55e'%3E%3Cpath d='M0 28h52v22h38m28-72v58h42v74M18 92h44v36h58M76 12v38h28v72'/%3E%3Ccircle cx='52' cy='28' r='1.8' fill='%2322c55e'/%3E%3Ccircle cx='128' cy='86' r='1.8' fill='%234ade80'/%3E%3C/g%3E%3Cg stroke='%234ade80' stroke-width='0.42'%3E%3Cpath d='M14 118h72v24h52M42 52h34v34h58M104 44v26h22v54M8 76h26v14h96'/%3E%3Ccircle cx='86' cy='118' r='1.5' fill='%2386efac'/%3E%3C/g%3E%3Cg stroke='%2386efac' stroke-width='0.35' opacity='0.92'%3E%3Cpath d='M122 8v32h-26v22m-62 58h48v26'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
   background-size: 160px 160px;
 }
+
+/* ── Portal: widget Códigos de Retiro (mismo contorno que uploader «Comprobante») ─ */
+
+.portal-codigos-retiro-glow {
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.portal-codigos-retiro-card {
+  width: 100%;
+  max-width: 100%;
+}
+
+.portal-codigos-retiro-iframe-shell {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.portal-codigos-retiro-iframe-shell:focus-within {
+  border-color: rgba(74, 222, 128, 0.55);
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.portal-codigos-retiro-iframe {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 650px;
+  min-height: 650px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color-scheme: dark;
+}

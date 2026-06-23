@@ -9,6 +9,9 @@ export const CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX = 650
 /**
  * Widget embebido del socio externo (OCR de comprobantes de retiro físico).
  * La respuesta llega vía ``window.postMessage`` (escuchada en el padre).
+ *
+ * El contenedor replica el shell visual del uploader «Comprobante» del portal
+ * (glow verde, vidrio oscuro, borde punteado) para integrarse al checkout.
  */
 export default function CodigosRetiroWidget({
   clientName = 'Cliente',
@@ -22,42 +25,30 @@ export default function CodigosRetiroWidget({
 
   return (
     <div
-      className={`portal-codigos-retiro-wrap ${className}`.trim()}
-      style={{
-        width: '100%',
-        minHeight: CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX,
-        overflow: 'visible',
-        borderRadius: 16,
-        border: '1px solid rgba(34, 197, 94, 0.35)',
-        background: 'rgba(0,0,0,0.25)',
-        ...style,
-      }}
+      className={`portal-receipt-upload-glow-wrap portal-codigos-retiro-glow mb-4 w-full rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] ${className}`.trim()}
+      style={style}
     >
-      <p
-        className="mb-0 px-4 pt-4 text-[12px] font-medium uppercase tracking-[0.06em] text-green-300"
-        style={{ margin: 0, padding: '16px 16px 8px' }}
-      >
-        Códigos de retiro
-      </p>
-      <p
-        style={{ margin: '0 0 12px', padding: '0 16px', fontSize: 13, color: 'rgba(226,232,240,0.9)' }}
-      >
-        Sube tu comprobante y confirma los datos detectados en el formulario de verificación.
-      </p>
-      <iframe
-        src={iframeSrc}
-        title="Códigos de Retiro"
-        style={{
-          width: '100%',
-          height: CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX,
-          minHeight: CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX,
-          border: 'none',
-          display: 'block',
-          overflow: 'hidden',
-        }}
-        scrolling="no"
-        allow="camera; clipboard-write"
-      />
+      <section className="portal-receipt-upload-card portal-codigos-retiro-card w-full">
+        <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
+        <div className="portal-order-summary-inner w-full px-5 pb-5 pt-5">
+          <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.06em] text-green-300">
+            Códigos de retiro
+          </p>
+          <p className="mb-4 text-[13px] leading-relaxed text-slate-200/90">
+            Sube tu comprobante y confirma los datos detectados en el formulario de verificación.
+          </p>
+          <div className="portal-codigos-retiro-iframe-shell w-full">
+            <iframe
+              src={iframeSrc}
+              title="Códigos de Retiro"
+              className="portal-codigos-retiro-iframe"
+              scrolling="no"
+              allow="camera; clipboard-write"
+              allowTransparency="true"
+            />
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

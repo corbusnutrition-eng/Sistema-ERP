@@ -76,6 +76,8 @@ export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
   if (esPrueba) {
     url.searchParams.set('es_prueba', '1')
   }
+  /** Tema oscuro del portal (el socio puede leerlo cuando exponga estilos embebidos). */
+  url.searchParams.set('tema', 'oscuro')
   return url.toString()
 }
 
