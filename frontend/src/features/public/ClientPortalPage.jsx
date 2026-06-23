@@ -583,12 +583,22 @@ function buildPortalPaymentTree(data, rowMethods, rowAccounts, currency, rowTree
   if (methods.length > 0) {
     const accounts = filterPortalAccountsByCurrency(rowAccounts, currency)
     return methods
-      .map((m) => ({
-        id: Number(m?.id),
-        name: m?.name ?? '',
-        deposit_accounts: accounts,
-      }))
-      .filter((m) => Number.isFinite(m.id))
+      .map((m) => {
+        const methodId = Number(m?.id)
+        const deposit_accounts = accounts.filter((d) => {
+          const depPmId = d?.payment_method_id
+          if (depPmId != null && String(depPmId).trim() !== '') {
+            return String(depPmId) === String(methodId)
+          }
+          return false
+        })
+        return {
+          id: methodId,
+          name: m?.name ?? '',
+          deposit_accounts,
+        }
+      })
+      .filter((m) => Number.isFinite(m.id) && (m.deposit_accounts?.length ?? 0) > 0)
   }
 
   const assigned = data?.assigned_payment_methods
@@ -2784,7 +2794,7 @@ function ClientPortalPageInner() {
           sale?.payment_methods_tree,
         )
         const methods = portalParentMethods(tree)
-        const methodId = prev[sid] || methods[0]?.id
+        const methodId = methods[0]?.id
         const accs = portalAccountsForMethod(tree, methodId)
         if (accs.length === 1) next[sid] = String(accs[0].id)
       }
@@ -2792,6 +2802,39 @@ function ClientPortalPageInner() {
     })
   }, [ordersToShow, data])
 
+  /** Si la cuenta guardada no pertenece al método seleccionado, limpiarla (evita envíos inconsistentes). */
+  useEffect(() => {
+    if (!ordersToShow?.length) return undefined
+    setPayAccountBySale((prev) => {
+      let next = null
+      for (const sale of ordersToShow) {
+        const sid = Number(sale?.sale_id)
+        if (!Number.isFinite(sid)) continue
+        const selected = prev[sid]
+        if (selected == null || selected === '') continue
+        const saleCur =
+          sale?.currency && String(sale.currency).trim().length >= 3
+            ? String(sale.currency).trim().toUpperCase().slice(0, 10)
+            : 'USD'
+        const tree = buildPortalPaymentTree(
+          data,
+          sale?.allowed_payment_methods,
+          sale?.allowed_deposit_accounts,
+          saleCur,
+          sale?.payment_methods_tree,
+        )
+        const methodId = payMethodBySale[sid]
+        if (methodId == null || String(methodId).trim() === '') continue
+        const accs = portalAccountsForMethod(tree, methodId)
+        if (!accs.some((a) => String(a.id) === String(selected))) {
+          if (!next) next = { ...prev }
+          next[sid] = accs.length === 1 ? String(accs[0].id) : ''
+        }
+      }
+      return next ?? prev
+    })
+    return undefined
+  }, [ordersToShow, data, payMethodBySale])
 
   /** Si la IA detectó moneda distinta a la cuenta de depósito, borra el importe declarado automáticamente. */
   useEffect(() => {
@@ -2802,7 +2845,19 @@ function ClientPortalPageInner() {
       for (const sale of newOrderSales) {
         const sid = Number(sale.sale_id)
         if (!Number.isFinite(sid)) continue
-        const depList = Array.isArray(sale.allowed_deposit_accounts) ? sale.allowed_deposit_accounts : []
+        const saleCur =
+          sale?.currency && String(sale.currency).trim().length >= 3
+            ? String(sale.currency).trim().toUpperCase().slice(0, 10)
+            : 'USD'
+        const tree = buildPortalPaymentTree(
+          data,
+          sale?.allowed_payment_methods,
+          sale?.allowed_deposit_accounts,
+          saleCur,
+          sale?.payment_methods_tree,
+        )
+        const methodId = payMethodBySale[sid]
+        const depList = portalAccountsForMethod(tree, methodId)
         const rid = payAccountBySale[sid] || (depList.length === 1 ? String(depList[0]?.id ?? '') : '')
         const sel = depList.find((d) => String(d.id) === String(rid))
         const ia = aiResultBySale[sid]
@@ -2815,7 +2870,7 @@ function ClientPortalPageInner() {
       return changed ? next : prev
     })
     return undefined
-  }, [newOrderSales, payAccountBySale, aiResultBySale])
+  }, [newOrderSales, payAccountBySale, payMethodBySale, aiResultBySale, data])
 
   /** Abono histórico: si la cuenta de depósito no coincide con la moneda IA, limpia el importe detectado. */
   useEffect(() => {

@@ -64,6 +64,10 @@ class PortalDepositPick(BaseModel):
     currency: str
     #: Notas / titular desde descripción de cuenta (si existe en ERP).
     holder_note: Optional[str] = Field(default=None, description="Texto breve de referencia (titular, detalle).")
+    payment_method_id: Optional[int] = Field(
+        default=None,
+        description="Método de pago padre al que pertenece la cuenta (filtrado en cascada portal).",
+    )
 
 
 class SalePaymentEvent(BaseModel):
@@ -113,6 +117,10 @@ class PortalOutstandingSale(BaseModel):
     lines: list[PortalCheckoutLinePublic] = Field(default_factory=list)
     allowed_payment_methods: list[PortalPaymentMethodPick] = Field(default_factory=list)
     allowed_deposit_accounts: list[PortalDepositPick] = Field(default_factory=list)
+    payment_methods_tree: list[PortalAssignedPaymentMethod] = Field(
+        default_factory=list,
+        description="Métodos con cuentas anidadas por padre (filtrado en cascada en checkout).",
+    )
     payment_events: list[SalePaymentEvent] = Field(default_factory=list)
     client_payments: list[PortalSalePaymentBrief] = Field(
         default_factory=list,
@@ -211,6 +219,10 @@ class PortalWalletRechargeItem(BaseModel):
     allowed_deposit_accounts: list[PortalDepositPick] = Field(
         default_factory=list,
         description="Cuentas de depósito habilitadas para esta recarga (ERP).",
+    )
+    payment_methods_tree: list[PortalAssignedPaymentMethod] = Field(
+        default_factory=list,
+        description="Métodos con cuentas anidadas por padre (filtrado en cascada en checkout).",
     )
     payment_methods_display: Optional[str] = Field(
         default=None,

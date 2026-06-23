@@ -61,6 +61,7 @@ from app.schemas.portal_public import (
     DebtPaymentItem,
     DebtPaymentSubmitResponse,
     PortalActiveScreen,
+    PortalAssignedPaymentMethod,
     PortalClientBrief,
     PortalCxcBalanceResponse,
     PortalCheckoutLinePublic,
@@ -364,6 +365,7 @@ def _portal_sanitize_outstanding_sale(row: PortalOutstandingSale) -> PortalOutst
             lines=_portal_sanitize_checkout_lines(row.lines, invoice_total=invoice_total),
             allowed_payment_methods=list(row.allowed_payment_methods or []),
             allowed_deposit_accounts=list(row.allowed_deposit_accounts or []),
+            payment_methods_tree=list(row.payment_methods_tree or []),
             payment_events=_portal_sanitize_payment_events(list(row.payment_events or [])),
             client_payments=_portal_sanitize_client_payments(list(row.client_payments or [])),
         )
@@ -659,6 +661,37 @@ def _build_payment_events(sale: Sale) -> list[SalePaymentEvent]:
     return _portal_sanitize_payment_events(events)
 
 
+def _portal_build_payment_methods_tree(
+    db: Session,
+    methods: list[PortalPaymentMethodPick],
+    dep_picks: list[PortalDepositPick],
+) -> list[PortalAssignedPaymentMethod]:
+    """Agrupa cuentas de depósito bajo su método de pago padre (portal checkout)."""
+    from app.services.client_payment_method_service import _account_belongs_to_payment_method
+
+    out: list[PortalAssignedPaymentMethod] = []
+    for pick in methods:
+        pm = db.get(PaymentMethod, int(pick.id))
+        if pm is None or not bool(pm.is_active):
+            continue
+        accounts: list[PortalDepositPick] = []
+        for dep in dep_picks:
+            if not _account_belongs_to_payment_method(db, pm, int(dep.id)):
+                continue
+            accounts.append(
+                dep.model_copy(update={"payment_method_id": int(pick.id)})
+            )
+        if accounts:
+            out.append(
+                PortalAssignedPaymentMethod(
+                    id=int(pick.id),
+                    name=pick.name,
+                    deposit_accounts=accounts,
+                )
+            )
+    return out
+
+
 def _portal_resolve_payment_picks_for_client(
     db: Session,
     client: Client,
@@ -666,7 +699,7 @@ def _portal_resolve_payment_picks_for_client(
     currency: str,
     sale: Optional[Sale] = None,
     recharge_raw_pm: Optional[list] = None,
-) -> tuple[list[PortalPaymentMethodPick], list[PortalDepositPick]]:
+) -> tuple[list[PortalPaymentMethodPick], list[PortalDepositPick], list[PortalAssignedPaymentMethod]]:
     """Métodos/cuentas del portal: prioriza asignación CRM; si no hay, lógica por venta/recarga."""
     from app.services.client_payment_method_service import (
         build_client_assigned_deposit_picks,
@@ -694,13 +727,13 @@ def _portal_resolve_payment_picks_for_client(
                 if int(dep.id) in seen_dep:
                     continue
                 seen_dep.add(int(dep.id))
-                deps.append(dep)
-        return methods, deps
+                deps.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
+        return methods, deps, nested
 
     if recharge_raw_pm is not None:
         pm_picks = _portal_wallet_recharge_method_picks(db, recharge_raw_pm)
         if pm_picks:
-            return pm_picks, []
+            return pm_picks, [], []
 
     if sale is not None:
         raw_pm = list(sale.allowed_payment_methods or []) if isinstance(sale.allowed_payment_methods, list) else []
@@ -720,9 +753,10 @@ def _portal_resolve_payment_picks_for_client(
         if not dep_ids:
             dep_ids = _portal_default_deposit_ids(db)
         deps = _portal_build_deposit_picks(db, dep_ids)
-        return methods, deps
+        tree = _portal_build_payment_methods_tree(db, methods, deps)
+        return methods, deps, tree
 
-    return [], []
+    return [], [], []
 
 
 def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple[PortalOutstandingSale, Decimal]:
@@ -738,10 +772,10 @@ def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple
     ap_d = _portal_effective_amount_paid(db, s)
 
     try:
-        methods, deps = _portal_resolve_payment_picks_for_client(db, client, currency=cur, sale=s)
+        methods, deps, pm_tree = _portal_resolve_payment_picks_for_client(db, client, currency=cur, sale=s)
     except Exception:
         logger.exception("portal payment picks failed sale_id=%s", getattr(s, "id", "?"))
-        methods, deps = [], []
+        methods, deps, pm_tree = [], [], []
 
     invoice_total_f = max(0.0, _portal_money_float(real_total, default=0.0))
     local_amount_f: Optional[float] = invoice_total_f if invoice_total_f > 1e-9 else None
@@ -780,6 +814,7 @@ def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple
         lines=_portal_sanitize_checkout_lines(lines_raw, invoice_total=invoice_total_f),
         allowed_payment_methods=list(methods or []),
         allowed_deposit_accounts=list(deps or []),
+        payment_methods_tree=list(pm_tree or []),
         payment_events=list(payment_events or []),
         client_payments=list(client_payments or []),
     )
@@ -1223,13 +1258,15 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
                     if int(dep.id) in seen_dep:
                         continue
                     seen_dep.add(int(dep.id))
-                    dep_picks.append(dep)
+                    dep_picks.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
+            pm_tree = nested
         else:
             raw_pm = r.allowed_payment_methods if isinstance(r.allowed_payment_methods, list) else None
             pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm)
             pm_disp = payment_methods_display(db, raw_pm)
             dep_ids = _portal_wallet_recharge_deposit_pick_ids_ordered(db, r)
             dep_picks = _portal_build_deposit_picks(db, dep_ids)
+            pm_tree = _portal_build_payment_methods_tree(db, pm_picks, dep_picks)
         ts = r.created_at
         pre_raw = getattr(r, "admin_precheck_receipt_url", None)
         pre_out = str(pre_raw).strip() if pre_raw else None
@@ -1248,6 +1285,7 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
                 admin_precheck_receipt_url=pre_out,
                 allowed_payment_methods=pm_picks,
                 allowed_deposit_accounts=dep_picks,
+                payment_methods_tree=pm_tree,
                 payment_methods_display=pm_disp,
             )
         )
