@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from app.account_constants import is_liquid_deposit_account
 from app.api.v1.checkout import (
     _checkout_lines_public,
+    _finalize_checkout_line_amount,
     _infer_local_amount_for_checkout,
 )
 from app.api.v1.sales import (
@@ -199,6 +200,16 @@ DbDep = Annotated[Session, Depends(get_db)]
 _FP_EPS = Decimal("0.00005")
 
 
+def _portal_money_float(val: object | None, *, default: float = 0.0) -> float:
+    """Convierte montos ORM/Decimal a ``float`` JSON-safe (2 decimales)."""
+    if val is None:
+        return default
+    try:
+        return float(Decimal(str(val)).quantize(Decimal("0.01")))
+    except Exception:
+        return default
+
+
 def _portal_form_int_optional(raw: Optional[object]) -> Optional[int]:
     if raw is None:
         return None
@@ -351,6 +362,27 @@ def _portal_client_payment_ids_for_sale(db: Session, sale_id: int, client_id: in
     return sorted(ids)
 
 
+def _portal_alloc_amount_for_payment_sale(
+    db: Session,
+    payment_id: int,
+    sale_id: int,
+) -> Optional[Decimal]:
+    """Monto de ``PaymentAllocation`` del cobro aplicado a esta venta."""
+    agg = (
+        db.query(func.coalesce(func.sum(PaymentAllocation.amount_applied), 0))
+        .filter(
+            PaymentAllocation.payment_id == int(payment_id),
+            PaymentAllocation.sale_id == int(sale_id),
+        )
+        .scalar()
+    )
+    try:
+        dec = Decimal(str(agg or 0)).quantize(Decimal("0.01"))
+        return dec if dec > Decimal("0") else None
+    except Exception:
+        return None
+
+
 def _portal_client_payments_for_sale(
     db: Session,
     sale_id: int,
@@ -367,15 +399,24 @@ def _portal_client_payments_for_sale(
         .all()
     )
     out: list[PortalSalePaymentBrief] = []
+    sid = int(sale_id)
     for r in rows:
-        st = r.status.value if hasattr(r.status, "value") else str(r.status or "")
+        st = r.status.value if hasattr(r.status, "value") else str(r.status or "pending_review")
+        alloc_amt = _portal_alloc_amount_for_payment_sale(db, int(r.id), sid)
+        if alloc_amt is not None:
+            amt_dec = alloc_amt
+        else:
+            try:
+                amt_dec = Decimal(str(r.amount or 0)).quantize(Decimal("0.01"))
+            except Exception:
+                amt_dec = Decimal("0")
         out.append(
             PortalSalePaymentBrief(
                 id=int(r.id),
                 payment_number=r.payment_number,
-                amount=Decimal(str(r.amount or 0)).quantize(Decimal("0.01")),
+                amount=_portal_money_float(amt_dec),
                 currency=str(r.currency or "USD"),
-                status=st,
+                status=st or "pending_review",
                 created_at=r.created_at.isoformat() if r.created_at else None,
             )
         )
@@ -383,16 +424,16 @@ def _portal_client_payments_for_sale(
 
 
 def _debt_payment_item_from_client_payment(cp: ClientPayment) -> DebtPaymentItem:
-    st = cp.status.value if hasattr(cp.status, "value") else str(cp.status or "")
+    st = cp.status.value if hasattr(cp.status, "value") else str(cp.status or "pending_review")
     return DebtPaymentItem(
         id=int(cp.id),
         client_id=int(cp.client_id),
         client_name="",
         payment_number=cp.payment_number,
-        amount=Decimal(str(cp.amount or 0)).quantize(Decimal("0.01")),
+        amount=_portal_money_float(cp.amount),
         currency=str(cp.currency or "USD"),
         receipt_url=cp.receipt_file_url,
-        status=st,
+        status=st or "pending_review",
         created_at=cp.created_at.isoformat() if cp.created_at else None,
         notes=cp.notes,
     )
@@ -507,33 +548,26 @@ def _portal_resolve_payment_picks_for_client(
 def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple[PortalOutstandingSale, Decimal]:
     cur = normalize_currency_code(str(s.currency or "USD"))
     lines = _checkout_lines_public(db, s, product=s.product, stock_row=s.screen_stock_row)
-    la_inf = _infer_local_amount_for_checkout(s, lines)
-    ap_d = _portal_effective_amount_paid(db, s)
+    lines = [_finalize_checkout_line_amount(ln) for ln in lines]
 
-    if la_inf is None:
-        balance_due_out = Decimal("0")
-    else:
-        bd = (la_inf - ap_d).quantize(Decimal("0.0001"))
-        balance_due_out = bd if bd > Decimal("0") else Decimal("0")
+    real_total, balance_due_out = _compute_portal_balance(db, s)
+    ap_d = _portal_effective_amount_paid(db, s)
 
     methods, deps = _portal_resolve_payment_picks_for_client(db, client, currency=cur, sale=s)
 
-    la_display = la_inf if la_inf is not None else s.local_amount
-    if la_display is not None:
-        try:
-            la_display = Decimal(str(la_display)).quantize(Decimal("0.0001"))
-        except Exception:
-            la_display = None
+    invoice_total_f = _portal_money_float(real_total)
+    local_amount_f: Optional[float] = invoice_total_f if invoice_total_f > 1e-9 else None
 
     row = PortalOutstandingSale(
-        sale_id=s.id,
-        status=s.status.value,
+        sale_id=int(s.id),
+        status=s.status.value if hasattr(s.status, "value") else str(s.status or "pending"),
         invoice_created_at=s.created_at if isinstance(getattr(s, "created_at", None), datetime) else None,
         expires_at=s.expires_at if s.status == SaleStatus.pending else None,
         currency=cur,
-        local_amount=la_display,
-        amount_paid=ap_d,
-        balance_due=balance_due_out,
+        invoice_total=invoice_total_f,
+        local_amount=local_amount_f,
+        amount_paid=_portal_money_float(ap_d),
+        balance_due=_portal_money_float(balance_due_out),
         payment_token=getattr(s, "payment_token", None),
         lines=lines,
         allowed_payment_methods=methods,
@@ -735,7 +769,7 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
                     date=iso,
                     description=description,
                     reference=f"FAC-{int(s.id):04d}",
-                    amount=real_total.quantize(Decimal("0.01")),
+                    amount=_portal_money_float(real_total),
                     currency=cur,
                     status=label,
                     sale_id=int(s.id),
@@ -783,7 +817,7 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
                     date=iso,
                     description=description,
                     reference=ref,
-                    amount=amt,
+                    amount=_portal_money_float(amt),
                     currency=cur,
                     status="Abono aplicado",
                     sale_id=None,
@@ -828,7 +862,7 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
                     date=iso,
                     description=description[:260],
                     reference=ref,
-                    amount=amt,
+                    amount=_portal_money_float(amt),
                     currency="USD",
                     status=status_label,
                     sale_id=None,
@@ -1801,8 +1835,8 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
         {"currency": k, "amount": float(v.quantize(Decimal("0.0001")))} for k, v in sorted(hist_agg.items())
     ]
     hist_rows: list[dict[str, object]] = debt_rows
-    primary_debt = Decimal(str(debt_rows[0]["amount"])) if debt_rows else Decimal("0")
-    outstanding_balance = sum(hist_agg.values(), Decimal("0"))
+    primary_debt = float(debt_rows[0]["amount"]) if debt_rows else 0.0
+    outstanding_balance = _portal_money_float(sum(hist_agg.values(), Decimal("0")))
 
     pending_debt_payments = _get_pending_debt_payments_for_client(db, client.id)
     recent_client_payments = _get_recent_client_payments_for_portal(db, int(client.id))
@@ -1823,9 +1857,16 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     wallet_rows = list(wallet_summary.get("wallet_balances_by_currency") or [])
     assigned_rows = list_client_assigned_package_prices(db, int(client.id))
     assigned_models = [PortalAssignedPackagePrice.model_validate(r) for r in assigned_rows]
-    precios_asignados = {
-        str(r["package_catalog_id"]): float(r["precio_venta_local"]) for r in assigned_rows
-    }
+    precios_asignados: dict[str, float] = {}
+    for r in assigned_rows:
+        pkg_id = r.get("package_catalog_id")
+        price = r.get("precio_venta_local")
+        if pkg_id is None or price is None:
+            continue
+        try:
+            precios_asignados[str(pkg_id)] = float(price)
+        except (TypeError, ValueError):
+            continue
 
     db.commit()
 
@@ -1902,10 +1943,10 @@ def _get_pending_debt_payments_for_client(db: Session, client_id: int) -> list[D
                 client_id=r.client_id,
                 client_name="",
                 payment_number=r.payment_number,
-                amount=r.amount,
+                amount=_portal_money_float(r.amount),
                 currency=str(r.currency or "USD"),
                 receipt_url=r.receipt_file_url,
-                status=r.status.value,
+                status=r.status.value if hasattr(r.status, "value") else str(r.status or "pending_review"),
                 created_at=r.created_at.isoformat() if r.created_at else None,
                 notes=r.notes,
             )
@@ -2708,10 +2749,10 @@ def admin_list_debt_payments(db: DbDep) -> list[DebtPaymentItem]:
                 id=r.id,
                 client_id=r.client_id,
                 client_name=client_name,
-                amount=r.amount,
+                amount=_portal_money_float(r.amount),
                 currency=str(r.currency or "USD"),
                 receipt_url=r.receipt_url,
-                status=r.status.value,
+                status=r.status.value if hasattr(r.status, "value") else str(r.status or "pending_review"),
                 created_at=r.created_at.isoformat() if r.created_at else None,
                 notes=r.notes,
             )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -72,9 +71,9 @@ class PortalSalePaymentBrief(BaseModel):
 
     id: int
     payment_number: Optional[str] = None
-    amount: Decimal
-    currency: str
-    status: str = Field(description="pending_review, approved, rejected, etc.")
+    amount: float = Field(default=0.0, description="Monto aplicado a esta venta (allocation) o del cobro.")
+    currency: str = "USD"
+    status: str = Field(default="pending_review", description="pending_review, approved, rejected, etc.")
     created_at: Optional[str] = None
 
 
@@ -85,10 +84,23 @@ class PortalOutstandingSale(BaseModel):
     invoice_created_at: Optional[datetime.datetime] = None
     #: UTC: tiempo restante de reserva para pedidos ``pending`` con TTL.
     expires_at: Optional[datetime.datetime] = None
-    currency: str
-    local_amount: Optional[Decimal] = None
-    amount_paid: Decimal = Decimal("0")
-    balance_due: Decimal = Decimal("0")
+    currency: str = "USD"
+    invoice_total: float = Field(
+        default=0.0,
+        description="Total facturado en moneda de la venta (motor CxC unificado).",
+    )
+    local_amount: Optional[float] = Field(
+        default=None,
+        description="Total en moneda local; alias de ``invoice_total`` para compatibilidad portal.",
+    )
+    amount_paid: float = Field(
+        default=0.0,
+        description="Cobros aprobados + allocations en revisión (FIFO).",
+    )
+    balance_due: float = Field(
+        default=0.0,
+        description="Saldo CxC pendiente en moneda de la venta.",
+    )
     payment_token: Optional[UUID] = None
     lines: list[CheckoutLinePublic] = Field(default_factory=list)
     allowed_payment_methods: list[PortalPaymentMethodPick] = Field(default_factory=list)
@@ -107,9 +119,9 @@ class PortalLedgerEntry(BaseModel):
     date: Optional[str] = Field(default=None, description="ISO 8601 (UTC cuando exista zona).")
     description: str
     reference: str = Field(description="Referencia corta tipo FAC-xxxx o PAG-…")
-    amount: Decimal = Field(description="Valor absoluto en la moneda indicada.")
+    amount: float = Field(default=0.0, description="Valor absoluto en la moneda indicada.")
     currency: str = "USD"
-    status: str = Field(description="Etiqueta de estado visible para el cliente.")
+    status: str = Field(default="", description="Etiqueta de estado visible para el cliente.")
     #: Solo ``invoice``: id de la venta. ``payment``: típicamente ``None``.
     sale_id: Optional[int] = Field(default=None, description="ID interno de venta cuando aplica.")
     #: Solo ``payment``: ventas a las que se aplicó el abono (allocations aprobadas).
@@ -121,10 +133,10 @@ class DebtPaymentItem(BaseModel):
     client_id: int
     client_name: str
     payment_number: Optional[str] = None
-    amount: Decimal
-    currency: str
+    amount: float = Field(default=0.0)
+    currency: str = "USD"
     receipt_url: Optional[str] = None
-    status: str
+    status: str = "pending_review"
     created_at: Optional[str] = None
     notes: Optional[str] = None
 
@@ -290,10 +302,10 @@ class PortalHomeResponse(BaseModel):
         default=0.0,
         description="Saldo a favor total en la moneda principal (anticipos de clientes / sobrepagos).",
     )
-    total_debt_by_currency: list[dict[str, object]]
-    total_debt: Decimal = Decimal("0")
+    total_debt_by_currency: list[dict[str, object]] = Field(default_factory=list)
+    total_debt: float = Field(default=0.0)
     pending_sales: list[PortalOutstandingSale] = Field(default_factory=list)
-    outstanding_sales: list[PortalOutstandingSale]
+    outstanding_sales: list[PortalOutstandingSale] = Field(default_factory=list)
     new_order_sales: list[PortalOutstandingSale] = Field(
         default_factory=list,
         description="Ventas con saldo pendiente > 0 (pending, partially_paid, approved/activado, etc.).",
@@ -302,8 +314,8 @@ class PortalHomeResponse(BaseModel):
         default_factory=list,
         description="Facturas aprobadas/parciales con saldo CxC pendiente.",
     )
-    outstanding_balance: Decimal = Field(
-        default=Decimal("0"),
+    outstanding_balance: float = Field(
+        default=0.0,
         description="Suma de saldos en facturas históricas (no incluye pedidos pending).",
     )
     historical_debt_by_currency: list[dict[str, object]] = Field(default_factory=list)
