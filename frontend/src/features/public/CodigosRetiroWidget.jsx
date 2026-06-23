@@ -3,8 +3,8 @@ import {
   CODIGOS_RETIRO_ES_PRUEBA,
 } from './codigosRetiroPayment'
 
-/** Altura del iframe: espacio para subida + formulario de verificación OCR (2 pasos). */
-export const CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX = 650
+/** Altura visible del iframe en paso de subida (formulario OCR puede hacer scroll dentro). */
+export const CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX = 300
 
 /**
  * Widget embebido del socio externo (OCR de comprobantes de retiro físico).
@@ -25,24 +25,25 @@ export default function CodigosRetiroWidget({
 
   return (
     <div
-      className={`portal-receipt-upload-glow-wrap portal-codigos-retiro-glow mb-4 w-full rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] ${className}`.trim()}
+      className={`portal-receipt-upload-glow-wrap portal-codigos-retiro-glow mb-4 h-fit w-full rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] ${className}`.trim()}
       style={style}
     >
-      <section className="portal-receipt-upload-card portal-codigos-retiro-card w-full">
+      <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full">
         <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
-        <div className="portal-order-summary-inner w-full px-5 pb-5 pt-5">
+        <div className="portal-order-summary-inner h-fit w-full px-5 pb-6 pt-5">
           <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.06em] text-green-300">
             Códigos de retiro
           </p>
           <p className="mb-4 text-[13px] leading-relaxed text-slate-200/90">
             Sube tu comprobante y confirma los datos detectados en el formulario de verificación.
           </p>
-          <div className="portal-codigos-retiro-iframe-shell w-full">
+          <div className="portal-codigos-retiro-iframe-shell h-fit w-full">
             <iframe
               src={iframeSrc}
               title="Códigos de Retiro"
               className="portal-codigos-retiro-iframe"
-              scrolling="no"
+              style={{ height: CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX }}
+              scrolling="auto"
               allow="camera; clipboard-write"
               allowTransparency="true"
             />
