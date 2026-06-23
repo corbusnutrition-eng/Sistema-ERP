@@ -118,7 +118,7 @@ def _print_plan() -> None:
         "  • Contadores de preventas en products (reserved/assigned → 0; se conserva opening/recargas)\n"
         "  • Saldos cacheados del plan de cuentas → saldo de apertura\n"
         "  • BaaS: clients/users.wallet_balance → 0 y custom_fields.wallet_balances_by_currency eliminado\n"
-        "  • CxC: clients.credit_balance → 0 y custom_fields.credit_balance_by_currency eliminado\n"
+        "  • Saldo a favor: clients.credit_balance → 0 (TODOS) y credit_balance_by_currency eliminado\n"
     )
 
 
@@ -190,22 +190,37 @@ def _reset_account_cached_balances(conn) -> int:
     return int(result.rowcount or 0)
 
 
-def _reset_client_transactional_balances(conn) -> int:
-    """No borra clientes; limpia saldos CxC, billetera BaaS y saldo a favor."""
+def _reset_all_client_credit_balances(conn) -> int:
+    """Pone en cero el saldo a favor contable de todos los clientes (columna + custom_fields)."""
     result = conn.execute(
         text(
             """
             UPDATE clients
             SET
                 credit_balance = 0,
+                custom_fields = CASE
+                    WHEN custom_fields IS NULL THEN '{}'::jsonb
+                    ELSE custom_fields - 'credit_balance_by_currency'
+                END
+            """
+        )
+    )
+    return int(result.rowcount or 0)
+
+
+def _reset_client_transactional_balances(conn) -> int:
+    """No borra clientes; limpia billetera BaaS y otros saldos cacheados (sin saldo a favor)."""
+    result = conn.execute(
+        text(
+            """
+            UPDATE clients
+            SET
                 wallet_balance = 0,
                 total_credits = 0,
                 last_recharge = NULL,
                 custom_fields = CASE
                     WHEN custom_fields IS NULL THEN '{}'::jsonb
-                    ELSE custom_fields
-                        - 'credit_balance_by_currency'
-                        - 'wallet_balances_by_currency'
+                    ELSE custom_fields - 'wallet_balances_by_currency'
                 END
             """
         )
@@ -268,6 +283,29 @@ def _verify_baas_zero(conn) -> None:
         )
 
 
+def _verify_credit_balances_zero(conn) -> None:
+    """Comprueba que no queden saldos a favor contables (columna ni custom_fields)."""
+    row = conn.execute(
+        text(
+            """
+            SELECT COUNT(*) AS n
+            FROM clients
+            WHERE ABS(COALESCE(credit_balance, 0)) > 0.000001
+               OR (
+                    custom_fields IS NOT NULL
+                    AND custom_fields ? 'credit_balance_by_currency'
+               )
+            """
+        )
+    ).mappings().first()
+    residual = int(row["n"]) if row else 0
+    if residual > 0:
+        raise RuntimeError(
+            f"Tras la limpieza, {residual} cliente(s) aún tienen saldo a favor "
+            "(credit_balance o credit_balance_by_currency)."
+        )
+
+
 def _verify_post_cleanup(conn) -> None:
     for table in (
         "journal_entry_lines",
@@ -286,6 +324,7 @@ def _verify_post_cleanup(conn) -> None:
             raise RuntimeError(f"Tras la limpieza, {table} aún tiene {n} fila(s).")
 
     _verify_baas_zero(conn)
+    _verify_credit_balances_zero(conn)
 
     row = conn.execute(
         text(
@@ -328,6 +367,7 @@ def _run_cleanup() -> None:
         prod_rows = _reset_product_sale_counters(db)
         acct_rows = _reset_account_cached_balances(db)
         cli_rows = _reset_client_transactional_balances(db)
+        credit_rows = _reset_all_client_credit_balances(db)
         usr_rows = _reset_user_wallet_balances(db)
 
         _verify_post_cleanup(db)
@@ -335,7 +375,8 @@ def _run_cleanup() -> None:
         db.commit()
         print(f"\n✓ {prod_rows} producto(s): contadores de preventa reiniciados.")
         print(f"✓ {acct_rows} cuenta(s) contables: saldo cache = apertura.")
-        print(f"✓ {cli_rows} cliente(s): saldos CxC/billetera BaaS reiniciados (registros conservados).")
+        print(f"✓ {cli_rows} cliente(s): billetera BaaS y total_credits reiniciados (registros conservados).")
+        print(f"✓ {credit_rows} cliente(s): credit_balance = 0 y saldo a favor en custom_fields eliminado.")
         print(f"✓ {usr_rows} usuario(s): saldo BaaS virtual reiniciado.")
         print("✓ BaaS: sin recargas, sin movimientos de billetera, saldos virtuales en cero.")
     except Exception:

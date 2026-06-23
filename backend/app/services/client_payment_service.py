@@ -693,12 +693,12 @@ def allocate_client_credit_remainder_to_sale(
             continue
 
         _apply_amount_to_sale(db, sale, source_pay, slice_amt, cur, now_iso)
-        alloc = PaymentAllocation(
-            payment_id=int(source_pay.id),
+        alloc = _record_payment_allocation(
+            db,
+            source_pay,
             sale_id=int(sale.id),
-            amount_applied=slice_amt,
+            amount=slice_amt,
         )
-        db.add(alloc)
         created.append(alloc)
         if source_pay not in touched_payments:
             touched_payments.append(source_pay)
@@ -881,6 +881,74 @@ def _allocation_amount(row: dict) -> Decimal:
     return _q_amt(raw or 0)
 
 
+def _find_payment_allocation_for_obligation(
+    db: Session,
+    payment_id: int,
+    *,
+    sale_id: Optional[int] = None,
+    wallet_recharge_id: Optional[int] = None,
+) -> Optional[PaymentAllocation]:
+    """Localiza allocation existente del mismo cobro hacia la misma obligación (sesión o BD)."""
+    pid = int(payment_id)
+    sid = int(sale_id) if sale_id is not None else None
+    wr_id = int(wallet_recharge_id) if wallet_recharge_id is not None else None
+
+    for obj in db:
+        if not isinstance(obj, PaymentAllocation):
+            continue
+        if int(obj.payment_id) != pid:
+            continue
+        if sid is not None and obj.sale_id is not None and int(obj.sale_id) == sid:
+            return obj
+        if wr_id is not None and obj.wallet_recharge_id is not None and int(obj.wallet_recharge_id) == wr_id:
+            return obj
+
+    q = db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == pid)
+    if sid is not None:
+        return q.filter(PaymentAllocation.sale_id == sid).first()
+    if wr_id is not None:
+        return q.filter(PaymentAllocation.wallet_recharge_id == wr_id).first()
+    return None
+
+
+def _record_payment_allocation(
+    db: Session,
+    payment: ClientPayment,
+    *,
+    sale_id: Optional[int] = None,
+    wallet_recharge_id: Optional[int] = None,
+    amount: Decimal,
+) -> PaymentAllocation:
+    """
+    Registra monto aplicado consolidando en una sola fila por (cobro, obligación).
+
+    Evita duplicados visuales cuando el FIFO o el barrido aplican varios tramos
+    del mismo pago a la misma factura/recarga en un mismo ciclo.
+    """
+    amt = _q_amt(amount)
+    existing = _find_payment_allocation_for_obligation(
+        db,
+        int(payment.id),
+        sale_id=sale_id,
+        wallet_recharge_id=wallet_recharge_id,
+    )
+    if existing is not None:
+        existing.amount_applied = _q_amt(_q_amt(existing.amount_applied) + amt)
+        return existing
+
+    kwargs: dict = {
+        "payment_id": int(payment.id),
+        "amount_applied": amt,
+    }
+    if sale_id is not None:
+        kwargs["sale_id"] = int(sale_id)
+    if wallet_recharge_id is not None:
+        kwargs["wallet_recharge_id"] = int(wallet_recharge_id)
+    alloc = PaymentAllocation(**kwargs)
+    db.add(alloc)
+    return alloc
+
+
 def _apply_allocation_slice_to_obligation(
     db: Session,
     payment: ClientPayment,
@@ -902,12 +970,12 @@ def _apply_allocation_slice_to_obligation(
         if cap <= _FP_EPS:
             return None
         _apply_amount_to_sale(db, sale, payment, cap, cur, now_iso)
-        alloc = PaymentAllocation(
-            payment_id=int(payment.id),
+        alloc = _record_payment_allocation(
+            db,
+            payment,
             sale_id=int(sale.id),
-            amount_applied=cap,
+            amount=cap,
         )
-        db.add(alloc)
         if session_allocated is not None:
             sid = int(sale.id)
             session_allocated[sid] = _q_amt(session_allocated.get(sid, Decimal("0")) + cap)
@@ -935,12 +1003,12 @@ def _apply_allocation_slice_to_obligation(
             amount_paid_before=amount_paid_before,
         )
         _apply_amount_to_wallet_recharge(db, wallet_recharge, payment, cap)
-        alloc = PaymentAllocation(
-            payment_id=int(payment.id),
+        alloc = _record_payment_allocation(
+            db,
+            payment,
             wallet_recharge_id=int(wallet_recharge.id),
-            amount_applied=cap,
+            amount=cap,
         )
-        db.add(alloc)
         if session_allocated_wr is not None:
             rid = int(wallet_recharge.id)
             session_allocated_wr[rid] = _q_amt(session_allocated_wr.get(rid, Decimal("0")) + cap)
@@ -2411,8 +2479,12 @@ def _reconcile_initial_payment_allocations(
     cur = normalize_currency_code(str(payment.currency or "USD"))
     now_iso = isoformat_z(now_ecuador())
     _apply_amount_to_sale(db, target, payment, apply, cur, now_iso)
-    alloc = PaymentAllocation(payment_id=payment.id, sale_id=int(sale.id), amount_applied=apply)
-    db.add(alloc)
+    alloc = _record_payment_allocation(
+        db,
+        payment,
+        sale_id=int(sale.id),
+        amount=apply,
+    )
     db.flush()
     return [alloc], _q_amt(pool - apply)
 

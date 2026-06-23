@@ -135,11 +135,10 @@ def main() -> int:
             )
         )
 
-        # ── Clientes: CxC, billetera BaaS y saldos a favor ────────────────
+        # ── Clientes: billetera BaaS y otros saldos cacheados ───────────
         session.execute(
             update(Client).values(
                 total_credits=0.0,
-                credit_balance=0.0,
                 wallet_balance=0.0,
                 last_recharge=None,
             )
@@ -147,10 +146,17 @@ def main() -> int:
         for client in session.scalars(select(Client)).all():
             cf = dict(client.custom_fields or {})
             changed = False
-            for key in ("credit_balance_by_currency", "wallet_balances_by_currency"):
-                if cf.pop(key, None) is not None:
-                    changed = True
+            if cf.pop("wallet_balances_by_currency", None) is not None:
+                changed = True
             if changed:
+                client.custom_fields = cf
+                attributes.flag_modified(client, "custom_fields")
+
+        # ── Saldo a favor contable: credit_balance = 0 para TODOS ───────
+        session.execute(update(Client).values(credit_balance=0.0))
+        for client in session.scalars(select(Client)).all():
+            cf = dict(client.custom_fields or {})
+            if cf.pop("credit_balance_by_currency", None) is not None:
                 client.custom_fields = cf
                 attributes.flag_modified(client, "custom_fields")
 
@@ -170,11 +176,18 @@ def main() -> int:
         residual_wallets = session.scalar(
             select(func.count()).select_from(Client).where(Client.wallet_balance != 0)
         )
+        residual_credit = session.scalar(
+            select(func.count()).select_from(Client).where(Client.credit_balance != 0)
+        )
         wallet_cf_left = 0
+        credit_cf_left = 0
         for c in session.scalars(select(Client)).all():
             cf = c.custom_fields or {}
-            if isinstance(cf, dict) and cf.get("wallet_balances_by_currency"):
-                wallet_cf_left += 1
+            if isinstance(cf, dict):
+                if cf.get("wallet_balances_by_currency"):
+                    wallet_cf_left += 1
+                if cf.get("credit_balance_by_currency"):
+                    credit_cf_left += 1
         residual_users = session.scalar(
             select(func.count()).select_from(User).where(User.wallet_balance != 0)
         )
@@ -192,6 +205,10 @@ def main() -> int:
             problems.append(f"clients.wallet_balance≠0 ({residual_wallets})")
         if wallet_cf_left != 0:
             problems.append(f"clients.wallet_balances_by_currency≠0 ({wallet_cf_left})")
+        if int(residual_credit or 0) != 0:
+            problems.append(f"clients.credit_balance≠0 ({residual_credit})")
+        if credit_cf_left != 0:
+            problems.append(f"clients.credit_balance_by_currency≠0 ({credit_cf_left})")
         if int(residual_users or 0) != 0:
             problems.append(f"users.wallet_balance≠0 ({residual_users})")
         if problems:
@@ -199,6 +216,7 @@ def main() -> int:
             return 2
 
         print("✓ BaaS en cero: sin recargas, sin movimientos de billetera, sin saldos virtuales.")
+        print("✓ Saldo a favor en cero: credit_balance = 0 para todos los clientes.")
         return 0
     except Exception as exc:  # noqa: BLE001
         session.rollback()
