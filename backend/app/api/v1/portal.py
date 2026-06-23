@@ -93,7 +93,8 @@ from app.services.client_notification_service import (
 from app.services.client_product_price_service import _package_display_name
 from app.services import render_sync
 from app.services.client_product_price_service import list_portal_auto_purchase_products
-from app.services.portal_auto_purchase_service import execute_portal_auto_purchase
+from app.services.portal_auto_purchase_service import execute_portal_auto_purchase, TX_AUTO_PURCHASE
+from app.services.baas_commission_cascade_service import TX_NETWORK_PROFIT
 from app.services.client_reseller_service import (
     TX_BAAS_TRANSFER_IN,
     TX_BAAS_TRANSFER_OUT,
@@ -1117,7 +1118,9 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
         db.query(WalletTransaction)
         .filter(
             WalletTransaction.client_id == int(client_id),
-            WalletTransaction.transaction_type.in_((TX_BAAS_TRANSFER_OUT, TX_BAAS_TRANSFER_IN)),
+            WalletTransaction.transaction_type.in_(
+                (TX_BAAS_TRANSFER_OUT, TX_BAAS_TRANSFER_IN, TX_NETWORK_PROFIT, TX_AUTO_PURCHASE)
+            ),
         )
         .order_by(WalletTransaction.created_at.desc())
         .limit(100)
@@ -1133,12 +1136,26 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
         ts = getattr(wtx, "created_at", None)
         iso = ts.isoformat() if isinstance(ts, datetime) else None
         tx_type = str(wtx.transaction_type or "")
+        desc_raw = (wtx.description or "").strip()
+        ledger_cur = "USD"
+        if " · " in desc_raw:
+            tail = desc_raw.rsplit(" · ", 1)[-1].strip()
+            if len(tail) >= 3:
+                ledger_cur = normalize_currency_code(tail, "USD")
         if tx_type == TX_BAAS_TRANSFER_OUT:
-            description = (wtx.description or "").strip() or "Transferencia a sub-cliente"
+            description = desc_raw or "Transferencia a sub-cliente"
             status_label = "Transferencia BaaS"
             ref = f"TXF-{int(wtx.id):05d}"
+        elif tx_type == TX_NETWORK_PROFIT:
+            description = desc_raw or "Comisión por ventas de tu red"
+            status_label = "Comisión de red BaaS"
+            ref = f"COM-{int(wtx.id):05d}"
+        elif tx_type == TX_AUTO_PURCHASE:
+            description = desc_raw or "Autocompra BaaS"
+            status_label = "Compra BaaS"
+            ref = f"AUT-{int(wtx.id):05d}"
         else:
-            description = (wtx.description or "").strip() or "Recarga de distribuidor"
+            description = desc_raw or "Recarga de distribuidor"
             status_label = "Recarga BaaS"
             ref = f"TXR-{int(wtx.id):05d}"
         merged.append(
@@ -1150,7 +1167,7 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
                     description=description[:260],
                     reference=ref,
                     amount=_portal_money_float(amt),
-                    currency="USD",
+                    currency=ledger_cur,
                     status=status_label,
                     sale_id=None,
                     linked_sale_ids=[],

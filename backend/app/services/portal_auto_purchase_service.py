@@ -224,104 +224,131 @@ def execute_portal_auto_purchase(
     ]
 
     amount_dec = Decimal(str(total_price))
-    sale = Sale(
-        client_id=int(client.id),
-        product_id=int(product.id),
-        iptv_screen_id=None,
-        screen_stock_id=None,
-        amount=amount_dec,
-        currency=purchase_currency,
-        exchange_rate=sale_xr,
-        local_amount=amount_dec,
-        amount_paid=amount_dec,
-        status=SaleStatus.payment_submitted,
-        payment_token=uuid.uuid4(),
-        receipt_url=None,
-        expires_at=None,
-        credits_quantity=None,
-        inventory_provider=inv_prov,
-        inventory_channel="screen_stock",
-        inventory_package=pkg_label,
-        inventory_screen_units=qty,
-        class_id=getattr(product, "transaction_class_id", None),
-        payment_method_id=None,
-        deposit_account_id=None,
-        notes="Autocompra portal BaaS — Flujo",
-        invoice_lines=inv_base,
-        allowed_payment_methods=None,
-        allowed_deposit_accounts=None,
-    )
-    db.add(sale)
-    db.flush()
-
-    _debit_client_wallet(
-        db,
-        client,
-        total_price,
-        currency=purchase_currency,
-        product_name=display,
-        sale_id=int(sale.id),
-    )
-
     credentials: list[dict] = []
     fulfilled = 0
-    if len(picked) >= qty:
-        _verify_screen_stock_rows_eligible_for_pending_reserve(db, picked)
-        for row in picked:
-            row.status = SCREEN_STOCK_STATUS_RESERVED
-            row.sale_id = int(sale.id)
-            row.client_id = int(client.id)
-            db.add(row)
-        sale.screen_stock_id = int(picked[0].id)
-        inv_merged = _merge_reserved_screen_credentials_into_invoice_lines(inv_base, picked) or inv_base
-        sale.invoice_lines = inv_merged
+    flow = "pending_assignment"
+    message = "Solicitud enviada, en espera de asignación de pantalla."
+    creds_missing = False
+
+    try:
+        sale = Sale(
+            client_id=int(client.id),
+            product_id=int(product.id),
+            iptv_screen_id=None,
+            screen_stock_id=None,
+            amount=amount_dec,
+            currency=purchase_currency,
+            exchange_rate=sale_xr,
+            local_amount=amount_dec,
+            amount_paid=amount_dec,
+            status=SaleStatus.payment_submitted,
+            payment_token=uuid.uuid4(),
+            receipt_url=None,
+            expires_at=None,
+            credits_quantity=None,
+            inventory_provider=inv_prov,
+            inventory_channel="screen_stock",
+            inventory_package=pkg_label,
+            inventory_screen_units=qty,
+            class_id=getattr(product, "transaction_class_id", None),
+            payment_method_id=None,
+            deposit_account_id=None,
+            notes="Autocompra portal BaaS — Flujo",
+            invoice_lines=inv_base,
+            allowed_payment_methods=None,
+            allowed_deposit_accounts=None,
+        )
         db.add(sale)
         db.flush()
 
-        _confirm_screen_stock_reserved_rows_on_activation(db, sale)
-        sale.status = SaleStatus.approved
-        _sync_client_after_sale(client, sale)
-        db.flush()
-        sync_sale_accounting_ledgers(db, sale, strict=True, strict_cogs=False)
-        db.refresh(sale)
-        for row in picked:
-            db.refresh(row)
-        fulfilled = qty
-        credentials = _portal_credentials_from_screen_rows(picked)
-        if _any_portal_credentials_missing(credentials):
-            delivery = _screen_stock_delivery_credentials(db, sale)
-            if delivery:
-                credentials = [
-                    {
-                        "screen_stock_id": int(cred.screen_stock_id),
-                        "iptv_username": cred.iptv_username,
-                        "iptv_password": cred.iptv_password,
-                        "username": cred.iptv_username,
-                        "password": cred.iptv_password,
-                    }
-                    for cred in delivery
-                ]
-        creds_missing = _any_portal_credentials_missing(credentials)
-        message = (
-            f"Compra completada ({qty} pantalla{'s' if qty != 1 else ''}). "
-            + (
-                "Tus credenciales están listas."
-                if not creds_missing
-                else "Pantalla asignada; revisa las credenciales abajo."
+        _debit_client_wallet(
+            db,
+            client,
+            total_price,
+            currency=purchase_currency,
+            product_name=display,
+            sale_id=int(sale.id),
+        )
+
+        from app.services.baas_commission_cascade_service import distribute_baas_commission_cascade
+
+        distribute_baas_commission_cascade(
+            db,
+            buyer=client,
+            package_catalog_id=int(package_catalog_id),
+            quantity=qty,
+            sale_id=int(sale.id),
+            purchase_currency=purchase_currency,
+            unit_price_paid=float(unit_price),
+            product_name=display,
+            product=product,
+            catalog_line=catalog_line,
+        )
+
+        if len(picked) >= qty:
+            _verify_screen_stock_rows_eligible_for_pending_reserve(db, picked)
+            for row in picked:
+                row.status = SCREEN_STOCK_STATUS_RESERVED
+                row.sale_id = int(sale.id)
+                row.client_id = int(client.id)
+                db.add(row)
+            sale.screen_stock_id = int(picked[0].id)
+            inv_merged = _merge_reserved_screen_credentials_into_invoice_lines(inv_base, picked) or inv_base
+            sale.invoice_lines = inv_merged
+            db.add(sale)
+            db.flush()
+
+            _confirm_screen_stock_reserved_rows_on_activation(db, sale)
+            sale.status = SaleStatus.approved
+            _sync_client_after_sale(client, sale)
+            db.flush()
+            sync_sale_accounting_ledgers(db, sale, strict=True, strict_cogs=False)
+            db.refresh(sale)
+            for row in picked:
+                db.refresh(row)
+            fulfilled = qty
+            credentials = _portal_credentials_from_screen_rows(picked)
+            if _any_portal_credentials_missing(credentials):
+                delivery = _screen_stock_delivery_credentials(db, sale)
+                if delivery:
+                    credentials = [
+                        {
+                            "screen_stock_id": int(cred.screen_stock_id),
+                            "iptv_username": cred.iptv_username,
+                            "iptv_password": cred.iptv_password,
+                            "username": cred.iptv_username,
+                            "password": cred.iptv_password,
+                        }
+                        for cred in delivery
+                    ]
+            creds_missing = _any_portal_credentials_missing(credentials)
+            message = (
+                f"Compra completada ({qty} pantalla{'s' if qty != 1 else ''}). "
+                + (
+                    "Tus credenciales están listas."
+                    if not creds_missing
+                    else "Pantalla asignada; revisa las credenciales abajo."
+                )
             )
-        )
-        flow = "fulfilled"
-    else:
-        sale.notes = (
-            "Autocompra portal BaaS — Flujo: solicitud enviada, en espera de asignación de pantalla."
-        )
-        db.add(sale)
-        message = "Solicitud enviada, en espera de asignación de pantalla."
-        flow = "pending_assignment"
+            flow = "fulfilled"
+        else:
+            sale.notes = (
+                "Autocompra portal BaaS — Flujo: solicitud enviada, en espera de asignación de pantalla."
+            )
+            db.add(sale)
+            message = "Solicitud enviada, en espera de asignación de pantalla."
+            flow = "pending_assignment"
 
-    creds_missing = flow == "fulfilled" and _any_portal_credentials_missing(credentials)
+        creds_missing = flow == "fulfilled" and _any_portal_credentials_missing(credentials)
 
-    db.commit()
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
     db.refresh(client)
     db.refresh(sale)
 

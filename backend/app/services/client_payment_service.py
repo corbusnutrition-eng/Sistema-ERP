@@ -3296,6 +3296,7 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
         )
 
     from app.models.wallet_transaction import WalletTransaction
+    from app.services.baas_commission_cascade_service import TX_NETWORK_PROFIT
     from app.services.client_reseller_service import (
         TX_BAAS_TRANSFER_IN,
         TX_BAAS_TRANSFER_OUT,
@@ -3308,12 +3309,15 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
         get_baas_transfer_counterparty,
         resolve_baas_transfer_parties,
     )
+    from app.services.portal_auto_purchase_service import TX_AUTO_PURCHASE
 
     wallet_txs = (
         db.query(WalletTransaction)
         .filter(
             WalletTransaction.client_id == int(client_id),
-            WalletTransaction.transaction_type.in_(tuple(BAAS_TRANSFER_LEDGER_TYPES)),
+            WalletTransaction.transaction_type.in_(
+                tuple(BAAS_TRANSFER_LEDGER_TYPES) + (TX_NETWORK_PROFIT, TX_AUTO_PURCHASE)
+            ),
         )
         .order_by(WalletTransaction.created_at.desc())
         .all()
@@ -3323,8 +3327,14 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
         date_str = dt.isoformat() if dt else ""
         tx_type = str(wtx.transaction_type or "")
         amt = float(wtx.amount or 0)
-        cp_id, cp_name = get_baas_transfer_counterparty(db, wtx)
-        note = (wtx.description or "").strip() or "Movimiento BaaS"
+        desc_raw = (wtx.description or "").strip()
+        ledger_cur = "USD"
+        if " · " in desc_raw:
+            tail = desc_raw.rsplit(" · ", 1)[-1].strip()
+            if len(tail) >= 3:
+                ledger_cur = normalize_currency_code(tail, "USD")
+        cp_id, cp_name = get_baas_transfer_counterparty(db, wtx) if tx_type in BAAS_TRANSFER_LEDGER_TYPES else (None, None)
+        note = desc_raw or "Movimiento BaaS"
         if cp_name:
             if tx_type == TX_BAAS_TRANSFER_IN:
                 note = f"{note} · Emisor: {cp_name}"
@@ -3347,6 +3357,14 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
             type_label = "Reversión transferencia BaaS"
             status_label = "Revertida"
             revert_ok = False
+        elif tx_type == TX_NETWORK_PROFIT:
+            type_label = "Comisión de red BaaS"
+            status_label = "Acreditada"
+            revert_ok = False
+        elif tx_type == TX_AUTO_PURCHASE:
+            type_label = "Autocompra BaaS"
+            status_label = "Completada"
+            revert_ok = False
         else:
             type_label = "Transferencia BaaS"
             status_label = "Completada"
@@ -3356,13 +3374,21 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
             {
                 "date": date_str,
                 "type": type_label,
-                "ref_number": baas_transfer_ref_number(int(wtx.id)),
+                "ref_number": baas_transfer_ref_number(int(wtx.id))
+                if tx_type in BAAS_TRANSFER_LEDGER_TYPES
+                else (
+                    f"COM-{int(wtx.id):05d}"
+                    if tx_type == TX_NETWORK_PROFIT
+                    else f"AUT-{int(wtx.id):05d}"
+                ),
                 "note": note,
                 "amount": amt,
-                "currency": "USD",
+                "currency": ledger_cur,
                 "status": status_label,
                 "entity_id": int(wtx.id),
-                "entity_kind": "wallet_transfer",
+                "entity_kind": "wallet_transfer"
+                if tx_type in BAAS_TRANSFER_LEDGER_TYPES
+                else ("network_commission" if tx_type == TX_NETWORK_PROFIT else "auto_purchase"),
                 "wallet_transaction_id": int(wtx.id),
                 "can_revert": revert_ok,
                 "revert_counterparty_id": cp_id,
