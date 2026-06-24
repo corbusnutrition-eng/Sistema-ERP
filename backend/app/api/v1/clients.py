@@ -597,6 +597,7 @@ def get_client_ledger(client_id: int, db: DbDep) -> ClientLedgerResponse:
                     revert_counterparty_id=e.get("revert_counterparty_id"),
                     revert_counterparty_name=e.get("revert_counterparty_name"),
                     baas_transfer_amount=e.get("baas_transfer_amount"),
+                    total_credits=e.get("total_credits"),
                 )
             )
         except Exception:

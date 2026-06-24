@@ -119,6 +119,11 @@ def _normal_credits_qty_from_sale(sale: Sale) -> float:
     return total
 
 
+def sale_normal_credits_quantity(sale: Sale) -> float:
+    """Cantidad de créditos normales en una venta (cabecera o líneas ``cn:/fc:``)."""
+    return _normal_credits_qty_from_sale(sale)
+
+
 def _product_id_from_invoice_lines(sale: Sale) -> Optional[int]:
     for chunk in _invoice_line_dicts(sale):
         key = str(chunk.get("inventory_option_key") or "").strip()

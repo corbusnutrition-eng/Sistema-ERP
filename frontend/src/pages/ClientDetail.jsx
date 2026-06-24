@@ -103,6 +103,22 @@ function formatLedgerMoney(amount, currency) {
   }
 }
 
+function LedgerCreditsCell({ entry }) {
+  const isInvoice =
+    entry?.entity_kind === 'sale'
+    || String(entry?.type || '').toLowerCase() === 'factura'
+  const credits = Number(entry?.total_credits)
+  if (!isInvoice || !Number.isFinite(credits) || credits <= 0) {
+    return <span className="text-gray-400 text-xs">—</span>
+  }
+  const label = Number.isInteger(credits) ? String(credits) : credits.toFixed(2)
+  return (
+    <span className="inline-flex items-center rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-bold tabular-nums text-emerald-800 ring-1 ring-emerald-100">
+      {label}
+    </span>
+  )
+}
+
 function saleStatusBadgeClass(status) {
   const s = String(status || '').toLowerCase()
   if (s === 'approved')
@@ -851,6 +867,7 @@ export default function ClientDetail() {
                     <th className="px-4 py-3 whitespace-nowrap">TIPO</th>
                     <th className="px-4 py-3 whitespace-nowrap">N.º</th>
                     <th className="px-4 py-3 min-w-[140px]">NOTA</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">CRÉDITOS</th>
                     <th className="px-4 py-3 text-right whitespace-nowrap">IMPORTE</th>
                     <th className="px-4 py-3 whitespace-nowrap">ESTADO</th>
                     <th className="px-4 py-3 text-center whitespace-nowrap w-[7.5rem]">COMPROBANTE</th>
@@ -860,7 +877,7 @@ export default function ClientDetail() {
                 <tbody className="divide-y divide-gray-100">
                   {ledger.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center text-gray-500">
+                      <td colSpan={9} className="px-4 py-12 text-center text-gray-500">
                         No hay movimientos en el historial de este cliente.
                       </td>
                     </tr>
@@ -931,6 +948,9 @@ export default function ClientDetail() {
                                 .join(' · ')}
                             </p>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-right whitespace-nowrap align-top">
+                          <LedgerCreditsCell entry={entry} />
                         </td>
                         <td className="px-4 py-3 text-right whitespace-nowrap font-semibold tabular-nums text-gray-900">
                           {formatLedgerMoney(entry.amount, entry.currency)}

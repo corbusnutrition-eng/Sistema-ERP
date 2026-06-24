@@ -3134,6 +3134,8 @@ def list_client_pending_debt_lines_for_webhook(db: Session, client_id: int) -> l
 
 def build_client_ledger(db: Session, client_id: int) -> list[dict]:
     """Lista unificada facturas + pagos + recargas BaaS ordenada por fecha DESC."""
+    from app.services.client_follow_up_service import sale_normal_credits_quantity
+
     sales = (
         db.query(Sale)
         .filter(Sale.client_id == client_id)
@@ -3177,6 +3179,7 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
                         "sale_id": None,
                     }
                 )
+        credits_qty = sale_normal_credits_quantity(s)
         entries.append(
             {
                 "date": date_str,
@@ -3189,6 +3192,7 @@ def build_client_ledger(db: Session, client_id: int) -> list[dict]:
                 "entity_id": s.id,
                 "entity_kind": "sale",
                 "related_docs": related,
+                "total_credits": credits_qty if credits_qty > 1e-12 else None,
                 "_sort": dt,
             }
         )

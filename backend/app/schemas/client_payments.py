@@ -122,6 +122,10 @@ class LedgerEntry(BaseModel):
     revert_counterparty_id: Optional[int] = None
     revert_counterparty_name: Optional[str] = None
     baas_transfer_amount: Optional[float] = None
+    total_credits: Optional[float] = Field(
+        default=None,
+        description="Créditos normales de la factura (solo filas tipo Factura).",
+    )
 
 
 class ClientLedgerResponse(BaseModel):
