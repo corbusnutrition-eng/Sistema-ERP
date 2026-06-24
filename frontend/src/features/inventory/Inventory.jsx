@@ -11,7 +11,7 @@ import {
   PlusCircle, Tv2, Monitor, CheckCircle2, Coins,
   CalendarDays, X, Loader2,
   Pencil, Trash2, AlertTriangle, ChevronDown, ChevronRight, ChevronLeft,
-  Package,
+  Package, History,
 } from 'lucide-react'
 import api from '../../api/axios'
 import SearchableSelect from '../../components/ui/SearchableSelect'
@@ -26,6 +26,7 @@ import { calculateExpirationStats, parseCreatedDate } from './screenPackageExpir
 const TABS = [
   { id: 'full',    label: 'Crédito normal',        icon: Tv2     },
   { id: 'screens', label: 'Crédito por pantalla', icon: Monitor },
+  { id: 'history', label: 'Historial (Pantallas)', icon: History },
 ]
 
 /** Paginación tabla «Relleno por pantalla»: hasta N grupos/lotes por página (no pantallas sueltas). */
@@ -37,6 +38,24 @@ const SCREEN_FILTER_ALL = '__ALL__'
 /** Estado reservado (preventa); «held» es legado API/BD antes de renombrar a reserved. */
 function isScreenReservedLike(status) {
   return status === 'reserved' || status === 'held'
+}
+
+/** Clave única de paquete (producto + proveedor + nombre de paquete). */
+function packageKeyForScreen(screen) {
+  const pid = Number(screen?.product_id)
+  const pkg = String(screen?.package ?? '').trim().toLowerCase()
+  const prov = String(screen?.provider ?? '').trim().toLowerCase()
+  return `${Number.isFinite(pid) ? pid : 'na'}|${prov}|${pkg}`
+}
+
+function buildFreeCountByPackageKey(screensList) {
+  const m = new Map()
+  for (const s of screensList) {
+    const key = packageKeyForScreen(s)
+    if (!m.has(key)) m.set(key, 0)
+    if (s.status === 'free') m.set(key, m.get(key) + 1)
+  }
+  return m
 }
 
 const IPTV_PROVIDER_SELECT_OPTIONS = [
@@ -740,13 +759,17 @@ function Toast({ message, type = 'success', onDismiss }) {
 
 function EmptyState({ tab }) {
   const { icon: Icon, label } = TABS.find(t => t.id === tab) ?? TABS[0]
-  const span = tab === 'screens' ? 10 : 6
+  const span = tab === 'screens' || tab === 'history' ? 10 : 6
+  const hint =
+    tab === 'history'
+      ? 'Los paquetes agotados (sin pantallas disponibles) aparecerán aquí.'
+      : 'Haz clic en «Recargar créditos» para añadir el primero'
   return (
     <tr>
       <td colSpan={span} className="px-6 py-16 text-center">
         <Icon size={32} className="mx-auto text-gray-200 mb-3" />
         <p className="text-gray-400 text-sm font-medium">Sin registros de {label}</p>
-        <p className="text-gray-300 text-xs mt-1">Haz clic en «Recargar créditos» para añadir el primero</p>
+        <p className="text-gray-300 text-xs mt-1">{hint}</p>
       </td>
     </tr>
   )
@@ -898,6 +921,11 @@ export default function Inventory() {
     [screenFilterPackageOptions],
   )
 
+  const freeCountByPackageKey = useMemo(
+    () => buildFreeCountByPackageKey(screens),
+    [screens],
+  )
+
   const filteredScreenBatchGroups = useMemo(() => {
     const wantProv =
       filterProvider === SCREEN_FILTER_ALL ? '' : String(filterProvider).trim().toLowerCase()
@@ -916,7 +944,16 @@ export default function Inventory() {
     const wantProductId =
       summaryPid != null && Number.isFinite(summaryPid) ? summaryPid : null
 
+    function screenMatchesStockScope(screen) {
+      if (activeTab !== 'screens' && activeTab !== 'history') return true
+      const key = packageKeyForScreen(screen)
+      const free = freeCountByPackageKey.get(key) ?? 0
+      if (activeTab === 'screens') return free > 0
+      return free === 0
+    }
+
     function screenMatches(screen) {
+      if (!screenMatchesStockScope(screen)) return false
       if (wantProv && String(screen.provider ?? '').trim().toLowerCase() !== wantProv) return false
       if (
         wantProductId != null &&
@@ -953,6 +990,8 @@ export default function Inventory() {
     searchCredentials,
     searchClient,
     summarySelection,
+    activeTab,
+    freeCountByPackageKey,
   ])
 
   /** Índice global # solo para filas «sueltas» (un pantalla por grupo). En lotes expandidos, # es 1…N por lote. */
@@ -1074,6 +1113,7 @@ export default function Inventory() {
     searchCredentials,
     searchClient,
     summarySelection,
+    activeTab,
   ])
 
   const screensGroupsTotalPages = useMemo(
@@ -1183,7 +1223,29 @@ export default function Inventory() {
     })
   }, [fullAccounts, summarySelection])
 
-  const tabCounts = { full: fullAccounts.length, screens: screens.length }
+  const screensTabCount = useMemo(
+    () =>
+      screens.filter((s) => {
+        const key = packageKeyForScreen(s)
+        return (freeCountByPackageKey.get(key) ?? 0) > 0
+      }).length,
+    [screens, freeCountByPackageKey],
+  )
+
+  const historyTabCount = useMemo(
+    () =>
+      screens.filter((s) => {
+        const key = packageKeyForScreen(s)
+        return (freeCountByPackageKey.get(key) ?? 0) === 0
+      }).length,
+    [screens, freeCountByPackageKey],
+  )
+
+  const tabCounts = {
+    full: fullAccounts.length,
+    screens: screensTabCount,
+    history: historyTabCount,
+  }
 
   return (
     <>
@@ -1192,7 +1254,7 @@ export default function Inventory() {
         <CuentaMasterModal
           onClose={() => setModalOpen(false)}
           onSuccess={handleSuccess}
-          defaultTab={activeTab}
+          defaultTab={activeTab === 'history' ? 'screens' : activeTab}
         />
       )}
       {editTarget?.type === 'full' && (
@@ -1405,9 +1467,9 @@ export default function Inventory() {
         )}
 
         {/* ══════════════════════════════════════════════════════════════
-            TAB 2 — CRÉDITO POR PANTALLA
+            TAB 2 — CRÉDITO POR PANTALLA / TAB 3 — HISTORIAL (PANTALLAS)
         ══════════════════════════════════════════════════════════════ */}
-        {activeTab === 'screens' && (
+        {(activeTab === 'screens' || activeTab === 'history') && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-end gap-2 mb-4">
               <label className="flex flex-col gap-0.5 min-w-0">
@@ -1564,11 +1626,15 @@ export default function Inventory() {
                     {!loading && fetchError && (
                       <tr><td colSpan={10} className="px-6 py-12 text-center text-red-500 text-sm">{fetchError}</td></tr>
                     )}
-                    {!loading && !fetchError && screens.length === 0 && <EmptyState tab="screens" />}
+                    {!loading && !fetchError && screens.length === 0 && (
+                      <EmptyState tab={activeTab === 'history' ? 'history' : 'screens'} />
+                    )}
                     {!loading && !fetchError && screens.length > 0 && filteredScreenBatchGroups.length === 0 && (
                       <tr>
                         <td colSpan={10} className="px-6 py-12 text-center text-gray-500 text-sm">
-                          Ningún lote coincide con los filtros actuales.{' '}
+                          {activeTab === 'history'
+                            ? 'No hay paquetes agotados que coincidan con los filtros actuales.'
+                            : 'Ningún lote con stock disponible coincide con los filtros actuales.'}{' '}
                           <button
                             type="button"
                             onClick={clearScreenFilters}
@@ -1723,7 +1789,8 @@ export default function Inventory() {
               {!loading && !fetchError && screens.length > 0 && (
                 <div className="px-6 py-3 border-t border-gray-100 bg-gray-50/50 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-xs text-gray-400">
-                    {screenTotalsFiltered.total} pantalla{screenTotalsFiltered.total !== 1 ? 's' : ''} en bodega
+                    {screenTotalsFiltered.total} pantalla{screenTotalsFiltered.total !== 1 ? 's' : ''}{' '}
+                    {activeTab === 'history' ? 'en historial' : 'en bodega'}
                     {screenFiltersActive && (
                       <span className="text-gray-400">
                         {' '}
