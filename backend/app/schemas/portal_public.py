@@ -23,7 +23,11 @@ class PortalClientBrief(BaseModel):
     email: str
     phone: Optional[str] = Field(
         default=None,
-        description="Teléfono/WhatsApp del cliente (E.164 compacto, ej. +593999999999).",
+        description="Teléfono CRM del cliente (datos de contacto generales).",
+    )
+    contact_phone: Optional[str] = Field(
+        default=None,
+        description="WhatsApp de soporte BaaS para sub-clientes directos (E.164, ej. +593999999999).",
     )
     parent_id: Optional[int] = Field(
         default=None,
@@ -405,7 +409,7 @@ class PortalHomeResponse(BaseModel):
     )
     parent_contact_phone: Optional[str] = Field(
         default=None,
-        description="WhatsApp/teléfono del distribuidor padre (solo sub-clientes con parent_id).",
+        description="WhatsApp del parent_id inmediato (solo si el padre directo configuró contact_phone).",
     )
 
 
@@ -414,7 +418,8 @@ class PortalContactUpdate(BaseModel):
 
 
 class PortalContactResponse(BaseModel):
-    phone: str
+    contact_phone: str
+    phone: str = Field(description="Alias de contact_phone (compatibilidad frontend).")
     message: str = "Contacto actualizado."
 
 

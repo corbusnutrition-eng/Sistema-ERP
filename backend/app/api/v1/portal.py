@@ -1367,8 +1367,15 @@ def _normalize_portal_phone(raw: str) -> str:
     return f"+{digits}"
 
 
+def _client_baas_contact_phone(client: Client) -> Optional[str]:
+    """Número de soporte BaaS del revendedor (campo dedicado, no el teléfono CRM)."""
+    raw = getattr(client, "contact_phone", None)
+    phone = str(raw or "").strip()
+    return phone or None
+
+
 def _parent_contact_phone_for_client(db: Session, client: Client) -> Optional[str]:
-    """Teléfono del distribuidor padre visible para sub-clientes."""
+    """Teléfono del parent_id inmediato (solo contact_phone del padre directo)."""
     pid = getattr(client, "parent_id", None)
     if pid is None:
         return None
@@ -1381,8 +1388,7 @@ def _parent_contact_phone_for_client(db: Session, client: Client) -> Optional[st
     parent = db.get(Client, parent_id)
     if parent is None:
         return None
-    phone = str(parent.phone or "").strip()
-    return phone or None
+    return _client_baas_contact_phone(parent)
 
 
 def _portal_subclient_brief(row: Client) -> PortalSubClientBrief:
@@ -1422,14 +1428,15 @@ def portal_update_contact(
     payload: PortalContactUpdate,
     db: DbDep,
 ) -> PortalContactResponse:
-    """Permite al distribuidor guardar su número de contacto para la red BaaS."""
+    """Permite a cualquier revendedor guardar su contact_phone para sus sub-clientes directos."""
     client = _portal_client_from_token(db, portal_token)
     phone = _normalize_portal_phone(payload.phone)
-    client.phone = phone
+    client.contact_phone = phone
     db.add(client)
     db.commit()
     db.refresh(client)
-    return PortalContactResponse(phone=str(client.phone or phone))
+    saved = str(client.contact_phone or phone)
+    return PortalContactResponse(contact_phone=saved, phone=saved)
 
 
 @router.get("/{portal_token}/selling-packages", response_model=list[PortalSubClientPricingRow])
@@ -2322,11 +2329,13 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     try:
         parent_contact_phone = _parent_contact_phone_for_client(db, client)
         owner_phone = str(client.phone or "").strip() or None
+        owner_contact_phone = _client_baas_contact_phone(client)
         return PortalHomeResponse(
             client=PortalClientBrief(
                 name=client.display_name() or "Cliente",
                 email=str(client.email or ""),
                 phone=owner_phone,
+                contact_phone=owner_contact_phone,
                 parent_id=int(client.parent_id) if client.parent_id is not None else None,
                 credit_balance=primary_credit,
                 credit_balance_currency=primary_credit_cur,

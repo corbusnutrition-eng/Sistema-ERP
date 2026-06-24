@@ -26,6 +26,8 @@ class Client(Base):
     name: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     phone: Mapped[Optional[str]] = mapped_column(String(30))
+    #: WhatsApp/teléfono de soporte BaaS para la red de sub-clientes (portal, cascada por parent_id).
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     username: Mapped[str] = mapped_column(String(120), nullable=False, comment="Usuario IPTV")
     #: Hash contraseña portal (sincronizado con web Render); opcional para clientes sólo ERP.
     password_hash: Mapped[Optional[str]] = mapped_column(

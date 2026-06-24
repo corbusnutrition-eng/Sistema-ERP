@@ -2698,12 +2698,13 @@ function ClientPortalPageInner() {
   )
 
   const openContactModal = useCallback(() => {
-    const parts = splitPhoneParts(data?.client?.phone)
+    const ownContact = data?.client?.contact_phone ?? data?.client?.phone
+    const parts = splitPhoneParts(ownContact)
     setContactDialCode(parts.dialCode)
     setContactLocalNumber(parts.local)
     setContactErr(null)
     setContactModalOpen(true)
-  }, [data?.client?.phone])
+  }, [data?.client?.contact_phone, data?.client?.phone])
 
   const handleSaveContact = useCallback(async () => {
     const fullPhone = mergePhoneParts(contactDialCode, contactLocalNumber)
@@ -2718,12 +2719,12 @@ function ClientPortalPageInner() {
         `/api/v1/portal/${encodeURIComponent(token)}/contact`,
         { phone: fullPhone },
       )
-      const saved = String(res?.phone ?? fullPhone).trim()
+      const saved = String(res?.contact_phone ?? res?.phone ?? fullPhone).trim()
       setData((prev) =>
         prev
           ? {
               ...prev,
-              client: { ...prev.client, phone: saved },
+              client: { ...prev.client, contact_phone: saved },
             }
           : prev,
       )
@@ -5354,16 +5355,14 @@ function ClientPortalPageInner() {
                 >
                   Actualizar lista
                 </button>
-                {isDirectLineClient ? (
-                  <button
-                    type="button"
-                    onClick={openContactModal}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-950/30 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-900/40"
-                  >
-                    <Phone size={14} aria-hidden />
-                    Contacto
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  onClick={openContactModal}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-950/30 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-900/40"
+                >
+                  <Phone size={14} aria-hidden />
+                  Contacto
+                </button>
               </div>
 
               {subClientsLoading ? (
@@ -7887,7 +7886,7 @@ function ClientPortalPageInner() {
               <div>
                 <h2 className="m-0 text-lg font-extrabold text-emerald-50">Contacto de soporte</h2>
                 <p className="m-1 mb-0 text-xs text-slate-400">
-                  Tu número aparecerá en el portal de tus sub-clientes para WhatsApp.
+                  Tu número aparecerá en el portal de tus sub-clientes directos para WhatsApp.
                 </p>
               </div>
               <button
