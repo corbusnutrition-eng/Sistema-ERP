@@ -197,13 +197,25 @@ class PortalTrackedPurchaseItem(BaseModel):
     end_customer_phone: Optional[str] = None
     package_name: str
     purchase_date: str = Field(description="ISO 8601 (UTC/Z) de creación de la venta.")
+    inventory_created_at: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 (UTC/Z) de creación del ítem en bodega (base del cálculo de vencimiento).",
+    )
+    inventory_package_raw: Optional[str] = Field(
+        default=None,
+        description="Etiqueta cruda del paquete en bodega (ej. «1 mes»).",
+    )
     expiration_date: Optional[str] = Field(
         default=None,
-        description="Fecha de vencimiento ISO (YYYY-MM-DD) desde inventario.",
+        description="Fecha de vencimiento efectiva ISO (YYYY-MM-DD) calculada desde inventario.",
+    )
+    days_remaining: Optional[int] = Field(
+        default=None,
+        description="Días restantes hasta vencimiento efectivo (negativo si ya expiró).",
     )
     days_until_expiration: Optional[int] = Field(
         default=None,
-        description="Días restantes hasta vencimiento (negativo si ya expiró).",
+        description="Alias de days_remaining (compatibilidad).",
     )
     expired: bool = False
 

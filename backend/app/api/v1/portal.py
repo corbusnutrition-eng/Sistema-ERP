@@ -2119,13 +2119,49 @@ def _portal_active_screens_for_client(db: Session, client_id: int) -> list[Porta
     return [item[2] for item in staged]
 
 
+def _portal_tracked_purchase_expiry_fields(
+    *,
+    stk: ScreenStock | None,
+    sale: Sale,
+) -> dict[str, object]:
+    """Vencimiento efectivo desde bodega (created_at + paquete), igual que Inventario IPTV."""
+    from app.services.screen_package_expiration import calculate_screen_expiration_stats
+
+    package_raw = ""
+    created_at = None
+    if stk is not None:
+        package_raw = (stk.package or sale.inventory_package or "").strip()
+        created_at = stk.created_at
+    else:
+        package_raw = (sale.inventory_package or "").strip()
+        created_at = sale.created_at
+
+    stats = calculate_screen_expiration_stats(created_at, package_raw)
+    if stats is None:
+        return {
+            "inventory_created_at": isoformat_z(ensure_aware(created_at)) if created_at else None,
+            "inventory_package_raw": package_raw or None,
+            "expiration_date": None,
+            "days_remaining": None,
+            "days_until_expiration": None,
+            "expired": False,
+        }
+
+    return {
+        "inventory_created_at": isoformat_z(ensure_aware(stk.created_at if stk else created_at)),
+        "inventory_package_raw": package_raw or None,
+        "expiration_date": stats.effective_expiration_date.isoformat(),
+        "days_remaining": int(stats.days_remaining),
+        "days_until_expiration": int(stats.days_remaining),
+        "expired": bool(stats.expired),
+    }
+
+
 def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[PortalTrackedPurchaseItem]:
     """
     Compras BaaS del distribuidor con cliente final registrado (mini-CRM «Mis compras»).
     Una fila por unidad de bodega asignada; ventas sin pantalla aún generan una fila sin vencimiento.
     """
-    from datetime import date
-
     sales = (
         db.query(Sale)
         .filter(
@@ -2136,7 +2172,6 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
         .order_by(Sale.created_at.desc(), Sale.id.desc())
         .all()
     )
-    today: date = now_ecuador().date()
     items: list[PortalTrackedPurchaseItem] = []
 
     for sale in sales:
@@ -2154,15 +2189,13 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
             .order_by(ScreenStock.id.asc())
             .all()
         )
+        if not screens and sale.screen_stock_id:
+            stk_single = db.get(ScreenStock, int(sale.screen_stock_id))
+            if stk_single is not None:
+                screens = [stk_single]
         if screens:
             for stk in screens:
-                exp = stk.expiration_date
-                exp_s = exp.isoformat() if exp is not None else None
-                days_left: int | None = None
-                expired = False
-                if exp is not None:
-                    days_left = (exp - today).days
-                    expired = days_left < 0
+                expiry = _portal_tracked_purchase_expiry_fields(stk=stk, sale=sale)
                 items.append(
                     PortalTrackedPurchaseItem(
                         sale_id=int(sale.id),
@@ -2171,12 +2204,11 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
                         end_customer_phone=ec_phone,
                         package_name=_portal_package_label_for_screen(db, stk, sale),
                         purchase_date=purchase_iso,
-                        expiration_date=exp_s,
-                        days_until_expiration=days_left,
-                        expired=expired,
+                        **expiry,
                     )
                 )
         else:
+            expiry = _portal_tracked_purchase_expiry_fields(stk=None, sale=sale)
             pkg_raw = (sale.inventory_package or "").strip()
             pkg_label = _package_display_name(pkg_raw) if pkg_raw else "Pantalla IPTV"
             items.append(
@@ -2187,9 +2219,7 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
                     end_customer_phone=ec_phone,
                     package_name=pkg_label,
                     purchase_date=purchase_iso,
-                    expiration_date=None,
-                    days_until_expiration=None,
-                    expired=False,
+                    **expiry,
                 )
             )
 

@@ -11,6 +11,7 @@ import {
   splitPhoneParts,
   whatsappDigits,
 } from '../../constants/phoneCountryCodes'
+import { calculateExpirationStats } from '../inventory/screenPackageExpiration'
 import CodigosRetiroWidget, { RetiroSuccessPanel } from './CodigosRetiroWidget'
 import {
   extractRetiroMonto,
@@ -205,33 +206,66 @@ function formatPortalScreenExpiry(isoDate) {
   }
 }
 
-/** Etiqueta de vencimiento para «Mis compras» (días restantes o fecha; verde/rojo). */
-function formatTrackedPurchaseExpiry(item) {
-  const days = item?.days_until_expiration
-  const expired = Boolean(item?.expired)
-  const dateLabel = formatPortalScreenExpiry(item?.expiration_date)
-  if (typeof days === 'number' && Number.isFinite(days)) {
-    if (expired || days < 0) {
-      const abs = Math.abs(days)
-      return {
-        text: abs === 0 ? 'Venció hoy' : `Expiró hace ${abs} día${abs === 1 ? '' : 's'}`,
-        tone: 'expired',
-        dateLabel,
-      }
-    }
-    if (days === 0) {
-      return { text: 'Vence hoy', tone: 'warning', dateLabel }
-    }
-    return {
-      text: `Faltan ${days} día${days === 1 ? '' : 's'}`,
-      tone: 'active',
-      dateLabel,
-    }
+/** Ticker de reloj local para recalcular vencimientos en vivo (cada minuto). */
+function usePortalNowTicker(intervalMs = 60000) {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), intervalMs)
+    return () => window.clearInterval(id)
+  }, [intervalMs])
+  return now
+}
+
+/** Vencimiento en tarjeta «Mis compras» — misma lógica que Inventario IPTV. */
+function TrackedPurchaseExpiryBlock({ item }) {
+  const now = usePortalNowTicker(60000)
+  const stats = useMemo(() => {
+    const calc = calculateExpirationStats(
+      item?.inventory_created_at,
+      item?.inventory_package_raw || item?.package_name,
+      now,
+    )
+    const days =
+      calc?.diasRestantes ??
+      (typeof item?.days_remaining === 'number' ? item.days_remaining : item?.days_until_expiration)
+    if (typeof days !== 'number' || !Number.isFinite(days)) return null
+    const dateLabel = formatPortalScreenExpiry(
+      item?.expiration_date ||
+        (calc?.fechaExpiracionEfectiva instanceof Date
+          ? calc.fechaExpiracionEfectiva.toISOString().slice(0, 10)
+          : null),
+    )
+    return { days, dateLabel }
+  }, [item, now])
+
+  if (!stats) {
+    return <p className="mt-0.5 mb-0 text-sm text-slate-400">Sin vencimiento en inventario</p>
   }
-  if (dateLabel) {
-    return { text: dateLabel, tone: expired ? 'expired' : 'neutral', dateLabel }
+
+  const { days, dateLabel } = stats
+  if (days <= 0) {
+    return (
+      <>
+        <p className="mt-0.5 mb-0 text-sm font-bold text-red-500">
+          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-red-500 align-middle" aria-hidden />
+          Expirado
+        </p>
+        {dateLabel ? <p className="mt-1 mb-0 text-xs text-slate-400">Venció: {dateLabel}</p> : null}
+      </>
+    )
   }
-  return { text: 'Sin vencimiento en inventario', tone: 'neutral', dateLabel: null }
+
+  const colorClass = days > 3 ? 'text-green-500' : 'text-orange-500'
+  const dotClass = days > 3 ? 'bg-green-500' : 'bg-orange-500'
+  return (
+    <>
+      <p className={`mt-0.5 mb-0 text-sm font-bold tabular-nums ${colorClass}`}>
+        <span className={`mr-1.5 inline-block h-2 w-2 rounded-full align-middle ${dotClass}`} aria-hidden />
+        Faltan: {days} días
+      </p>
+      {dateLabel ? <p className="mt-1 mb-0 text-xs text-slate-400">Vence: {dateLabel}</p> : null}
+    </>
+  )
 }
 
 function formatPortalAssignedAt(iso) {
@@ -5484,15 +5518,6 @@ function ClientPortalPageInner() {
                     const customerPhone = String(item?.end_customer_phone ?? '').trim()
                     const pkg = String(item?.package_name ?? 'Pantalla').trim() || 'Pantalla'
                     const purchaseLabel = formatPortalAssignedAt(item?.purchase_date)
-                    const expiry = formatTrackedPurchaseExpiry(item)
-                    const expiryClass =
-                      expiry.tone === 'expired'
-                        ? 'text-red-300 font-bold'
-                        : expiry.tone === 'active'
-                          ? 'text-emerald-300 font-bold'
-                          : expiry.tone === 'warning'
-                            ? 'text-amber-300 font-bold'
-                            : 'text-slate-300'
                     return (
                       <li
                         key={key}
@@ -5551,10 +5576,7 @@ function ClientPortalPageInner() {
                           <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                             Vencimiento
                           </p>
-                          <p className={`mt-0.5 mb-0 text-sm ${expiryClass}`}>{expiry.text}</p>
-                          {expiry.dateLabel && expiry.tone !== 'neutral' ? (
-                            <p className="mt-1 mb-0 text-xs text-slate-400">Fecha: {expiry.dateLabel}</p>
-                          ) : null}
+                          <TrackedPurchaseExpiryBlock item={item} />
                         </div>
                       </li>
                     )
