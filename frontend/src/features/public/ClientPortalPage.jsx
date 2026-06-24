@@ -2,7 +2,7 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, ChevronDown, Copy, Loader2, Link2, Pencil, Phone, Plus, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, Copy, Loader2, Link2, Pencil, Phone, Plus, Search, Tag, Trash2, X } from 'lucide-react'
 import { formatDateTimeEcuador } from '../../utils/datetime'
 import { clientPortalPublicUrl } from '../sales/saleTableHelpers'
 import {
@@ -1593,6 +1593,7 @@ function ClientPortalPageInner() {
   const [subClientsErr, setSubClientsErr] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [activeFilter, setActiveFilter] = useState('all')
+  const [searchTerm, setSearchTerm] = useState('')
   const [deletingSubClientId, setDeletingSubClientId] = useState(null)
   const [copiedClientId, setCopiedClientId] = useState(null)
   const copySubClientLinkTimerRef = useRef(null)
@@ -2802,8 +2803,18 @@ function ClientPortalPageInner() {
     return list
   }, [subClients, activeFilter])
 
+  const filteredClients = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return filteredSubClients
+    return filteredSubClients.filter((sc) => {
+      const name = String(sc?.name ?? '').toLowerCase()
+      const user = String(sc?.username ?? '').toLowerCase()
+      return name.includes(q) || user.includes(q)
+    })
+  }, [filteredSubClients, searchTerm])
+
   const sortedSubClients = useMemo(() => {
-    const list = [...filteredSubClients]
+    const list = [...filteredClients]
     list.sort((a, b) => {
       const aCreated = a?.created_at ? new Date(a.created_at).getTime() : NaN
       const bCreated = b?.created_at ? new Date(b.created_at).getTime() : NaN
@@ -2813,7 +2824,7 @@ function ClientPortalPageInner() {
       return Number(b?.id) - Number(a?.id)
     })
     return list
-  }, [filteredSubClients])
+  }, [filteredClients])
 
   const zeroBalanceSubClientCount = useMemo(
     () =>
@@ -2923,7 +2934,7 @@ function ClientPortalPageInner() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [activeFilter])
+  }, [activeFilter, searchTerm])
 
   const handleCopyScreenField = useCallback(async (text, flashKey) => {
     const ok = await copyPortalText(text)
@@ -5375,41 +5386,6 @@ function ClientPortalPageInner() {
                 <p className="m-0 text-sm text-slate-400/85">
                   Aún no tienes sub-clientes. Crea el primero para revender pantallas con tu propia red.
                 </p>
-              ) : filteredSubClients.length === 0 ? (
-                <div className="space-y-3">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveFilter('all')}
-                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                        activeFilter === 'all'
-                          ? 'border border-violet-400/50 bg-violet-500/25 text-violet-50'
-                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
-                      }`}
-                    >
-                      Todos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveFilter('zeros')}
-                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                        activeFilter === 'zeros'
-                          ? 'border border-amber-400/50 bg-amber-500/20 text-amber-50'
-                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
-                      }`}
-                    >
-                      Seguimiento clientes
-                      {zeroBalanceSubClientCount > 0 ? (
-                        <span className="ml-1.5 tabular-nums text-[10px] opacity-90">
-                          ({zeroBalanceSubClientCount})
-                        </span>
-                      ) : null}
-                    </button>
-                  </div>
-                  <p className="m-0 text-sm text-slate-400/85">
-                    No hay sub-clientes con saldo BaaS en cero en este momento.
-                  </p>
-                </div>
               ) : (
                 <div className="rounded-xl border border-slate-600/40">
                   <div className="flex flex-wrap items-center gap-2 border-b border-slate-600/35 px-3 py-3">
@@ -5441,6 +5417,28 @@ function ClientPortalPageInner() {
                       ) : null}
                     </button>
                   </div>
+                  <div className="relative mb-4 px-3 pt-3">
+                    <Search
+                      size={16}
+                      className="pointer-events-none absolute left-6 top-1/2 -translate-y-1/2 text-indigo-400"
+                      aria-hidden
+                    />
+                    <input
+                      type="search"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      placeholder="Buscar por nombre o usuario…"
+                      className="w-full rounded-lg border border-indigo-800/50 bg-indigo-950/30 py-2 pl-10 pr-4 text-sm text-indigo-100 placeholder-indigo-400 transition-colors focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                  {filteredClients.length === 0 ? (
+                    <p className="m-0 px-3 pb-4 text-sm text-slate-400/85">
+                      {searchTerm.trim()
+                        ? 'No se encontraron clientes que coincidan con la búsqueda.'
+                        : 'No hay sub-clientes con saldo BaaS en cero en este momento.'}
+                    </p>
+                  ) : (
+                    <>
                   <div className="w-full">
                     <table className="w-full table-fixed text-[11px] md:text-sm">
                       <thead>
@@ -5541,6 +5539,8 @@ function ClientPortalPageInner() {
                       Siguiente
                     </button>
                   </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
