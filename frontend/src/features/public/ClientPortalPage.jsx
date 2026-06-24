@@ -4917,7 +4917,7 @@ function ClientPortalPageInner() {
 
         <PortalNeoAccordion
           sectionId="portal-acc-baas"
-          title="MI BILLETERA BAAS"
+          title="MI BILLETERA"
           headerAside={walletAccordionAside || '—'}
           accent="violet"
           expanded={isBaasOpen}
@@ -4927,7 +4927,7 @@ function ClientPortalPageInner() {
             portalShowsBaasSection ? (
             <div className="space-y-5">
               <p className="m-0 text-[13px] font-medium leading-snug text-slate-200/88">
-                Tu saldo virtual para compras BaaS
+                Tu saldo actual
                 {walletRowsDisplay.length > 1 ? (
                   <span className="block mt-1 text-[12px] text-violet-100/90 tabular-nums">
                     {walletRowsDisplay.map((r) => formatMoney(r.amount, r.currency)).join(' · ')}
@@ -5328,7 +5328,7 @@ function ClientPortalPageInner() {
 
         <PortalNeoAccordion
           sectionId="portal-acc-reseller-network"
-          title="MI RED DE CLIENTES"
+          title="MI RED DE DISTRIBUIDORES"
           subtitle="Crea sub-clientes, transfiere saldo BaaS y asigna precios"
           headerAside={resellerNetworkAside}
           accent="violet"
