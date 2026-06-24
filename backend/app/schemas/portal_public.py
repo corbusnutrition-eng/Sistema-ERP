@@ -408,6 +408,25 @@ class PortalSubClientPricingRow(BaseModel):
     free_stock: int = 0
 
 
+class PortalDashboardGanancias(BaseModel):
+    diario: float = Field(default=0.0, description="Utilidad acumulada hoy (Ecuador).")
+    semanal: float = Field(default=0.0, description="Utilidad acumulada en la semana calendario actual.")
+    mensual: float = Field(default=0.0, description="Utilidad acumulada en el mes calendario actual.")
+    currency: str = Field(default="USD", max_length=10)
+
+
+class PortalDashboardMetrics(BaseModel):
+    ganancias_totales: PortalDashboardGanancias
+    pantallas_activas: int = Field(default=0, ge=0)
+    vencimientos_semana: int = Field(
+        default=0,
+        ge=0,
+        description="Clientes finales con vencimiento en 0–7 días (Mis compras).",
+    )
+    saldo_baas: float = Field(default=0.0, ge=0)
+    saldo_baas_currency: str = Field(default="USD", max_length=10)
+
+
 class PortalHomeResponse(BaseModel):
     """GET /portal/{portal_token} — cliente autogestión."""
 
@@ -485,6 +504,10 @@ class PortalHomeResponse(BaseModel):
     parent_contact_phone: Optional[str] = Field(
         default=None,
         description="WhatsApp del parent_id inmediato (solo si el padre directo configuró contact_phone).",
+    )
+    dashboard_metrics: Optional[PortalDashboardMetrics] = Field(
+        default=None,
+        description="Mini-dashboard de rendimiento del distribuidor (portal autogestión).",
     )
 
 

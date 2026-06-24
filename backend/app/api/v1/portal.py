@@ -70,6 +70,7 @@ from app.schemas.portal_public import (
     PortalContactResponse,
     PortalContactUpdate,
     PortalCxcBalanceResponse,
+    PortalDashboardMetrics,
     PortalCheckoutLinePublic,
     PortalDepositPick,
     PortalHomeResponse,
@@ -2712,6 +2713,38 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
         parent_contact_phone = _parent_contact_phone_for_client(db, client)
         owner_phone = str(client.phone or "").strip() or None
         owner_contact_phone = _client_baas_contact_phone(client)
+        wallet_balance_val = max(0.0, _portal_money_float(wallet_summary.get("wallet_balance"), default=0.0))
+        wallet_balance_cur = str(wallet_summary.get("wallet_balance_currency") or client_currency)
+        try:
+            tracked_for_metrics = _portal_tracked_purchases_for_client(db, int(client.id))
+        except Exception:
+            logger.exception("portal dashboard tracked purchases failed client_id=%s", client.id)
+            tracked_for_metrics = []
+        try:
+            from app.services.portal_dashboard_metrics_service import compute_portal_dashboard_metrics
+
+            dashboard_raw = compute_portal_dashboard_metrics(
+                db,
+                int(client.id),
+                wallet_balance=wallet_balance_val,
+                wallet_balance_currency=wallet_balance_cur,
+                tracked_purchase_items=tracked_for_metrics,
+            )
+            dashboard_metrics = PortalDashboardMetrics.model_validate(dashboard_raw)
+        except Exception:
+            logger.exception("portal dashboard_metrics failed client_id=%s", client.id)
+            dashboard_metrics = PortalDashboardMetrics(
+                ganancias_totales={
+                    "diario": 0.0,
+                    "semanal": 0.0,
+                    "mensual": 0.0,
+                    "currency": normalize_currency_code(wallet_balance_cur, "USD"),
+                },
+                pantallas_activas=0,
+                vencimientos_semana=0,
+                saldo_baas=wallet_balance_val,
+                saldo_baas_currency=normalize_currency_code(wallet_balance_cur, "USD"),
+            )
         return PortalHomeResponse(
             client=PortalClientBrief(
                 name=client.display_name() or "Cliente",
@@ -2723,8 +2756,8 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
                 credit_balance_currency=primary_credit_cur,
                 credit_balances_by_currency=credit_rows,
                 available_credit=primary_credit,
-                wallet_balance=max(0.0, _portal_money_float(wallet_summary.get("wallet_balance"), default=0.0)),
-                wallet_balance_currency=str(wallet_summary.get("wallet_balance_currency") or client_currency),
+                wallet_balance=wallet_balance_val,
+                wallet_balance_currency=wallet_balance_cur,
                 wallet_balances_by_currency=wallet_rows,
                 currency=client_currency,
             ),
@@ -2753,6 +2786,7 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
             allowed_payment_account_ids=list(allowed_payment_account_ids or []),
             outstanding_wallet_recharges=list(outstanding_wallet_recharges or []),
             parent_contact_phone=parent_contact_phone,
+            dashboard_metrics=dashboard_metrics,
         )
     except Exception:
         logger.exception("portal_home response build failed client_id=%s", client.id)

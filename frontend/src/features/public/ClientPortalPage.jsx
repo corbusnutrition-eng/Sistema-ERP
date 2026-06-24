@@ -13,6 +13,7 @@ import {
 } from '../../constants/phoneCountryCodes'
 import { calculateExpirationStats } from '../inventory/screenPackageExpiration'
 import CodigosRetiroWidget, { RetiroSuccessPanel } from './CodigosRetiroWidget'
+import MiniDashboard from './MiniDashboard'
 import {
   extractRetiroMonto,
   isCodigosRetiroMethodId,
@@ -5284,6 +5285,8 @@ function ClientPortalPageInner() {
             Minimizar todo
           </button>
         </div>
+
+        <MiniDashboard metrics={data?.dashboard_metrics} />
 
         <PortalNeoAccordion
           sectionId="portal-acc-notifications"
