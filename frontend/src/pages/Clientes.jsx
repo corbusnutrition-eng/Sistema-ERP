@@ -99,6 +99,21 @@ const FOLLOW_UP_DAYS_PRESETS = [
   { value: '30plus', label: 'Más de 30 días' },
 ]
 
+function formatFollowUpInvoiceTotal(amount, currency = 'USD') {
+  const n = Number(amount)
+  if (!Number.isFinite(n)) return '—'
+  try {
+    return new Intl.NumberFormat('es-ES', {
+      style: 'currency',
+      currency: currency || 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n)
+  } catch {
+    return `${n.toFixed(2)} ${currency || 'USD'}`
+  }
+}
+
 function DaysSinceCell({ days }) {
   const n = Number(days)
   if (!Number.isFinite(n)) return <span className="text-gray-400 text-xs">—</span>
@@ -1424,6 +1439,10 @@ export default function Clientes() {
   const [searchReg, setSearchReg]           = useState('')
   const [followUpSearch, setFollowUpSearch] = useState('')
   const [followUpCreditsPreset, setFollowUpCreditsPreset] = useState('all')
+  const [followUpCreditsCustomMin, setFollowUpCreditsCustomMin] = useState('')
+  const [followUpCreditsCustomMax, setFollowUpCreditsCustomMax] = useState('')
+  const [followUpCreditsCustomAppliedMin, setFollowUpCreditsCustomAppliedMin] = useState('')
+  const [followUpCreditsCustomAppliedMax, setFollowUpCreditsCustomAppliedMax] = useState('')
   const [followUpDaysPreset, setFollowUpDaysPreset] = useState('all')
   const [followUpDateFrom, setFollowUpDateFrom] = useState('')
   const [followUpDateTo, setFollowUpDateTo] = useState('')
@@ -1465,14 +1484,32 @@ export default function Clientes() {
   }, [
     followUpSearch,
     followUpCreditsPreset,
+    followUpCreditsCustomAppliedMin,
+    followUpCreditsCustomAppliedMax,
     followUpDaysPreset,
     followUpDateFrom,
     followUpDateTo,
     followUpTagFilter,
   ])
 
+  const handleFollowUpCreditsPresetChange = useCallback((value) => {
+    setFollowUpCreditsPreset(value)
+    if (value !== 'custom') {
+      setFollowUpCreditsCustomAppliedMin('')
+      setFollowUpCreditsCustomAppliedMax('')
+    }
+  }, [])
+
+  const applyFollowUpCreditsCustomRange = useCallback(() => {
+    setFollowUpCreditsCustomAppliedMin(followUpCreditsCustomMin.trim())
+    setFollowUpCreditsCustomAppliedMax(followUpCreditsCustomMax.trim())
+  }, [followUpCreditsCustomMin, followUpCreditsCustomMax])
+
   const followUpCreditsSelectOptions = useMemo(
-    () => FOLLOW_UP_CREDITS_PRESETS.map((o) => ({ value: o.value, label: o.label })),
+    () => [
+      ...FOLLOW_UP_CREDITS_PRESETS.map((o) => ({ value: o.value, label: o.label })),
+      { value: 'custom', label: 'Rango personalizado…' },
+    ],
     [],
   )
   const followUpDaysSelectOptions = useMemo(
@@ -1666,6 +1703,18 @@ export default function Clientes() {
       if (followUpCreditsPreset === 'lt10' && !(credits < 10)) return false
       if (followUpCreditsPreset === '10-50' && !(credits >= 10 && credits <= 50)) return false
       if (followUpCreditsPreset === 'gt50' && !(credits > 50)) return false
+      if (followUpCreditsPreset === 'custom') {
+        const minRaw = followUpCreditsCustomAppliedMin.trim()
+        const maxRaw = followUpCreditsCustomAppliedMax.trim()
+        if (minRaw !== '') {
+          const minVal = Number(minRaw)
+          if (Number.isFinite(minVal) && credits < minVal) return false
+        }
+        if (maxRaw !== '') {
+          const maxVal = Number(maxRaw)
+          if (Number.isFinite(maxVal) && credits > maxVal) return false
+        }
+      }
       const days = Number(row.days_since_last_recharge) || 0
       if (followUpDaysPreset === '7' && days < 7) return false
       if (followUpDaysPreset === '15' && days < 15) return false
@@ -1686,6 +1735,8 @@ export default function Clientes() {
     followUpRows,
     followUpSearch,
     followUpCreditsPreset,
+    followUpCreditsCustomAppliedMin,
+    followUpCreditsCustomAppliedMax,
     followUpDaysPreset,
     followUpDateFrom,
     followUpDateTo,
@@ -1902,6 +1953,22 @@ export default function Clientes() {
       key: 'last_credits',
       header: 'Última recarga',
       render: (row) => <CreditsBadge value={row.last_recharge_credits} />,
+    },
+    {
+      key: 'last_invoice_total',
+      header: 'Total factura',
+      render: (row) => {
+        const label = formatFollowUpInvoiceTotal(
+          row.last_recharge_total_amount,
+          row.last_recharge_currency || 'USD',
+        )
+        if (label === '—') return <span className="text-gray-400 text-xs">—</span>
+        return (
+          <span className="text-sm font-semibold text-gray-800 tabular-nums whitespace-nowrap">
+            {label}
+          </span>
+        )
+      },
     },
     {
       key: 'last_date',
@@ -2203,19 +2270,54 @@ export default function Clientes() {
                   </div>
                 </label>
 
-                <div className="flex flex-col gap-1 min-w-[9rem]">
+                <div className="flex flex-col gap-2 min-w-[9rem]">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                     Créditos
                   </span>
                   <SearchableSelect
                     value={followUpCreditsPreset}
-                    onChange={setFollowUpCreditsPreset}
+                    onChange={handleFollowUpCreditsPresetChange}
                     options={followUpCreditsSelectOptions}
                     placeholder="Todos los créditos"
                     hideClear
                     showSearch={false}
                     className="[&_button]:min-h-9 [&_button]:h-9 [&_button]:text-sm"
                   />
+                  {followUpCreditsPreset === 'custom' && (
+                    <div className="flex flex-wrap items-end gap-2 rounded-lg border border-gray-200 bg-white p-2">
+                      <label className="flex flex-col gap-0.5 min-w-[4.5rem]">
+                        <span className="text-[9px] font-semibold uppercase tracking-wide text-gray-400">Min</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={followUpCreditsCustomMin}
+                          onChange={(e) => setFollowUpCreditsCustomMin(e.target.value)}
+                          placeholder="0"
+                          className="w-full text-sm py-1 px-2 rounded-md border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-0.5 min-w-[4.5rem]">
+                        <span className="text-[9px] font-semibold uppercase tracking-wide text-gray-400">Max</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={followUpCreditsCustomMax}
+                          onChange={(e) => setFollowUpCreditsCustomMax(e.target.value)}
+                          placeholder="∞"
+                          className="w-full text-sm py-1 px-2 rounded-md border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={applyFollowUpCreditsCustomRange}
+                        className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+                      >
+                        Aplicar
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-1 min-w-[9rem]">
@@ -2276,6 +2378,10 @@ export default function Clientes() {
                   onClick={() => {
                     setFollowUpSearch('')
                     setFollowUpCreditsPreset('all')
+                    setFollowUpCreditsCustomMin('')
+                    setFollowUpCreditsCustomMax('')
+                    setFollowUpCreditsCustomAppliedMin('')
+                    setFollowUpCreditsCustomAppliedMax('')
                     setFollowUpDaysPreset('all')
                     setFollowUpDateFrom('')
                     setFollowUpDateTo('')

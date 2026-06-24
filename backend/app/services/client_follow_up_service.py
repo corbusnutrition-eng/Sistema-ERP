@@ -136,6 +136,22 @@ def _product_id_from_invoice_lines(sale: Sale) -> Optional[int]:
     return None
 
 
+def _sale_invoice_total(sale: Sale) -> tuple[float, str]:
+    """Monto total cobrado al cliente: ``local_amount`` en ``currency`` o ``amount`` en USD."""
+    currency = (sale.currency or "USD").strip().upper() or "USD"
+    if sale.local_amount is not None:
+        try:
+            local_total = float(sale.local_amount)
+            if local_total >= 0:
+                return local_total, currency
+        except (TypeError, ValueError):
+            pass
+    try:
+        return float(sale.amount), "USD"
+    except (TypeError, ValueError):
+        return 0.0, "USD"
+
+
 def _resolve_sale_product(db: Session, sale: Sale) -> Optional[Product]:
     if sale.product is not None:
         return sale.product
@@ -223,7 +239,7 @@ def list_client_normal_credit_follow_up(db: Session) -> list[dict]:
     )
 
     tag_catalog = _tag_catalog_by_name(db)
-    best_by_client: dict[int, tuple[Sale, Client, Optional[Product], float]] = {}
+    best_by_client: dict[int, tuple[Sale, Client, Optional[Product], float, float, str]] = {}
 
     for sale in sales_rows:
         if not _is_normal_credit_sale(db, sale):
@@ -237,10 +253,11 @@ def list_client_normal_credit_follow_up(db: Session) -> list[dict]:
             continue
         product = _resolve_sale_product(db, sale)
         credits = _normal_credits_qty_from_sale(sale)
-        best_by_client[cid] = (sale, client, product, credits)
+        total_amount, total_currency = _sale_invoice_total(sale)
+        best_by_client[cid] = (sale, client, product, credits, total_amount, total_currency)
 
     out: list[dict] = []
-    for sale, client, product, credits in best_by_client.values():
+    for sale, client, product, credits, total_amount, total_currency in best_by_client.values():
         recharge_dt = ensure_aware(sale.created_at)
         out.append(
             {
@@ -251,6 +268,8 @@ def list_client_normal_credit_follow_up(db: Session) -> list[dict]:
                 "email": client.email,
                 "last_recharge_date": recharge_dt,
                 "last_recharge_credits": credits,
+                "last_recharge_total_amount": total_amount,
+                "last_recharge_currency": total_currency,
                 "days_since_last_recharge": days_since_recharge_ecuador(recharge_dt),
                 "last_sale_id": int(sale.id),
                 "product_name": (product.name if product else None),

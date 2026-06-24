@@ -23,6 +23,14 @@ class ClientFollowUpItem(BaseModel):
     email: str
     last_recharge_date: datetime
     last_recharge_credits: float = Field(ge=0)
+    last_recharge_total_amount: float = Field(
+        ge=0,
+        description="Total de la última factura en moneda de la venta (``local_amount`` o ``amount`` USD).",
+    )
+    last_recharge_currency: str = Field(
+        default="USD",
+        description="Moneda ISO 4217 del total mostrado al cliente.",
+    )
     days_since_last_recharge: int = Field(ge=0)
     last_sale_id: Optional[int] = None
     product_name: Optional[str] = None
