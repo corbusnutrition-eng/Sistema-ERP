@@ -216,19 +216,30 @@ function usePortalNowTicker(intervalMs = 60000) {
   return now
 }
 
+/** Días restantes de una compra rastreada (misma lógica que Inventario IPTV). */
+function resolveTrackedPurchaseDaysRemaining(item, referenceDate = new Date()) {
+  const calc = calculateExpirationStats(
+    item?.inventory_created_at,
+    item?.inventory_package_raw || item?.package_name,
+    referenceDate,
+  )
+  const days =
+    calc?.diasRestantes ??
+    (typeof item?.days_remaining === 'number' ? item.days_remaining : item?.days_until_expiration)
+  return typeof days === 'number' && Number.isFinite(days) ? days : null
+}
+
 /** Vencimiento en tarjeta «Mis compras» — misma lógica que Inventario IPTV. */
 function TrackedPurchaseExpiryBlock({ item }) {
   const now = usePortalNowTicker(60000)
   const stats = useMemo(() => {
+    const days = resolveTrackedPurchaseDaysRemaining(item, now)
+    if (days == null) return null
     const calc = calculateExpirationStats(
       item?.inventory_created_at,
       item?.inventory_package_raw || item?.package_name,
       now,
     )
-    const days =
-      calc?.diasRestantes ??
-      (typeof item?.days_remaining === 'number' ? item.days_remaining : item?.days_until_expiration)
-    if (typeof days !== 'number' || !Number.isFinite(days)) return null
     const dateLabel = formatPortalScreenExpiry(
       item?.expiration_date ||
         (calc?.fechaExpiracionEfectiva instanceof Date
@@ -1634,6 +1645,7 @@ function ClientPortalPageInner() {
   const [trackedPurchases, setTrackedPurchases] = useState([])
   const [trackedPurchasesLoading, setTrackedPurchasesLoading] = useState(false)
   const [trackedPurchasesErr, setTrackedPurchasesErr] = useState(null)
+  const [activeTab, setActiveTab] = useState('todos')
   const [accordionDebtOpen, setAccordionDebtOpen] = useState(true)
   const [accordionOrdersOpen, setAccordionOrdersOpen] = useState(true)
   const [copyFlashKey, setCopyFlashKey] = useState(null)
@@ -3024,6 +3036,36 @@ function ClientPortalPageInner() {
     const start = (activeScreensPage - 1) * ACTIVE_SCREENS_PAGE_SIZE
     return activeScreens.slice(start, start + ACTIVE_SCREENS_PAGE_SIZE)
   }, [activeScreens, activeScreensPage])
+
+  const misComprasNow = usePortalNowTicker(60000)
+
+  const trackedPurchasesSeguimientoCount = useMemo(() => {
+    const list = Array.isArray(trackedPurchases) ? trackedPurchases : []
+    return list.filter((item) => {
+      const days = resolveTrackedPurchaseDaysRemaining(item, misComprasNow)
+      return days != null && days <= 5 && days > 0
+    }).length
+  }, [trackedPurchases, misComprasNow])
+
+  const trackedPurchasesCaducadosCount = useMemo(() => {
+    const list = Array.isArray(trackedPurchases) ? trackedPurchases : []
+    return list.filter((item) => {
+      const days = resolveTrackedPurchaseDaysRemaining(item, misComprasNow)
+      return days != null && days <= 0
+    }).length
+  }, [trackedPurchases, misComprasNow])
+
+  const filteredTrackedPurchases = useMemo(() => {
+    const list = Array.isArray(trackedPurchases) ? trackedPurchases : []
+    if (activeTab === 'todos') return list
+    return list.filter((item) => {
+      const days = resolveTrackedPurchaseDaysRemaining(item, misComprasNow)
+      if (days == null) return false
+      if (activeTab === 'seguimiento') return days <= 5 && days > 0
+      if (activeTab === 'caducados') return days <= 0
+      return true
+    })
+  }, [trackedPurchases, activeTab, misComprasNow])
 
   const latestActiveScreen = useMemo(
     () => (activeScreens.length > 0 ? activeScreens[0] : null),
@@ -5511,8 +5553,63 @@ function ClientPortalPageInner() {
                   «Comprar con seguimiento al cliente» para registrar nombre y teléfono.
                 </p>
               ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-600/35 pb-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('todos')}
+                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeTab === 'todos'
+                          ? 'border border-emerald-400/50 bg-emerald-500/25 text-emerald-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('seguimiento')}
+                      className={`inline-flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeTab === 'seguimiento'
+                          ? 'border border-amber-400/50 bg-amber-500/20 text-amber-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Seguimiento
+                      {trackedPurchasesSeguimientoCount > 0 ? (
+                        <span className="inline-flex min-w-[1.125rem] items-center justify-center rounded-full bg-amber-400/25 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-amber-100">
+                          {trackedPurchasesSeguimientoCount}
+                        </span>
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('caducados')}
+                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeTab === 'caducados'
+                          ? 'border border-red-400/50 bg-red-500/20 text-red-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Caducados
+                      {trackedPurchasesCaducadosCount > 0 ? (
+                        <span className="ml-1.5 tabular-nums text-[10px] opacity-90">
+                          ({trackedPurchasesCaducadosCount})
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
+                  {filteredTrackedPurchases.length === 0 ? (
+                    <p className="m-0 py-6 text-center text-sm text-slate-400/80">
+                      {activeTab === 'seguimiento'
+                        ? 'No hay clientes con vencimiento próximo a 5 días.'
+                        : activeTab === 'caducados'
+                          ? 'No hay compras caducadas en este momento.'
+                          : 'No hay compras para mostrar.'}
+                    </p>
+                  ) : (
                 <ul className="m-0 list-none space-y-3 p-0">
-                  {trackedPurchases.map((item) => {
+                  {filteredTrackedPurchases.map((item) => {
                     const key = `tracked-${item?.sale_id}-${item?.screen_stock_id ?? 'pending'}`
                     const customerName = String(item?.end_customer_name ?? '').trim() || '—'
                     const customerPhone = String(item?.end_customer_phone ?? '').trim()
@@ -5582,6 +5679,8 @@ function ClientPortalPageInner() {
                     )
                   })}
                 </ul>
+                  )}
+                </>
               )}
             </div>
           ) : null}
