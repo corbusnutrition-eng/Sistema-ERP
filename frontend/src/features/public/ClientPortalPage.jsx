@@ -4,7 +4,7 @@ import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
 import { ArrowLeftRight, ChevronDown, Copy, Loader2, Link2, Plus, Tag, X } from 'lucide-react'
 import { formatDateTimeEcuador } from '../../utils/datetime'
-import { clientPortalPublicUrl, copyClientPortalLink } from '../sales/saleTableHelpers'
+import { clientPortalPublicUrl } from '../sales/saleTableHelpers'
 import CodigosRetiroWidget, { RetiroSuccessPanel } from './CodigosRetiroWidget'
 import {
   extractRetiroMonto,
@@ -213,12 +213,11 @@ function PortalScreenCredentialRow({ label, value, flashKey, copyFlashKey, onCop
 }
 
 const SUB_CLIENT_ACTION_BTN =
-  'flex w-full items-center justify-center gap-1.5 border px-3 py-1.5 text-xs font-medium rounded-md text-center transition-colors whitespace-nowrap'
+  'inline-flex w-full items-center justify-center gap-1 rounded-md border text-center transition-colors whitespace-nowrap text-xs px-2 py-1 md:text-sm md:gap-1.5 md:px-3 md:py-1.5'
 
 function SubClientActionsCell({
   subclient,
   portalUrl,
-  onCopyLink,
   onTransfer,
   onPrices,
   onEdit,
@@ -227,9 +226,34 @@ function SubClientActionsCell({
 }) {
   const baasBalance = Number(subclient?.wallet_balance) || 0
   const canDelete = baasBalance <= 1e-9
+  const [isCopied, setIsCopied] = useState(false)
+  const copyResetTimerRef = useRef(null)
+
+  useEffect(
+    () => () => {
+      if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current)
+    },
+    [],
+  )
+
+  const handleCopyPortalLink = useCallback(async () => {
+    const url = String(portalUrl ?? '').trim()
+    if (!url) return
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(url)
+      ok = true
+    } catch {
+      ok = await copyPortalText(url)
+    }
+    if (!ok) return
+    setIsCopied(true)
+    if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current)
+    copyResetTimerRef.current = setTimeout(() => setIsCopied(false), 2000)
+  }, [portalUrl])
 
   return (
-    <div className="flex w-full min-w-[10.5rem] flex-col items-stretch gap-2 pr-2">
+    <div className="flex w-full min-w-[8.25rem] flex-col items-stretch gap-1 md:min-w-[10.5rem] md:gap-2">
       <button
         type="button"
         onClick={() => onEdit?.(subclient)}
@@ -244,7 +268,8 @@ function SubClientActionsCell({
         className={`${SUB_CLIENT_ACTION_BTN} border-emerald-400/40 bg-emerald-950/25 text-emerald-50 hover:border-emerald-300/60 hover:bg-emerald-900/45`}
         aria-label={`Transferir saldo a ${String(subclient?.name ?? subclient?.username ?? 'sub-cliente')}`}
       >
-        <ArrowLeftRight size={13} aria-hidden />
+        <ArrowLeftRight size={12} className="shrink-0 md:hidden" aria-hidden />
+        <ArrowLeftRight size={13} className="hidden shrink-0 md:block" aria-hidden />
         <span>💸 Transferir</span>
       </button>
       <button
@@ -253,19 +278,25 @@ function SubClientActionsCell({
         className={`${SUB_CLIENT_ACTION_BTN} border-violet-400/40 bg-violet-950/25 text-violet-50 hover:border-violet-300/60 hover:bg-violet-900/45`}
         aria-label={`Asignar precios a ${String(subclient?.name ?? subclient?.username ?? 'sub-cliente')}`}
       >
-        <Tag size={13} aria-hidden />
+        <Tag size={12} className="shrink-0 md:hidden" aria-hidden />
+        <Tag size={13} className="hidden shrink-0 md:block" aria-hidden />
         <span>🏷️ Precios</span>
       </button>
       {portalUrl ? (
         <button
           type="button"
-          onClick={() => void onCopyLink(subclient?.portal_token)}
-          className={`${SUB_CLIENT_ACTION_BTN} border-sky-400/40 bg-sky-950/20 text-sky-50 hover:border-sky-300/60 hover:bg-sky-900/40`}
-          title={portalUrl}
-          aria-label="Copiar enlace del portal"
+          onClick={() => void handleCopyPortalLink()}
+          className={`${SUB_CLIENT_ACTION_BTN} ${
+            isCopied
+              ? 'border-emerald-400/70 bg-emerald-950/45 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.25)]'
+              : 'border-sky-400/40 bg-sky-950/20 text-sky-50 hover:border-sky-300/60 hover:bg-sky-900/40'
+          }`}
+          title={isCopied ? 'Enlace copiado al portapapeles' : portalUrl}
+          aria-label={isCopied ? 'Enlace copiado' : 'Copiar enlace del portal'}
         >
-          <Link2 size={13} aria-hidden />
-          <span>🔗 Copiar enlace</span>
+          {!isCopied ? <Link2 size={12} className="shrink-0 md:hidden" aria-hidden /> : null}
+          {!isCopied ? <Link2 size={13} className="hidden shrink-0 md:block" aria-hidden /> : null}
+          <span>{isCopied ? '✅ Enlace copiado' : '🔗 Copiar enlace'}</span>
         </button>
       ) : null}
       <button
@@ -1928,14 +1959,6 @@ function ClientPortalPageInner() {
     },
     [editSubClientBusy],
   )
-
-  const handleCopySubClientPortalLink = useCallback(async (portalToken) => {
-    try {
-      await copyClientPortalLink(portalToken)
-    } catch {
-      /* ignore */
-    }
-  }, [])
 
   const openDeleteSubClientModal = useCallback((subclient) => {
     if (!subclient) return
@@ -5185,14 +5208,16 @@ function ClientPortalPageInner() {
                       ) : null}
                     </button>
                   </div>
-                  <div className="w-full overflow-x-auto pb-4">
-                    <table className="w-full min-w-max table-auto text-sm">
+                  <div className="w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+                    <table className="w-full min-w-[640px] table-auto text-sm">
                       <thead>
-                        <tr className="border-b border-slate-600/40 bg-slate-950/60 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">
-                          <th className="w-auto whitespace-nowrap px-2 py-2">Cliente</th>
-                          <th className="w-auto whitespace-nowrap px-2 py-2">Usuario</th>
-                          <th className="w-auto whitespace-nowrap px-2 py-2 text-right">Saldo BaaS</th>
-                          <th className="w-auto whitespace-nowrap px-2 py-2">Acciones</th>
+                        <tr className="border-b border-slate-600/40 bg-slate-950/60 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400 md:text-[11px]">
+                          <th className="min-w-[7rem] whitespace-nowrap px-2 py-2 md:px-3">Cliente</th>
+                          <th className="min-w-[5.5rem] whitespace-nowrap px-2 py-2 md:px-3">Usuario</th>
+                          <th className="min-w-[5rem] whitespace-nowrap px-2 py-2 text-right md:px-3">Saldo BaaS</th>
+                          <th className="min-w-[8.25rem] whitespace-nowrap px-2 py-2 md:min-w-[10.5rem] md:px-3">
+                            Acciones
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-700/40">
@@ -5208,20 +5233,23 @@ function ClientPortalPageInner() {
                           const portalUrl = clientPortalPublicUrl(sc?.portal_token)
                           return (
                             <tr key={`sc-${sid}`} className="bg-slate-950/35 hover:bg-slate-900/50">
-                              <td className="w-auto whitespace-nowrap px-2 py-2 font-semibold text-slate-50">
-                                {label}
+                              <td className="min-w-[7rem] max-w-[12rem] truncate whitespace-nowrap px-2 py-2 text-[13px] font-semibold text-slate-50 md:max-w-none md:px-3 md:text-sm">
+                                <span className="block truncate" title={label}>
+                                  {label}
+                                </span>
                               </td>
-                              <td className="w-auto whitespace-nowrap px-2 py-2 font-mono text-xs text-cyan-100/90">
-                                {user}
+                              <td className="min-w-[5.5rem] max-w-[9rem] truncate whitespace-nowrap px-2 py-2 font-mono text-[11px] text-cyan-100/90 md:max-w-none md:px-3 md:text-xs">
+                                <span className="block truncate" title={user}>
+                                  {user}
+                                </span>
                               </td>
-                              <td className="w-auto whitespace-nowrap px-2 py-2 text-right tabular-nums font-semibold text-fuchsia-100">
+                              <td className="min-w-[5rem] whitespace-nowrap px-2 py-2 text-right text-[13px] tabular-nums font-semibold text-fuchsia-100 md:px-3 md:text-sm">
                                 {formatMoney(bal, scCur)}
                               </td>
-                              <td className="w-auto px-2 py-2 align-top">
+                              <td className="min-w-[8.25rem] px-2 py-2 align-top md:min-w-[10.5rem] md:px-3">
                                 <SubClientActionsCell
                                   subclient={sc}
                                   portalUrl={portalUrl}
-                                  onCopyLink={handleCopySubClientPortalLink}
                                   onTransfer={openTransferModal}
                                   onPrices={openPricesModal}
                                   onEdit={openEditSubClientModal}
@@ -5235,6 +5263,9 @@ function ClientPortalPageInner() {
                       </tbody>
                     </table>
                   </div>
+                  <p className="m-0 border-t border-slate-600/25 px-3 py-2 text-[10px] text-slate-500 md:hidden">
+                    Desliza horizontalmente para ver todas las columnas →
+                  </p>
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 px-3 py-3">
                     <button
                       type="button"
