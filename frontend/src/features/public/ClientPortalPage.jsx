@@ -7542,7 +7542,7 @@ function ClientPortalPageInner() {
                     onClick={() =>
                       setConfirmingPurchase((prev) => (prev ? { ...prev, step: 'tracking' } : prev))
                     }
-                    className="rounded-xl border border-violet-400/45 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-100 transition-colors hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-xl bg-green-500 px-4 py-2.5 text-sm font-bold text-slate-950 shadow-[0_0_15px_rgba(34,197,94,0.4)] transition-all hover:bg-green-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Comprar con seguimiento al cliente
                   </button>
@@ -7552,7 +7552,7 @@ function ClientPortalPageInner() {
                     onClick={() => void executeConfirmedAutoPurchase({ noTracking: true })}
                     className="rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:from-violet-400 hover:to-fuchsia-400"
                   >
-                    {autoPurchaseBusyId != null ? 'Procesando…' : 'Comprar sin seguimiento'}
+                    {autoPurchaseBusyId != null ? 'Procesando…' : 'Comprar sin seguimiento al cliente'}
                   </button>
                 </>
               )}
