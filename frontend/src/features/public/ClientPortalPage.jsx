@@ -1807,6 +1807,9 @@ function ClientPortalPageInner() {
   const [expandedMisComprasKey, setExpandedMisComprasKey] = useState(null)
   const [accordionDebtOpen, setAccordionDebtOpen] = useState(true)
   const [accordionOrdersOpen, setAccordionOrdersOpen] = useState(true)
+  const [accordionSectionOrder, setAccordionSectionOrder] = useState(() =>
+    loadPortalAccordionOrder(token),
+  )
   const [copyFlashKey, setCopyFlashKey] = useState(null)
 
   /** Obligación enfocada: factura FAC-… o recarga REC-… (clave `sale:id` | `wr:id`). */
@@ -2663,6 +2666,18 @@ function ClientPortalPageInner() {
   }, [loadPortal])
 
   useEffect(() => {
+    setAccordionSectionOrder(loadPortalAccordionOrder(token))
+  }, [token])
+
+  const handleAccordionSectionOrderChange = useCallback(
+    (nextOrder) => {
+      setAccordionSectionOrder(nextOrder)
+      savePortalAccordionOrder(token, nextOrder)
+    },
+    [token],
+  )
+
+  useEffect(() => {
     if (!token || loading || loadError || !data || isBlocked) return undefined
     loadWalletRecharges()
     loadAutoPurchaseCatalog()
@@ -3155,6 +3170,11 @@ function ClientPortalPageInner() {
 
   /** Cliente de 1ª línea (sin ``parent_id``): único con CxC / pedidos de pago frente al admin. */
   const isDirectLineClient = useMemo(() => data?.client?.parent_id == null, [data?.client?.parent_id])
+
+  const visibleAccordionSectionOrder = useMemo(
+    () => filterVisiblePortalAccordionOrder(accordionSectionOrder, { isDirectLineClient }),
+    [accordionSectionOrder, isDirectLineClient],
+  )
 
   const parentContactPhone = useMemo(
     () => String(data?.parent_contact_phone ?? '').trim() || null,
@@ -4912,27 +4932,6 @@ function ClientPortalPageInner() {
   const showUnifiedAbonoPayShell = pendingLedgerObligations.length > 0
   /** Formularios de nuevos pedidos visibles cuando hay elementos en esta sección (sin selector previo). */
   const showNewOrderForms = hasNewOrders && isDirectLineClient
-
-  const [accordionSectionOrder, setAccordionSectionOrder] = useState(() =>
-    loadPortalAccordionOrder(token),
-  )
-
-  useEffect(() => {
-    setAccordionSectionOrder(loadPortalAccordionOrder(token))
-  }, [token])
-
-  const handleAccordionSectionOrderChange = useCallback(
-    (nextOrder) => {
-      setAccordionSectionOrder(nextOrder)
-      savePortalAccordionOrder(token, nextOrder)
-    },
-    [token],
-  )
-
-  const visibleAccordionSectionOrder = useMemo(
-    () => filterVisiblePortalAccordionOrder(accordionSectionOrder, { isDirectLineClient }),
-    [accordionSectionOrder, isDirectLineClient],
-  )
 
   // ── Debt payment form helper ───────────────────────────────────────────────
   const debtFormCard = (title = 'Subir comprobante de abono') => {

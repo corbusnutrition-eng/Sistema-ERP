@@ -1,6 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
@@ -29,7 +30,7 @@ function SortablePortalSection({ id, children }) {
     <div
       ref={setNodeRef}
       style={style}
-      className={`relative touch-manipulation ${isDragging ? 'z-50 opacity-90 drop-shadow-[0_18px_40px_rgba(0,0,0,0.55)]' : ''}`}
+      className={`relative touch-manipulation ${isDragging ? 'opacity-35' : ''}`}
     >
       {typeof children === 'function'
         ? children({ dragHandleProps: { ...attributes, ...listeners }, isDragging })
@@ -43,6 +44,8 @@ function SortablePortalSection({ id, children }) {
  * El arrastre solo se activa desde el handle (⋮⋮) para no interferir con el scroll móvil.
  */
 export default function PortalAccordionSortableList({ order, onOrderChange, sections }) {
+  const [activeId, setActiveId] = useState(null)
+
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
@@ -50,12 +53,17 @@ export default function PortalAccordionSortableList({ order, onOrderChange, sect
   )
 
   const visibleIds = useMemo(
-    () => order.filter((id) => sections[id] != null),
+    () => order.filter((id) => typeof sections[id] === 'function'),
     [order, sections],
   )
 
+  function handleDragStart(event) {
+    setActiveId(String(event.active.id))
+  }
+
   function handleDragEnd(event) {
     const { active, over } = event
+    setActiveId(null)
     if (!over || active.id === over.id) return
     const oldIndex = order.indexOf(active.id)
     const newIndex = order.indexOf(over.id)
@@ -63,8 +71,23 @@ export default function PortalAccordionSortableList({ order, onOrderChange, sect
     onOrderChange(arrayMove(order, oldIndex, newIndex))
   }
 
+  function handleDragCancel() {
+    setActiveId(null)
+  }
+
+  const activeSection =
+    activeId && typeof sections[activeId] === 'function'
+      ? sections[activeId]({ dragHandleProps: {}, isDragging: true })
+      : null
+
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
       <SortableContext items={visibleIds} strategy={verticalListSortingStrategy}>
         {visibleIds.map((id) => (
           <SortablePortalSection key={id} id={id}>
@@ -74,6 +97,13 @@ export default function PortalAccordionSortableList({ order, onOrderChange, sect
           </SortablePortalSection>
         ))}
       </SortableContext>
+      <DragOverlay dropAnimation={{ duration: 180, easing: 'ease-out' }}>
+        {activeSection ? (
+          <div className="cursor-grabbing opacity-95 drop-shadow-[0_22px_48px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/40">
+            {activeSection}
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   )
 }
