@@ -250,12 +250,25 @@ def list_clients_follow_up(
         default=None,
         description="Fecha calendario Ecuador (inclusive) de la última recarga.",
     ),
+    tag_id: Optional[uuid.UUID] = Query(
+        default=None,
+        description="Filtra clientes que tengan asignada esta etiqueta (catálogo global).",
+    ),
 ) -> ClientFollowUpListResponse:
     """
     Clientes con historial de compras de **crédito normal** (excluye pantallas individuales
     y autocompras BaaS). Por cliente devuelve solo la transacción más reciente qualifying.
     """
     try:
+        from app.models.tag import Tag
+
+        tag_name_filter: Optional[str] = None
+        if tag_id is not None:
+            tag_row = db.get(Tag, tag_id)
+            if tag_row is None:
+                return ClientFollowUpListResponse(items=[], total=0)
+            tag_name_filter = str(tag_row.name)
+
         rows = list_client_normal_credit_follow_up(db)
         filtered = filter_follow_up_rows(
             rows,
@@ -266,6 +279,7 @@ def list_clients_follow_up(
             days_max=days_max,
             recharge_date_from=recharge_date_from,
             recharge_date_to=recharge_date_to,
+            tag_name=tag_name_filter,
         )
         items = [ClientFollowUpItem.model_validate(r) for r in filtered]
         return ClientFollowUpListResponse(items=items, total=len(items))

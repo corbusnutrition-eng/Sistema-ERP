@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 from typing import Any, Optional
+from uuid import UUID
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.client import Client
 from app.models.product import Product
 from app.models.sale import Sale, SaleStatus
+from app.models.tag import Tag
 from app.services.sale_accounting_sync import is_baas_wallet_auto_purchase_sale
 from app.timezone_utils import ECUADOR_TZ, ensure_aware, now_ecuador
 
@@ -173,6 +175,26 @@ def _is_normal_credit_sale(db: Session, sale: Sale) -> bool:
     return credits_qty > _FP
 
 
+def _tag_catalog_by_name(db: Session) -> dict[str, Tag]:
+    return {str(t.name): t for t in db.query(Tag).all()}
+
+
+def _resolve_client_tags(client: Client, catalog: dict[str, Tag]) -> list[dict]:
+    """Etiquetas asignadas al cliente (nombre en ``clients.tags`` → catálogo global)."""
+    raw = client.tags if isinstance(client.tags, list) else []
+    out: list[dict] = []
+    for item in raw:
+        name = str(item or "").strip()
+        if not name:
+            continue
+        tag_row = catalog.get(name)
+        if tag_row is not None:
+            out.append({"id": tag_row.id, "name": tag_row.name, "color": tag_row.color})
+        else:
+            out.append({"id": None, "name": name, "color": None})
+    return out
+
+
 def days_since_recharge_ecuador(recharge_dt: datetime) -> int:
     """Días calendario en horario Ecuador (hoy − fecha de recarga)."""
     ec_now = now_ecuador()
@@ -200,6 +222,7 @@ def list_client_normal_credit_follow_up(db: Session) -> list[dict]:
         .all()
     )
 
+    tag_catalog = _tag_catalog_by_name(db)
     best_by_client: dict[int, tuple[Sale, Client, Optional[Product], float]] = {}
 
     for sale in sales_rows:
@@ -231,6 +254,7 @@ def list_client_normal_credit_follow_up(db: Session) -> list[dict]:
                 "days_since_last_recharge": days_since_recharge_ecuador(recharge_dt),
                 "last_sale_id": int(sale.id),
                 "product_name": (product.name if product else None),
+                "tags": _resolve_client_tags(client, tag_catalog),
             }
         )
 
@@ -253,10 +277,19 @@ def filter_follow_up_rows(
     days_max: Optional[int] = None,
     recharge_date_from: Optional[date] = None,
     recharge_date_to: Optional[date] = None,
+    tag_name: Optional[str] = None,
 ) -> list[dict]:
     """Filtros opcionales sobre el listado de seguimiento (query string API)."""
     q = (search or "").strip().lower()
     filtered = rows
+    if tag_name:
+        want = str(tag_name).strip()
+        if want:
+            filtered = [
+                r
+                for r in filtered
+                if any(str(t.get("name") or "") == want for t in (r.get("tags") or []))
+            ]
     if q:
         filtered = [
             r

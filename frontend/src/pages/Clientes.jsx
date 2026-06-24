@@ -112,6 +112,42 @@ function DaysSinceCell({ days }) {
   )
 }
 
+function followUpTagsToNames(tags) {
+  if (!Array.isArray(tags)) return []
+  return tags.map((t) => (typeof t === 'string' ? t : t?.name)).filter(Boolean)
+}
+
+function namesToFollowUpTags(names, globalTags) {
+  return (names || []).map((name) => {
+    const gt = globalTags.find((g) => g.name === name)
+    return gt
+      ? { id: gt.id, name: gt.name, color: gt.color }
+      : { id: null, name, color: null }
+  })
+}
+
+function FollowUpTagPills({ tags, globalTags }) {
+  const list = Array.isArray(tags) ? tags : []
+  if (!list.length) return null
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1">
+      {list.map((tag, i) => {
+        const gt = globalTags.find((g) => g.name === tag.name) || tag
+        const cls = tagChipCls(gt, i)
+        return (
+          <span
+            key={`${tag.name}-${i}`}
+            className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ${cls}`}
+          >
+            <Tag size={8} aria-hidden />
+            {tag.name}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 function clientParentBadge(c) {
   const pid = c?.parent_id
   if (pid == null) {
@@ -1391,6 +1427,8 @@ export default function Clientes() {
   const [followUpDaysPreset, setFollowUpDaysPreset] = useState('all')
   const [followUpDateFrom, setFollowUpDateFrom] = useState('')
   const [followUpDateTo, setFollowUpDateTo] = useState('')
+  const [followUpTagFilter, setFollowUpTagFilter] = useState('')
+  const [followUpTagTarget, setFollowUpTagTarget] = useState(null)
   const [followUpRows, setFollowUpRows] = useState([])
   const [followUpLoading, setFollowUpLoading] = useState(false)
   const [followUpErr, setFollowUpErr] = useState(null)
@@ -1430,6 +1468,7 @@ export default function Clientes() {
     followUpDaysPreset,
     followUpDateFrom,
     followUpDateTo,
+    followUpTagFilter,
   ])
 
   const loadFollowUp = useCallback(async () => {
@@ -1533,6 +1572,17 @@ export default function Clientes() {
     }
   }, [])
 
+  const handleFollowUpTagsSave = useCallback(async (clientId, newTagNames) => {
+    await handleUpdateCliente(clientId, { tags: newTagNames })
+    const enriched = namesToFollowUpTags(newTagNames, globalTags)
+    setFollowUpRows((prev) =>
+      prev.map((r) => (Number(r.id) === Number(clientId) ? { ...r, tags: enriched } : r)),
+    )
+    setFollowUpTagTarget((prev) =>
+      prev && Number(prev.id) === Number(clientId) ? { ...prev, tags: enriched } : prev,
+    )
+  }, [globalTags])
+
   // ── Export CSV ──
   async function handleExport() {
     setExportLoading(true)
@@ -1607,6 +1657,12 @@ export default function Clientes() {
       if (followUpDateFrom && ymd && ymd < followUpDateFrom) return false
       if (followUpDateTo && ymd && ymd > followUpDateTo) return false
       if ((followUpDateFrom || followUpDateTo) && !ymd) return false
+      if (followUpTagFilter) {
+        const hasTag = (row.tags || []).some(
+          (t) => t?.id != null && String(t.id) === String(followUpTagFilter),
+        )
+        if (!hasTag) return false
+      }
       return true
     })
   }, [
@@ -1616,6 +1672,7 @@ export default function Clientes() {
     followUpDaysPreset,
     followUpDateFrom,
     followUpDateTo,
+    followUpTagFilter,
   ])
 
   const registerTotalPages = Math.max(1, Math.ceil(registered.length / ITEMS_PER_PAGE))
@@ -1813,6 +1870,7 @@ export default function Clientes() {
           <p className="text-xs text-gray-500 truncate mt-0.5" title={row.name || ''}>
             {row.name || 'Sin nombre'}
           </p>
+          <FollowUpTagPills tags={row.tags} globalTags={globalTags} />
         </div>
       ),
     },
@@ -1852,10 +1910,26 @@ export default function Clientes() {
       header: 'Acciones',
       render: (row) => {
         const c = resolveClientForActions(row)
-        return actionsCol.render(c)
+        return (
+          <div className="flex items-center justify-end gap-0.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setFollowUpTagTarget(row)
+              }}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-violet-700 hover:bg-violet-50 transition-colors"
+              title="Asignar etiquetas"
+              aria-label={`Etiquetas de ${row.username || 'cliente'}`}
+            >
+              <Tag size={14} />
+            </button>
+            {actionsCol.render(c)}
+          </div>
+        )
       },
     },
-  ], [actionsCol, resolveClientForActions])
+  ], [actionsCol, resolveClientForActions, globalTags])
 
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1890,6 +1964,42 @@ export default function Clientes() {
         onClose={() => setPaymentMethodsClient(null)}
         onToast={(message) => setToast({ message, type: 'success' })}
       />
+
+      {followUpTagTarget ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm"
+          onClick={(e) => e.target === e.currentTarget && setFollowUpTagTarget(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+            data-no-row-nav
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Etiquetas del cliente</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {followUpTagTarget.username}
+                  {followUpTagTarget.name ? ` · ${followUpTagTarget.name}` : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFollowUpTagTarget(null)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label="Cerrar"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <TagEditor
+              tags={followUpTagsToNames(followUpTagTarget.tags)}
+              globalTags={globalTags}
+              onSave={(newTags) => handleFollowUpTagsSave(followUpTagTarget.id, newTags)}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {/* ── Timeline panel ── */}
       {timelineClient && (
@@ -2130,6 +2240,24 @@ export default function Clientes() {
                   />
                 </label>
 
+                <label className="flex flex-col gap-1 min-w-[9rem]">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                    Etiquetas
+                  </span>
+                  <select
+                    value={followUpTagFilter}
+                    onChange={(e) => setFollowUpTagFilter(e.target.value)}
+                    className="text-sm py-1.5 px-2 rounded-lg border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  >
+                    <option value="">Todas</option>
+                    {globalTags.map((tag) => (
+                      <option key={tag.id} value={tag.id}>
+                        {tag.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -2138,6 +2266,7 @@ export default function Clientes() {
                     setFollowUpDaysPreset('all')
                     setFollowUpDateFrom('')
                     setFollowUpDateTo('')
+                    setFollowUpTagFilter('')
                   }}
                   className="text-sm py-1.5 px-3 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
                 >
