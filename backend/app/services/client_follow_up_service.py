@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.client import Client
@@ -18,8 +20,58 @@ FOLLOW_UP_SALE_STATUSES: tuple[SaleStatus, ...] = (
     SaleStatus.partially_paid,
 )
 
+_CN_KEY_RE = re.compile(r"^cn:(\d+)$", re.I)
+_FP = 1e-12
+
+
+def _catalog_product_kind(product: Product | None) -> str:
+    """Misma semántica que ``inventory._catalog_product_kind``."""
+    if product is None:
+        return "credito_normal"
+    if product.product_type:
+        return str(product.product_type).strip().lower()
+    st = (product.service_type or "").strip().lower()
+    return "credito_pantalla" if st == "paquete pantalla" else "credito_normal"
+
+
+def _invoice_line_dicts(sale: Sale) -> list[dict[str, Any]]:
+    raw = sale.invoice_lines
+    if not isinstance(raw, list):
+        return []
+    return [x for x in raw if isinstance(x, dict)]
+
+
+def _line_is_normal_credit_chunk(chunk: dict[str, Any]) -> bool:
+    key = str(chunk.get("inventory_option_key") or "").strip().lower()
+    lik = str(chunk.get("line_inventory_kind") or "").strip().lower()
+    return key.startswith(("cn:", "fc:")) or lik == "full_credits"
+
+
+def _line_is_screen_chunk(chunk: dict[str, Any]) -> bool:
+    key = str(chunk.get("inventory_option_key") or "").strip().lower()
+    lik = str(chunk.get("line_inventory_kind") or "").strip().lower()
+    return key.startswith(("cp|", "ss:")) or lik == "screen_stock"
+
+
+def _chunk_qty(chunk: dict[str, Any]) -> float:
+    for field in ("qty", "quantity", "cantidad"):
+        raw = chunk.get(field)
+        if raw is None:
+            continue
+        try:
+            q = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if q > _FP:
+            return q
+    return 0.0
+
 
 def _sale_effective_inventory_channel(sale: Sale) -> str:
+    """
+    Canal ERP alineado con ``sales._effective_inventory_channel``, incluyendo inferencia
+    desde ``invoice_lines`` (cn:/fc:/cp|/ss:) cuando la cabecera viene vacía.
+    """
     ch = (sale.inventory_channel or "").strip().lower()
     if ch == "mixed":
         return "mixed"
@@ -27,53 +79,98 @@ def _sale_effective_inventory_channel(sale: Sale) -> str:
         return ch
     if sale.screen_stock_id is not None:
         return "screen_stock"
+
+    lines = _invoice_line_dicts(sale)
+    has_credit = any(_line_is_normal_credit_chunk(x) for x in lines)
+    has_screen = any(_line_is_screen_chunk(x) for x in lines)
+    if has_credit and has_screen:
+        return "mixed"
+    if has_credit:
+        return "full_credits"
+    if has_screen:
+        return "screen_stock"
+
     try:
         cq = float(sale.credits_quantity or 0)
     except (TypeError, ValueError):
         cq = 0.0
-    if cq > 1e-12:
-        if sale.product_id is not None:
-            return "full_credits"
-        if (sale.inventory_provider or "").strip():
+    if cq > _FP:
+        if sale.product_id is not None or (sale.inventory_provider or "").strip():
             return "full_credits"
     return "legacy"
 
 
-def _is_credito_normal_product(product: Product | None) -> bool:
-    if product is None:
-        return True
-    pt = (getattr(product, "product_type", None) or "").strip().lower()
-    if pt == "credito_pantalla":
-        return False
-    if pt == "credito_normal":
-        return True
-    st = (getattr(product, "service_type", None) or "").strip().lower()
-    return st != "paquete pantalla"
+def _normal_credits_qty_from_sale(sale: Sale) -> float:
+    """Créditos normales vendidos: cabecera ``credits_quantity`` o suma de líneas cn:/fc:."""
+    try:
+        header = float(sale.credits_quantity or 0)
+    except (TypeError, ValueError):
+        header = 0.0
+    if header > _FP:
+        return header
+
+    total = 0.0
+    for chunk in _invoice_line_dicts(sale):
+        if not _line_is_normal_credit_chunk(chunk):
+            continue
+        total += _chunk_qty(chunk)
+    return total
 
 
-def _is_normal_credit_sale(sale: Sale, product: Product | None) -> bool:
-    """Venta ERP de crédito normal (excluye pantallas, BaaS autocompra y recargas wallet)."""
+def _product_id_from_invoice_lines(sale: Sale) -> Optional[int]:
+    for chunk in _invoice_line_dicts(sale):
+        key = str(chunk.get("inventory_option_key") or "").strip()
+        m = _CN_KEY_RE.match(key)
+        if m:
+            return int(m.group(1))
+        raw_pid = chunk.get("product_id")
+        if raw_pid is not None:
+            try:
+                pid = int(raw_pid)
+                if pid >= 1:
+                    return pid
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _resolve_sale_product(db: Session, sale: Sale) -> Optional[Product]:
+    if sale.product is not None:
+        return sale.product
+    if sale.product_id is not None:
+        return db.get(Product, int(sale.product_id))
+    pid = _product_id_from_invoice_lines(sale)
+    if pid is not None:
+        return db.get(Product, pid)
+    return None
+
+
+def _is_normal_credit_sale(db: Session, sale: Sale) -> bool:
+    """
+    Venta ERP de crédito normal (cn:/fc:, ``full_credits`` / ``mixed`` con créditos).
+
+    Excluye: pantallas (``screen_stock``), autocompras BaaS y productos ``credito_pantalla``.
+    """
     if is_baas_wallet_auto_purchase_sale(sale):
         return False
-    if not _is_credito_normal_product(product):
-        return False
-    ch = _sale_effective_inventory_channel(sale)
-    if ch == "screen_stock":
-        return False
-    try:
-        cq = float(sale.credits_quantity or 0)
-    except (TypeError, ValueError):
-        cq = 0.0
-    if ch in ("full_credits", "mixed", "legacy"):
-        return cq > 1e-12
-    return False
 
+    channel = _sale_effective_inventory_channel(sale)
+    if channel == "screen_stock":
+        return False
 
-def _normal_credits_from_sale(sale: Sale) -> float:
-    try:
-        return max(0.0, float(sale.credits_quantity or 0))
-    except (TypeError, ValueError):
-        return 0.0
+    credits_qty = _normal_credits_qty_from_sale(sale)
+    if credits_qty <= _FP:
+        return False
+
+    product = _resolve_sale_product(db, sale)
+    if _catalog_product_kind(product) == "credito_pantalla":
+        return False
+
+    if channel in ("full_credits", "mixed", "legacy"):
+        return True
+
+    # Cabecera legacy con créditos inferidos solo desde líneas.
+    return credits_qty > _FP
 
 
 def days_since_recharge_ecuador(recharge_dt: datetime) -> int:
@@ -91,15 +188,22 @@ def list_client_normal_credit_follow_up(db: Session) -> list[dict]:
     sales_rows = (
         db.query(Sale)
         .options(joinedload(Sale.product))
-        .filter(Sale.status.in_(FOLLOW_UP_SALE_STATUSES))
+        .filter(
+            Sale.status.in_(FOLLOW_UP_SALE_STATUSES),
+            or_(
+                Sale.inventory_channel.in_(("full_credits", "mixed")),
+                and_(Sale.credits_quantity.isnot(None), Sale.credits_quantity > _FP),
+                Sale.invoice_lines.isnot(None),
+            ),
+        )
         .order_by(Sale.created_at.desc())
         .all()
     )
 
-    best_by_client: dict[int, tuple[Sale, Client, Product | None]] = {}
+    best_by_client: dict[int, tuple[Sale, Client, Optional[Product], float]] = {}
 
     for sale in sales_rows:
-        if not _is_normal_credit_sale(sale, sale.product):
+        if not _is_normal_credit_sale(db, sale):
             continue
         cid = int(sale.client_id)
         existing = best_by_client.get(cid)
@@ -108,12 +212,13 @@ def list_client_normal_credit_follow_up(db: Session) -> list[dict]:
         client = db.get(Client, cid)
         if client is None:
             continue
-        best_by_client[cid] = (sale, client, sale.product)
+        product = _resolve_sale_product(db, sale)
+        credits = _normal_credits_qty_from_sale(sale)
+        best_by_client[cid] = (sale, client, product, credits)
 
     out: list[dict] = []
-    for sale, client, product in best_by_client.values():
+    for sale, client, product, credits in best_by_client.values():
         recharge_dt = ensure_aware(sale.created_at)
-        credits = _normal_credits_from_sale(sale)
         out.append(
             {
                 "id": int(client.id),
