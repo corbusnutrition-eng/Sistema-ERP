@@ -3,9 +3,9 @@ import { Loader2 } from 'lucide-react'
 import {
   buildCodigosRetiroWidgetUrl,
   CODIGOS_RETIRO_ES_PRUEBA,
-  CODIGOS_RETIRO_ORIGIN,
   isRetiroCompletadoMessage,
   normalizeRetiroPostMessageData,
+  resolveCodigosRetiroOrigin,
 } from './codigosRetiroPayment'
 
 /** Altura inicial del iframe: formulario completo (OCR + verificación + botón enviar). */
@@ -155,7 +155,7 @@ export default function CodigosRetiroWidget({
   }, [])
 
   useEffect(() => {
-    const allowedOrigin = CODIGOS_RETIRO_ORIGIN.replace(/\/$/, '')
+    const allowedOrigin = resolveCodigosRetiroOrigin().replace(/\/$/, '')
 
     const onMessage = (event) => {
       const origin = String(event?.origin ?? '')

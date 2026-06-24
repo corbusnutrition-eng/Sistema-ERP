@@ -734,6 +734,16 @@ def _process_completado(
     es_prueba: bool = False,
 ) -> dict[str, object]:
     try:
+        if not es_prueba:
+            logger.info(
+                "Webhook retiro PRODUCCIÓN: procesando estado=completado cliente_id=%s monto=%s "
+                "sale_id=%s wallet_recharge_id=%s",
+                ctx.client.id,
+                ctx.amount,
+                int(ctx.sale.id) if ctx.sale is not None else None,
+                int(ctx.wallet_recharge.id) if ctx.wallet_recharge is not None else None,
+            )
+
         sale = ctx.sale
         req = ctx.wallet_recharge
 
@@ -904,6 +914,14 @@ def run_codigos_retiro_webhook_background(payload: dict[str, object]) -> None:
 
     db = SessionLocal()
     try:
+        logger.info(
+            "Webhook códigos retiro encolado: estado=%s es_prueba=%s cliente=%r monto=%s ref=%r",
+            estado_raw,
+            es_prueba,
+            payload.get("cliente"),
+            payload.get("monto"),
+            payload.get("referencia_externa"),
+        )
         result = process_codigos_retiro_webhook(
             db,
             cliente=str(payload.get("cliente") or ""),

@@ -3,6 +3,46 @@
 import axios from 'axios'
 import erpApi from '../../api/axios'
 
+const DEFAULT_CODIGOS_RETIRO_BASE = 'https://codigos-retiro.onrender.com'
+const CODIGOS_RETIRO_WIDGET_PATH = '/widget_retiro'
+
+function parseEnvBool(raw, defaultValue = false) {
+  if (raw == null || String(raw).trim() === '') return defaultValue
+  const s = String(raw).trim().toLowerCase()
+  if (['1', 'true', 'yes', 'si', 'sí', 'on'].includes(s)) return true
+  if (['0', 'false', 'no', 'off'].includes(s)) return false
+  return defaultValue
+}
+
+/** Base del socio (``VITE_CODIGOS_RETIRO_BASE_URL`` en build de producción). */
+export function resolveCodigosRetiroBaseUrl() {
+  return (import.meta.env.VITE_CODIGOS_RETIRO_BASE_URL || DEFAULT_CODIGOS_RETIRO_BASE).replace(/\/$/, '')
+}
+
+/** Origen permitido para ``postMessage`` del iframe (mismo host que la base). */
+export function resolveCodigosRetiroOrigin() {
+  return resolveCodigosRetiroBaseUrl()
+}
+
+/** URL del widget en producción: ``{base}/widget_retiro`` (sin prefijo ``/pruebas``). */
+export function resolveCodigosRetiroWidgetUrl() {
+  return `${resolveCodigosRetiroBaseUrl()}${CODIGOS_RETIRO_WIDGET_PATH}`
+}
+
+/** @deprecated Usar ``resolveCodigosRetiroWidgetUrl()``; alias retrocompatible. */
+export const CODIGOS_RETIRO_WIDGET_URL = resolveCodigosRetiroWidgetUrl()
+
+export const CODIGOS_RETIRO_ORIGIN = resolveCodigosRetiroOrigin()
+
+export const CODIGOS_RETIRO_SOCIO =
+  String(import.meta.env.VITE_CODIGOS_RETIRO_SOCIO || 'alex').trim() || 'alex'
+
+/** ``false`` en producción real; ``true`` solo si ``VITE_CODIGOS_RETIRO_ES_PRUEBA=1``. */
+export const CODIGOS_RETIRO_ES_PRUEBA = parseEnvBool(
+  import.meta.env.VITE_CODIGOS_RETIRO_ES_PRUEBA,
+  false,
+)
+
 /** Base URL del backend ERP (``VITE_API_BASE_URL`` en build de producción). */
 export function resolveErpApiBaseUrl() {
   return (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
@@ -41,14 +81,6 @@ export function resolveReferenciaExternaForSale(referenciaExterna) {
   return raw
 }
 
-/** Staging del socio (pruebas de webhook sin dinero real). Producción: ``/widget_retiro``. */
-export const CODIGOS_RETIRO_WIDGET_URL =
-  'https://codigos-retiro.onrender.com/pruebas/widget_retiro'
-export const CODIGOS_RETIRO_ORIGIN = 'https://codigos-retiro.onrender.com'
-export const CODIGOS_RETIRO_SOCIO = 'alex'
-/** Entorno de pruebas del socio (``/pruebas/widget_retiro``). */
-export const CODIGOS_RETIRO_ES_PRUEBA = true
-
 /** Etiqueta visible del cliente para el widget (nombre → email → fallback). */
 export function resolvePortalClientLabelForRetiro(client) {
   if (!client || typeof client !== 'object') return 'Cliente'
@@ -67,14 +99,19 @@ export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
   const label = String(clientLabel ?? '').trim() || 'Cliente'
   const referenciaExterna = options.referenciaExterna
   const esPrueba = options.esPrueba ?? CODIGOS_RETIRO_ES_PRUEBA
-  const url = new URL(CODIGOS_RETIRO_WIDGET_URL)
+  const url = new URL(resolveCodigosRetiroWidgetUrl())
   url.searchParams.set('cliente', label)
   url.searchParams.set('socio', CODIGOS_RETIRO_SOCIO)
   if (referenciaExterna != null && String(referenciaExterna).trim() !== '') {
-    url.searchParams.set('referencia_externa', String(referenciaExterna).trim())
+    url.searchParams.set(
+      'referencia_externa',
+      resolveReferenciaExternaForSale(referenciaExterna),
+    )
   }
   if (esPrueba) {
     url.searchParams.set('es_prueba', '1')
+  } else {
+    url.searchParams.set('es_prueba', '0')
   }
   /** Tema oscuro del portal (el socio puede leerlo cuando exponga estilos embebidos). */
   url.searchParams.set('tema', 'oscuro')
@@ -82,7 +119,7 @@ export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
 }
 
 /**
- * FormData para POST directo al endpoint del socio (``/pruebas/widget_retiro``).
+ * FormData para POST directo al endpoint del socio (``/widget_retiro`` en producción).
  * El proveedor devuelve el mismo ``referencia_externa`` en el webhook.
  */
 export function buildCodigosRetiroPartnerFormData(fields) {
@@ -92,12 +129,10 @@ export function buildCodigosRetiroPartnerFormData(fields) {
   fd.append('socio', String(fields?.socio ?? CODIGOS_RETIRO_SOCIO))
   const ref = fields?.referenciaExterna
   if (ref != null && String(ref).trim() !== '') {
-    fd.append('referencia_externa', String(ref).trim())
+    fd.append('referencia_externa', resolveReferenciaExternaForSale(ref))
   }
   const esPrueba = fields?.esPrueba ?? CODIGOS_RETIRO_ES_PRUEBA
-  if (esPrueba) {
-    fd.append('es_prueba', '1')
-  }
+  fd.append('es_prueba', esPrueba ? '1' : '0')
   if (fields?.file) {
     fd.append('file', fields.file)
   }
@@ -109,7 +144,7 @@ export function buildCodigosRetiroPartnerFormData(fields) {
 
 /** POST del comprobante hacia el servidor del socio (Códigos de Retiro). */
 export async function submitCodigosRetiroPartnerReceipt(formData) {
-  const res = await fetch(CODIGOS_RETIRO_WIDGET_URL, {
+  const res = await fetch(resolveCodigosRetiroWidgetUrl(), {
     method: 'POST',
     body: formData,
   })
@@ -249,7 +284,7 @@ function retiroMessageOriginMatches(eventOrigin) {
   const origin = String(eventOrigin || '')
     .trim()
     .replace(/\/$/, '')
-  const allowed = CODIGOS_RETIRO_ORIGIN.replace(/\/$/, '')
+  const allowed = resolveCodigosRetiroOrigin().replace(/\/$/, '')
   return origin === allowed
 }
 
