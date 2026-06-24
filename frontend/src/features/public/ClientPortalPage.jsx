@@ -135,6 +135,17 @@ function formatMoney(amount, currency) {
   }
 }
 
+function currencyInputPrefix(currency) {
+  const cur = String(currency || 'USD').trim().toUpperCase() || 'USD'
+  try {
+    const parts = new Intl.NumberFormat('es-CO', { style: 'currency', currency: cur }).formatToParts(0)
+    const sym = parts.find((p) => p.type === 'currency')?.value
+    return sym ? sym.trim() : cur
+  } catch {
+    return cur
+  }
+}
+
 function portalSaleUnitPrice(product, assignedPricesMap, clientCurrency) {
   const pkgId = String(product?.package_catalog_id ?? '')
   const fromAssigned = assignedPricesMap?.[pkgId]
@@ -260,12 +271,15 @@ function TrackedPurchaseExpirySummary({ item }) {
 }
 
 /** Tarjeta colapsable de una compra rastreada en «Mis compras». */
-function TrackedPurchaseCard({ item, expanded, onToggle, showDeleteButton, onDelete, deleting }) {
+function TrackedPurchaseCard({ item, expanded, onToggle, showDeleteButton, onDelete, deleting, onEdit }) {
   const customerName = String(item?.end_customer_name ?? '').trim() || '—'
   const customerPhone = String(item?.end_customer_phone ?? '').trim()
   const pkg = String(item?.package_name ?? 'Pantalla').trim() || 'Pantalla'
   const purchaseLabel = formatPortalAssignedAt(item?.purchase_date)
   const cardId = trackedPurchaseCardKey(item)
+  const salePrice = parseMoneyNum(item?.precio_venta)
+  const saleCurrency = String(item?.currency ?? 'USD').trim().toUpperCase() || 'USD'
+  const hasSalePrice = Number.isFinite(salePrice) && salePrice >= 0
 
   return (
     <li className="overflow-hidden rounded-xl border border-emerald-500/25 bg-slate-950/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
@@ -339,14 +353,35 @@ function TrackedPurchaseCard({ item, expanded, onToggle, showDeleteButton, onDel
               </p>
               <p className="mt-0.5 mb-0 text-sm text-slate-200">{purchaseLabel || '—'}</p>
             </div>
+            {hasSalePrice ? (
+              <div className="sm:col-span-2">
+                <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Precio cobrado
+                </p>
+                <p className="mt-0.5 mb-0 text-sm font-semibold tabular-nums text-emerald-100">
+                  {formatMoney(salePrice, saleCurrency)}
+                </p>
+              </div>
+            ) : null}
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
               FAC-{String(item?.sale_id ?? '').padStart(4, '0')}
             </span>
           </div>
-          {showDeleteButton ? (
-            <div className="mt-4 flex justify-end border-t border-slate-700/40 pt-3">
+          <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-slate-700/40 pt-3">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onEdit?.(item)
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-400/30 bg-violet-950/30 px-3 py-1.5 text-xs font-semibold text-violet-200/90 transition hover:border-violet-400/45 hover:bg-violet-950/50 hover:text-violet-100"
+            >
+              <Pencil size={14} aria-hidden />
+              Editar cliente
+            </button>
+            {showDeleteButton ? (
               <button
                 type="button"
                 onClick={(e) => {
@@ -363,8 +398,8 @@ function TrackedPurchaseCard({ item, expanded, onToggle, showDeleteButton, onDel
                 )}
                 Eliminar cliente
               </button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       ) : null}
     </li>
@@ -1742,6 +1777,9 @@ function ClientPortalPageInner() {
   const [trackedPurchasesErr, setTrackedPurchasesErr] = useState(null)
   const [activeTab, setActiveTab] = useState('todos')
   const [deletingTrackedPurchaseKey, setDeletingTrackedPurchaseKey] = useState(null)
+  const [editingTrackedPurchase, setEditingTrackedPurchase] = useState(null)
+  const [editTrackedSaving, setEditTrackedSaving] = useState(false)
+  const [editTrackedErr, setEditTrackedErr] = useState(null)
   const [misComprasPage, setMisComprasPage] = useState(1)
   const [expandedMisComprasKey, setExpandedMisComprasKey] = useState(null)
   const [accordionDebtOpen, setAccordionDebtOpen] = useState(true)
@@ -2032,6 +2070,101 @@ function ClientPortalPageInner() {
     }
     return 'USD'
   }, [data?.client?.currency, data?.client?.wallet_balance_currency])
+
+  const openEditTrackedPurchase = useCallback(
+    (item) => {
+      const phoneParts = splitPhoneParts(item?.end_customer_phone)
+      const priceNum = parseMoneyNum(item?.precio_venta)
+      setEditingTrackedPurchase({
+        item,
+        name: String(item?.end_customer_name ?? ''),
+        dialCode: phoneParts.dialCode ?? '+593',
+        localNumber: phoneParts.local ?? '',
+        precioVenta:
+          Number.isFinite(priceNum) && priceNum >= 0 ? String(priceNum) : '',
+        currency: String(item?.currency ?? clientBaseCurrency).trim().toUpperCase() || 'USD',
+      })
+      setEditTrackedErr(null)
+    },
+    [clientBaseCurrency],
+  )
+
+  const closeEditTrackedPurchase = useCallback(() => {
+    if (editTrackedSaving) return
+    setEditingTrackedPurchase(null)
+    setEditTrackedErr(null)
+  }, [editTrackedSaving])
+
+  const saveEditTrackedPurchase = useCallback(async () => {
+    const draft = editingTrackedPurchase
+    const item = draft?.item
+    const saleId = Number(item?.sale_id)
+    if (!token || !draft || !Number.isFinite(saleId) || saleId < 1) return
+
+    const name = String(draft.name ?? '').trim()
+    const phone = mergePhoneParts(draft.dialCode ?? '+593', draft.localNumber ?? '')
+    const priceRaw = String(draft.precioVenta ?? '').trim()
+    let precioVenta = null
+    if (priceRaw) {
+      precioVenta = parseMoneyNum(priceRaw)
+      if (!Number.isFinite(precioVenta) || precioVenta < 0) {
+        setEditTrackedErr('Ingresa un precio de venta válido.')
+        return
+      }
+    }
+
+    if (!name) {
+      setEditTrackedErr('Ingresa el nombre del cliente o usuario.')
+      return
+    }
+    if (phone && phone.length < 10) {
+      setEditTrackedErr('Ingresa un número de teléfono válido.')
+      return
+    }
+
+    const screenStockId = item?.screen_stock_id
+    const params =
+      screenStockId != null && Number.isFinite(Number(screenStockId))
+        ? { screen_stock_id: Number(screenStockId) }
+        : undefined
+
+    setEditTrackedSaving(true)
+    setEditTrackedErr(null)
+    try {
+      const { data: res } = await api.patch(
+        `/api/v1/portal/${encodeURIComponent(token)}/tracked-purchases/${saleId}`,
+        {
+          end_customer_name: name,
+          end_customer_phone: phone || null,
+          precio_venta: precioVenta,
+        },
+        params ? { params } : undefined,
+      )
+      const updatedName = res?.end_customer_name ?? name
+      const updatedPhone = res?.end_customer_phone ?? phone ?? null
+      const updatedPrice = res?.precio_venta ?? precioVenta
+      const updatedCurrency = res?.currency ?? draft.currency
+      setTrackedPurchases((prev) =>
+        (Array.isArray(prev) ? prev : []).map((row) =>
+          Number(row?.sale_id) === saleId
+            ? {
+                ...row,
+                end_customer_name: updatedName,
+                end_customer_phone: updatedPhone,
+                precio_venta: updatedPrice,
+                currency: updatedCurrency,
+              }
+            : row,
+        ),
+      )
+      setEditingTrackedPurchase(null)
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      setEditTrackedErr(typeof d === 'string' ? d : 'No se pudieron guardar los cambios.')
+    } finally {
+      setEditTrackedSaving(false)
+    }
+  }, [api, token, editingTrackedPurchase])
 
   const assignedPricesMap = useMemo(() => {
     const out = {}
@@ -2449,6 +2582,16 @@ function ClientPortalPageInner() {
         )
         return
       }
+      const salePriceRaw = String(pending.endCustomerSalePrice ?? '').trim()
+      if (salePriceRaw) {
+        const salePrice = parseMoneyNum(salePriceRaw)
+        if (!Number.isFinite(salePrice) || salePrice < 0) {
+          setConfirmingPurchase((prev) =>
+            prev ? { ...prev, trackingErr: 'Ingresa un precio de venta válido.' } : prev,
+          )
+          return
+        }
+      }
     }
 
     setAutoPurchaseBusyId(pkgId)
@@ -2458,6 +2601,10 @@ function ClientPortalPageInner() {
       if (withTracking) {
         payload.end_customer_name = endCustomerName
         payload.end_customer_phone = endCustomerPhone
+        const salePriceRaw = String(pending.endCustomerSalePrice ?? '').trim()
+        if (salePriceRaw) {
+          payload.precio_venta = parseMoneyNum(salePriceRaw)
+        }
       }
       const { data: res } = await api.post(
         `/api/v1/portal/${encodeURIComponent(token)}/auto-purchase`,
@@ -6763,6 +6910,7 @@ function ClientPortalPageInner() {
                                       endCustomerName: '',
                                       endCustomerDialCode: '+593',
                                       endCustomerLocalNumber: '',
+                                      endCustomerSalePrice: '',
                                       trackingErr: null,
                                     })
                                   }
@@ -6986,6 +7134,7 @@ function ClientPortalPageInner() {
                         showDeleteButton={showDeleteButton}
                         onDelete={handleDeleteTrackedPurchase}
                         deleting={deletingTrackedPurchaseKey === key}
+                        onEdit={openEditTrackedPurchase}
                       />
                     )
                   })}
@@ -7781,6 +7930,36 @@ function ClientPortalPageInner() {
                     />
                   </div>
                 </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-300">
+                    Precio de venta sugerido/cobrado
+                  </label>
+                  <div className="flex gap-2">
+                    <span className="inline-flex shrink-0 items-center rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm font-semibold text-emerald-200 tabular-nums">
+                      {currencyInputPrefix(
+                        confirmingPurchase.currency || clientBaseCurrency,
+                      )}
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={confirmingPurchase.endCustomerSalePrice ?? ''}
+                      onChange={(e) =>
+                        setConfirmingPurchase((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                endCustomerSalePrice: e.target.value.replace(/[^\d.,]/g, ''),
+                                trackingErr: null,
+                              }
+                            : prev,
+                        )
+                      }
+                      placeholder="Ej. 10.00"
+                      className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white tabular-nums"
+                    />
+                  </div>
+                </div>
                 {confirmingPurchase.trackingErr ? (
                   <p className="m-0 text-xs text-red-300">{confirmingPurchase.trackingErr}</p>
                 ) : null}
@@ -7840,6 +8019,178 @@ function ClientPortalPageInner() {
                   </button>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editingTrackedPurchase ? (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-tracked-purchase-title"
+        >
+          <button
+            type="button"
+            aria-label="Cerrar edición"
+            className="absolute inset-0 bg-slate-950/72 backdrop-blur-sm"
+            onClick={closeEditTrackedPurchase}
+          />
+          <div
+            className="relative z-10 w-full max-w-md rounded-2xl border border-emerald-400/35 px-5 py-6 shadow-[0_24px_64px_rgba(0,0,0,0.55)]"
+            style={{
+              background: 'linear-gradient(160deg, rgba(15,23,42,0.98), rgba(6,78,59,0.15))',
+            }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2
+                  id="edit-tracked-purchase-title"
+                  className="m-0 text-lg font-extrabold tracking-tight text-emerald-50"
+                >
+                  Editar cliente
+                </h2>
+                <p className="mt-1 mb-0 text-xs text-slate-400">
+                  FAC-{String(editingTrackedPurchase.item?.sale_id ?? '').padStart(4, '0')}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={editTrackedSaving}
+                onClick={closeEditTrackedPurchase}
+                className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-slate-300 transition hover:bg-white/10 disabled:opacity-50"
+                aria-label="Cerrar"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-5 space-y-3">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-300">
+                  Nombre del cliente o usuario
+                </label>
+                <input
+                  type="text"
+                  value={editingTrackedPurchase.name ?? ''}
+                  onChange={(e) =>
+                    setEditingTrackedPurchase((prev) =>
+                      prev ? { ...prev, name: e.target.value } : prev,
+                    )
+                  }
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2.5 text-sm text-white"
+                  autoComplete="name"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-300">
+                  Número de teléfono
+                </label>
+                <div className="mb-2">
+                  <Select
+                    options={phoneCountryOptions}
+                    value={
+                      phoneCountryOptions.find(
+                        (o) => o.value === (editingTrackedPurchase.dialCode ?? '+593'),
+                      ) ?? phoneCountryOptions[0]
+                    }
+                    onChange={(opt) =>
+                      setEditingTrackedPurchase((prev) =>
+                        prev ? { ...prev, dialCode: opt?.value ?? '+593' } : prev,
+                      )
+                    }
+                    isSearchable
+                    filterOption={(option, input) => {
+                      const q = String(input || '').trim().toLowerCase()
+                      if (!q) return true
+                      const hay = String(option.searchText ?? option.label ?? '').toLowerCase()
+                      return hay.includes(q)
+                    }}
+                    styles={portalPaymentMethodSelectStyles}
+                    placeholder="Buscar país…"
+                    className="text-sm"
+                    classNamePrefix="portal-edit-track-phone-country"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <span className="inline-flex shrink-0 items-center rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm font-mono text-emerald-200 tabular-nums">
+                    {editingTrackedPurchase.dialCode ?? '+593'}
+                  </span>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    value={editingTrackedPurchase.localNumber ?? ''}
+                    onChange={(e) =>
+                      setEditingTrackedPurchase((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              localNumber: e.target.value.replace(/[^\d\s-]/g, ''),
+                            }
+                          : prev,
+                      )
+                    }
+                    placeholder="999999999"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white tabular-nums"
+                    autoComplete="tel-national"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-300">
+                  Precio de venta cobrado
+                </label>
+                <div className="flex gap-2">
+                  <span className="inline-flex shrink-0 items-center rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm font-semibold text-emerald-200 tabular-nums">
+                    {currencyInputPrefix(editingTrackedPurchase.currency)}
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={editingTrackedPurchase.precioVenta ?? ''}
+                    onChange={(e) =>
+                      setEditingTrackedPurchase((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              precioVenta: e.target.value.replace(/[^\d.,]/g, ''),
+                            }
+                          : prev,
+                      )
+                    }
+                    placeholder="Ej. 10.00"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white tabular-nums"
+                  />
+                </div>
+              </div>
+              {editTrackedErr ? (
+                <p className="m-0 text-xs text-red-300">{editTrackedErr}</p>
+              ) : null}
+            </div>
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={editTrackedSaving}
+                onClick={closeEditTrackedPurchase}
+                className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={editTrackedSaving}
+                onClick={() => void saveEditTrackedPurchase()}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {editTrackedSaving ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" aria-hidden />
+                    Guardando…
+                  </>
+                ) : (
+                  'Guardar cambios'
+                )}
+              </button>
             </div>
           </div>
         </div>

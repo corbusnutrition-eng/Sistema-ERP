@@ -90,6 +90,8 @@ from app.schemas.portal_public import (
     PortalSubClientUpdate,
     PortalTrackedPurchaseDeleteResponse,
     PortalTrackedPurchaseItem,
+    PortalTrackedPurchaseUpdate,
+    PortalTrackedPurchaseUpdateResponse,
     PortalWalletRechargeItem,
     ReceiptAnalysisResponse,
     SalePaymentEvent,
@@ -1713,6 +1715,7 @@ def portal_auto_purchase(
             quantity=int(payload.quantity),
             end_customer_name=payload.end_customer_name,
             end_customer_phone=payload.end_customer_phone,
+            precio_venta=payload.precio_venta,
         )
     except HTTPException:
         db.rollback()
@@ -1764,6 +1767,33 @@ def portal_delete_tracked_purchase(
         int(client.id),
         int(sale_id),
         screen_stock_id=screen_stock_id,
+    )
+
+
+@router.patch(
+    "/{portal_token}/tracked-purchases/{sale_id}",
+    response_model=PortalTrackedPurchaseUpdateResponse,
+    summary="Actualizar datos de cliente final en Mis compras",
+)
+def portal_update_tracked_purchase(
+    portal_token: uuid_pkg.UUID,
+    sale_id: int,
+    payload: PortalTrackedPurchaseUpdate,
+    db: DbDep,
+    screen_stock_id: Optional[int] = Query(
+        default=None,
+        ge=1,
+        description="Unidad de bodega de la fila; omitir si la compra aún no tiene pantalla.",
+    ),
+) -> PortalTrackedPurchaseUpdateResponse:
+    """Edita nombre, teléfono y precio cobrado de una compra con seguimiento."""
+    client = _portal_client_from_token(db, portal_token)
+    return _portal_update_tracked_purchase_for_client(
+        db,
+        int(client.id),
+        int(sale_id),
+        screen_stock_id=screen_stock_id,
+        payload=payload,
     )
 
 
@@ -2225,6 +2255,7 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
         if not ec_name:
             continue
         ec_phone = (sale.end_customer_phone or "").strip() or None
+        customer_fields = _portal_tracked_purchase_customer_fields(sale)
         purchase_dt = ensure_aware(sale.created_at)
         purchase_iso = isoformat_z(purchase_dt)
         screens = (
@@ -2251,6 +2282,7 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
                         end_customer_phone=ec_phone,
                         package_name=_portal_package_label_for_screen(db, stk, sale),
                         purchase_date=purchase_iso,
+                        **customer_fields,
                         **expiry,
                     )
                 )
@@ -2268,12 +2300,20 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
                         end_customer_phone=ec_phone,
                         package_name=pkg_label,
                         purchase_date=purchase_iso,
+                        **customer_fields,
                         **expiry,
                     )
                 )
 
     items.sort(key=lambda i: i.purchase_date, reverse=True)
     return items
+
+
+def _portal_tracked_purchase_customer_fields(sale: Sale) -> dict[str, object]:
+    price_raw = sale.end_customer_sale_price
+    precio_venta = float(price_raw) if price_raw is not None else None
+    cur = normalize_currency_code(str(getattr(sale, "currency", None) or "USD"))
+    return {"precio_venta": precio_venta, "currency": cur}
 
 
 def _portal_tracked_unit_keys_for_sale(db: Session, sale: Sale) -> set[int]:
@@ -2363,6 +2403,83 @@ def _portal_delete_tracked_purchase_for_client(
     return PortalTrackedPurchaseDeleteResponse(
         sale_id=int(sale.id),
         screen_stock_id=int(screen_stock_id) if screen_stock_id is not None else None,
+    )
+
+
+def _portal_update_tracked_purchase_for_client(
+    db: Session,
+    client_id: int,
+    sale_id: int,
+    *,
+    screen_stock_id: int | None,
+    payload: PortalTrackedPurchaseUpdate,
+) -> PortalTrackedPurchaseUpdateResponse:
+    """Actualiza nombre, teléfono y precio cobrado de un cliente final en «Mis compras»."""
+    sale = db.get(Sale, int(sale_id))
+    if sale is None or int(sale.client_id) != int(client_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Compra no encontrada.")
+    if not is_baas_wallet_auto_purchase_sale(sale):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta compra no admite seguimiento de cliente final.",
+        )
+    ec_name = (sale.end_customer_name or "").strip()
+    if not ec_name:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Esta compra ya no tiene cliente final registrado.",
+        )
+
+    tracked_rows = _portal_tracked_purchases_for_client(db, int(client_id))
+    target = next(
+        (
+            row
+            for row in tracked_rows
+            if int(row.sale_id) == int(sale_id)
+            and (
+                (row.screen_stock_id is None and screen_stock_id is None)
+                or (
+                    row.screen_stock_id is not None
+                    and screen_stock_id is not None
+                    and int(row.screen_stock_id) == int(screen_stock_id)
+                )
+            )
+        ),
+        None,
+    )
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Compra no encontrada.")
+
+    name = (payload.end_customer_name or "").strip()
+    if not name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ingresa el nombre del cliente o usuario.",
+        )
+    phone = (payload.end_customer_phone or "").strip() or None
+    if phone and len(phone) > 30:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El teléfono del cliente final es demasiado largo (máx. 30 caracteres).",
+        )
+
+    sale.end_customer_name = name
+    sale.end_customer_phone = phone
+    if payload.precio_venta is None:
+        sale.end_customer_sale_price = None
+    else:
+        sale.end_customer_sale_price = Decimal(str(round(float(payload.precio_venta), 4)))
+
+    commit_db_or_rollback(db)
+    db.refresh(sale)
+    customer_fields = _portal_tracked_purchase_customer_fields(sale)
+    return PortalTrackedPurchaseUpdateResponse(
+        sale_id=int(sale.id),
+        screen_stock_id=int(screen_stock_id) if screen_stock_id is not None else None,
+        end_customer_name=name,
+        end_customer_phone=phone,
+        precio_venta=customer_fields.get("precio_venta"),
+        currency=customer_fields.get("currency"),
     )
 
 

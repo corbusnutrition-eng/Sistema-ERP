@@ -195,6 +195,15 @@ class PortalTrackedPurchaseItem(BaseModel):
     )
     end_customer_name: str
     end_customer_phone: Optional[str] = None
+    precio_venta: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Precio cobrado al cliente final en moneda de la venta.",
+    )
+    currency: Optional[str] = Field(
+        default=None,
+        description="Moneda del precio cobrado (ISO 4217, ej. USD).",
+    )
     package_name: str
     purchase_date: str = Field(description="ISO 8601 (UTC/Z) de creación de la venta.")
     inventory_created_at: Optional[str] = Field(
@@ -315,6 +324,27 @@ class PortalTrackedPurchaseDeleteResponse(BaseModel):
         description="Unidad ocultada; null si la fila era sin pantalla asignada.",
     )
     message: str = "Cliente caducado eliminado de Mis compras."
+
+
+class PortalTrackedPurchaseUpdate(BaseModel):
+    end_customer_name: str = Field(..., min_length=1, max_length=200)
+    end_customer_phone: Optional[str] = Field(default=None, max_length=30)
+    precio_venta: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Precio cobrado al cliente final en moneda de la venta.",
+    )
+
+
+class PortalTrackedPurchaseUpdateResponse(BaseModel):
+    ok: bool = True
+    sale_id: int = Field(..., ge=1)
+    screen_stock_id: Optional[int] = None
+    end_customer_name: str
+    end_customer_phone: Optional[str] = None
+    precio_venta: Optional[float] = None
+    currency: Optional[str] = None
+    message: str = "Datos del cliente actualizados."
 
 
 class PortalSubClientPriceItem(BaseModel):

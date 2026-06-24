@@ -202,6 +202,7 @@ def execute_portal_auto_purchase(
     quantity: int = 1,
     end_customer_name: str | None = None,
     end_customer_phone: str | None = None,
+    precio_venta: float | None = None,
 ) -> PortalAutoPurchaseResponse:
     qty = int(quantity)
     if qty < 1 or qty > 200:
@@ -307,6 +308,21 @@ def execute_portal_auto_purchase(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El teléfono del cliente final es demasiado largo (máx. 30 caracteres).",
         )
+    ec_price: Decimal | None = None
+    if precio_venta is not None:
+        try:
+            price_f = float(precio_venta)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El precio de venta al cliente final no es válido.",
+            ) from None
+        if price_f < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El precio de venta al cliente final no puede ser negativo.",
+            )
+        ec_price = Decimal(str(round(price_f, 4)))
 
     try:
         sale = Sale(
@@ -334,6 +350,7 @@ def execute_portal_auto_purchase(
             notes=BAAS_WALLET_AUTO_PURCHASE_NOTE,
             end_customer_name=ec_name,
             end_customer_phone=ec_phone,
+            end_customer_sale_price=ec_price,
             invoice_lines=inv_base,
             allowed_payment_methods=None,
             allowed_deposit_accounts=None,

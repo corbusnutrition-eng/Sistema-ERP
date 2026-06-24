@@ -83,6 +83,8 @@ class Sale(Base):
     #: Cliente final registrado por el distribuidor en autocompra portal (mini-CRM «Mis compras»).
     end_customer_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     end_customer_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    #: Precio cobrado al cliente final en la moneda de la venta (mini-CRM «Mis compras»).
+    end_customer_sale_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4), nullable=True)
     #: Unidades ocultas del mini-CRM «Mis compras» (``screen_stock.id``; ``0`` = fila sin pantalla asignada).
     dismissed_tracked_screen_stock_ids: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
     #: full_credits | screen_stock cuando la venta se creó desde ERP (activación aplaza inventario).

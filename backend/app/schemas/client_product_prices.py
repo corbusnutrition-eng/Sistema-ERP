@@ -124,6 +124,11 @@ class PortalAutoPurchaseRequest(BaseModel):
         max_length=30,
         description="Teléfono del cliente final (seguimiento mini-CRM).",
     )
+    precio_venta: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Precio cobrado al cliente final en moneda de la billetera.",
+    )
 
 
 class PortalAutoPurchaseCredential(BaseModel):
