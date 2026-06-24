@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import uuid
+from datetime import date
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -26,6 +27,8 @@ from app.schemas.client import (
     ClientSubClientBrief,
     ClientUpdate,
 )
+from app.schemas.client_follow_up import ClientFollowUpItem, ClientFollowUpListResponse
+from app.services.client_follow_up_service import filter_follow_up_rows, list_client_normal_credit_follow_up
 from app.services.client_reseller_service import list_subclients_for_parent
 from app.schemas.client_payments import ClientLedgerResponse, LedgerEntry, LedgerRelatedDoc, UnpaidInvoiceOut
 from app.services.client_payment_service import (
@@ -222,6 +225,59 @@ def export_clients_csv(db: DbDep) -> StreamingResponse:
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=clientes.csv"},
     )
+
+
+@router.get(
+    "/follow-up",
+    response_model=ClientFollowUpListResponse,
+    summary="Seguimiento CRM: última compra de créditos normales por cliente",
+)
+def list_clients_follow_up(
+    db: DbDep,
+    search: Optional[str] = Query(
+        default=None,
+        description="Filtra por usuario, nombre, email o teléfono.",
+    ),
+    credits_min: Optional[float] = Query(default=None, ge=0),
+    credits_max: Optional[float] = Query(default=None, ge=0),
+    days_min: Optional[int] = Query(default=None, ge=0),
+    days_max: Optional[int] = Query(default=None, ge=0),
+    recharge_date_from: Optional[date] = Query(
+        default=None,
+        description="Fecha calendario Ecuador (inclusive) de la última recarga.",
+    ),
+    recharge_date_to: Optional[date] = Query(
+        default=None,
+        description="Fecha calendario Ecuador (inclusive) de la última recarga.",
+    ),
+) -> ClientFollowUpListResponse:
+    """
+    Clientes con historial de compras de **crédito normal** (excluye pantallas individuales
+    y autocompras BaaS). Por cliente devuelve solo la transacción más reciente qualifying.
+    """
+    try:
+        rows = list_client_normal_credit_follow_up(db)
+        filtered = filter_follow_up_rows(
+            rows,
+            search=search,
+            credits_min=credits_min,
+            credits_max=credits_max,
+            days_min=days_min,
+            days_max=days_max,
+            recharge_date_from=recharge_date_from,
+            recharge_date_to=recharge_date_to,
+        )
+        items = [ClientFollowUpItem.model_validate(r) for r in filtered]
+        return ClientFollowUpListResponse(items=items, total=len(items))
+    except (OperationalError, ProgrammingError) as exc:
+        logger.exception("GET /clients/follow-up — error de base de datos")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "No se pudo calcular el seguimiento de clientes. "
+                f"Causa: {getattr(exc, 'orig', exc)!s}"
+            ),
+        ) from exc
 
 
 @router.get(

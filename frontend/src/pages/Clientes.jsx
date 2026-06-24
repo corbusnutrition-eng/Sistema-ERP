@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import {
   UserPlus, Search, Pencil, Trash2, Mail, Phone, MessageSquare,
   X, Download, Upload, Users, RefreshCw, ClipboardList, Loader2, CheckCircle2, Globe,
-  Activity, Tag, Tags, ChevronDown, Check, Plus, Sparkles, CreditCard,
+  Activity, Tag, Tags, ChevronDown, Check, Plus, Sparkles, CreditCard, Clock, CalendarDays, Coins,
 } from 'lucide-react'
 import api from '../api/axios'
-import { fetchClientsList } from '../api/clients'
+import { fetchClientsList, fetchClientFollowUp } from '../api/clients'
 import ClientTimeline from '../features/clients/components/ClientTimeline'
 import ClientPaymentMethodsModal from '../features/clients/ClientPaymentMethodsModal'
 import { useModal } from '../context/ModalContext'
@@ -73,6 +73,43 @@ function formatShortDate(dateStr) {
   if (!dateStr) return null
   const s = formatShortDateEcuador(dateStr)
   return s === '—' ? null : s
+}
+
+/** Fecha calendario YYYY-MM-DD en horario Ecuador (filtros de seguimiento). */
+function ecuadorYmd(iso) {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Guayaquil' })
+  } catch {
+    return ''
+  }
+}
+
+const FOLLOW_UP_CREDITS_PRESETS = [
+  { value: 'all', label: 'Todos los créditos' },
+  { value: 'lt10', label: 'Menos de 10' },
+  { value: '10-50', label: '10 – 50' },
+  { value: 'gt50', label: 'Más de 50' },
+]
+
+const FOLLOW_UP_DAYS_PRESETS = [
+  { value: 'all', label: 'Cualquier antigüedad' },
+  { value: '7', label: 'Hace 7+ días' },
+  { value: '15', label: 'Hace 15+ días' },
+  { value: '30plus', label: 'Más de 30 días' },
+]
+
+function DaysSinceCell({ days }) {
+  const n = Number(days)
+  if (!Number.isFinite(n)) return <span className="text-gray-400 text-xs">—</span>
+  let cls = 'text-gray-700 bg-gray-50 ring-gray-200'
+  if (n > 30) cls = 'text-red-700 bg-red-50 ring-red-200 font-bold'
+  else if (n <= 7) cls = 'text-green-700 bg-green-50 ring-green-200 font-semibold'
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md px-2.5 py-0.5 text-xs tabular-nums ring-1 ${cls}`}>
+      {n} día{n !== 1 ? 's' : ''}
+    </span>
+  )
 }
 
 function clientParentBadge(c) {
@@ -1205,6 +1242,7 @@ function ClientTable({
   totalFiltered = 0,
   onPageChange,
   itemsPerPage = ITEMS_PER_PAGE,
+  hideSearch = false,
 }) {
   const totalPages = Math.max(1, Math.ceil(totalFiltered / itemsPerPage))
   const currentPage = Math.min(Math.max(1, page), totalPages)
@@ -1213,21 +1251,29 @@ function ClientTable({
 
   return (
     <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-        <div className="relative w-80">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-          <input
-            type="search"
-            placeholder="Buscar…"
-            value={search}
-            onChange={(e) => onSearch(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-          />
+      {!hideSearch ? (
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="relative w-80">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              type="search"
+              placeholder="Buscar…"
+              value={search}
+              onChange={(e) => onSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+            />
+          </div>
+          <span className="text-xs text-gray-400">
+            {loading ? '…' : `${totalFiltered} resultado${totalFiltered !== 1 ? 's' : ''}`}
+          </span>
         </div>
-        <span className="text-xs text-gray-400">
-          {loading ? '…' : `${totalFiltered} resultado${totalFiltered !== 1 ? 's' : ''}`}
-        </span>
-      </div>
+      ) : (
+        <div className="flex items-center justify-end px-6 py-3 border-b border-gray-100">
+          <span className="text-xs text-gray-400">
+            {loading ? '…' : `${totalFiltered} resultado${totalFiltered !== 1 ? 's' : ''}`}
+          </span>
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -1340,7 +1386,14 @@ export default function Clientes() {
   const [fetchError, setFetchError]         = useState(null)
   const [activeTab, setActiveTab]           = useState('register')
   const [searchReg, setSearchReg]           = useState('')
-  const [searchActive, setSearchActive]     = useState('')
+  const [followUpSearch, setFollowUpSearch] = useState('')
+  const [followUpCreditsPreset, setFollowUpCreditsPreset] = useState('all')
+  const [followUpDaysPreset, setFollowUpDaysPreset] = useState('all')
+  const [followUpDateFrom, setFollowUpDateFrom] = useState('')
+  const [followUpDateTo, setFollowUpDateTo] = useState('')
+  const [followUpRows, setFollowUpRows] = useState([])
+  const [followUpLoading, setFollowUpLoading] = useState(false)
+  const [followUpErr, setFollowUpErr] = useState(null)
   const [timelineClient, setTimelineClient]   = useState(null)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [selectedClient, setSelectedClient]   = useState(null)
@@ -1371,7 +1424,32 @@ export default function Clientes() {
 
   useEffect(() => {
     setActivePage(1)
-  }, [searchActive, activeTagFilters])
+  }, [
+    followUpSearch,
+    followUpCreditsPreset,
+    followUpDaysPreset,
+    followUpDateFrom,
+    followUpDateTo,
+  ])
+
+  const loadFollowUp = useCallback(async () => {
+    setFollowUpLoading(true)
+    setFollowUpErr(null)
+    try {
+      const items = await fetchClientFollowUp()
+      setFollowUpRows(Array.isArray(items) ? items : [])
+    } catch (err) {
+      console.error('Error cargando seguimiento:', err)
+      setFollowUpErr('No se pudo cargar el seguimiento de clientes.')
+      setFollowUpRows([])
+    } finally {
+      setFollowUpLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadFollowUp()
+  }, [loadFollowUp])
 
   // ── Fetch ──
   const fetchClientes = useCallback(async (opts = {}) => {
@@ -1421,6 +1499,7 @@ export default function Clientes() {
       setClientes((prev) => prev.filter((c) => c.id !== deleteTarget.id))
       setToast({ message: `Cliente "${clientDisplayLabel(deleteTarget)}" eliminado.`, type: 'success' })
       setDeleteTarget(null)
+      void loadFollowUp()
     } catch (err) {
       setToast({ message: err?.response?.data?.detail ?? 'Error al eliminar.', type: 'error' })
     } finally {
@@ -1490,6 +1569,7 @@ export default function Clientes() {
         type: 'success',
       })
       fetchClientes()
+      void loadFollowUp()
     } catch (err) {
       setToast({ message: err?.response?.data?.detail ?? 'Error al importar.', type: 'error' })
     } finally {
@@ -1504,41 +1584,69 @@ export default function Clientes() {
     return clientes.filter((c) => clientMatchesSearch(c, q))
   }, [clientes, searchReg])
 
-  const actives = useMemo(() => {
-    const q = searchActive.toLowerCase()
-    return clientes
-      .filter((c) => c.status === 'active')
-      .filter((c) =>
-        activeTagFilters.length === 0 ||
-        (c.tags ?? []).some((t) => activeTagFilters.includes(t)),
-      )
-      .filter((c) => clientMatchesSearch(c, q) || (c.tags ?? []).some((t) => t.toLowerCase().includes(q)))
-  }, [clientes, searchActive, activeTagFilters])
+  const filteredFollowUp = useMemo(() => {
+    const q = followUpSearch.trim().toLowerCase()
+    return followUpRows.filter((row) => {
+      if (q) {
+        const hit =
+          String(row.username ?? '').toLowerCase().includes(q)
+          || String(row.name ?? '').toLowerCase().includes(q)
+          || String(row.email ?? '').toLowerCase().includes(q)
+          || String(row.phone ?? '').toLowerCase().includes(q)
+        if (!hit) return false
+      }
+      const credits = Number(row.last_recharge_credits) || 0
+      if (followUpCreditsPreset === 'lt10' && !(credits < 10)) return false
+      if (followUpCreditsPreset === '10-50' && !(credits >= 10 && credits <= 50)) return false
+      if (followUpCreditsPreset === 'gt50' && !(credits > 50)) return false
+      const days = Number(row.days_since_last_recharge) || 0
+      if (followUpDaysPreset === '7' && days < 7) return false
+      if (followUpDaysPreset === '15' && days < 15) return false
+      if (followUpDaysPreset === '30plus' && days <= 30) return false
+      const ymd = ecuadorYmd(row.last_recharge_date)
+      if (followUpDateFrom && ymd && ymd < followUpDateFrom) return false
+      if (followUpDateTo && ymd && ymd > followUpDateTo) return false
+      if ((followUpDateFrom || followUpDateTo) && !ymd) return false
+      return true
+    })
+  }, [
+    followUpRows,
+    followUpSearch,
+    followUpCreditsPreset,
+    followUpDaysPreset,
+    followUpDateFrom,
+    followUpDateTo,
+  ])
 
   const registerTotalPages = Math.max(1, Math.ceil(registered.length / ITEMS_PER_PAGE))
-  const activeTotalPages = Math.max(1, Math.ceil(actives.length / ITEMS_PER_PAGE))
+  const followUpTotalPages = Math.max(1, Math.ceil(filteredFollowUp.length / ITEMS_PER_PAGE))
 
   useEffect(() => {
     setRegisterPage((p) => Math.min(p, registerTotalPages))
   }, [registerTotalPages])
 
   useEffect(() => {
-    setActivePage((p) => Math.min(p, activeTotalPages))
-  }, [activeTotalPages])
+    setActivePage((p) => Math.min(p, followUpTotalPages))
+  }, [followUpTotalPages])
 
   const registeredPageRows = useMemo(() => {
     const start = (registerPage - 1) * ITEMS_PER_PAGE
     return registered.slice(start, start + ITEMS_PER_PAGE)
   }, [registered, registerPage])
 
-  const activesPageRows = useMemo(() => {
+  const followUpPageRows = useMemo(() => {
     const start = (activePage - 1) * ITEMS_PER_PAGE
-    return actives.slice(start, start + ITEMS_PER_PAGE)
-  }, [actives, activePage])
+    return filteredFollowUp.slice(start, start + ITEMS_PER_PAGE)
+  }, [filteredFollowUp, activePage])
+
+  const resolveClientForActions = useCallback(
+    (row) => clientes.find((c) => Number(c.id) === Number(row.id)) || row,
+    [clientes],
+  )
 
   const tabCounts = {
     register: clientes.length,
-    active:   clientes.filter((c) => c.status === 'active').length,
+    active: followUpRows.length,
   }
 
   // ── Columna acciones ──
@@ -1692,6 +1800,62 @@ export default function Clientes() {
     actionsCol,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [actionsCol, handleUpdateCliente, handleInlineStatusChange])
+
+  const followUpColumns = useMemo(() => [
+    {
+      key: 'identity',
+      header: 'Usuario / Nombre',
+      render: (row) => (
+        <div className="min-w-0 max-w-[220px]">
+          <p className="text-sm font-semibold text-gray-900 truncate" title={row.username}>
+            {row.username || '—'}
+          </p>
+          <p className="text-xs text-gray-500 truncate mt-0.5" title={row.name || ''}>
+            {row.name || 'Sin nombre'}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'phone',
+      header: 'Teléfono',
+      render: (row) => (
+        <WhatsAppButton phone={row.phone} name={row.name || row.username || 'cliente'} />
+      ),
+    },
+    {
+      key: 'last_credits',
+      header: 'Última recarga',
+      render: (row) => <CreditsBadge value={row.last_recharge_credits} />,
+    },
+    {
+      key: 'last_date',
+      header: 'Fecha',
+      render: (row) => {
+        const label = formatShortDate(row.last_recharge_date)
+        if (!label) return <span className="text-gray-400 text-xs">—</span>
+        return (
+          <span className="inline-flex items-center gap-1 text-xs text-gray-600">
+            <CalendarDays size={12} className="text-gray-400 shrink-0" />
+            {label}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'days_since',
+      header: 'Días transcurridos',
+      render: (row) => <DaysSinceCell days={row.days_since_last_recharge} />,
+    },
+    {
+      key: '_actions',
+      header: 'Acciones',
+      render: (row) => {
+        const c = resolveClientForActions(row)
+        return actionsCol.render(c)
+      },
+    },
+  ], [actionsCol, resolveClientForActions])
 
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1886,61 +2050,125 @@ export default function Clientes() {
           </div>
         )}
 
-        {/* ── Tab 2: Seguimiento ── */}
+        {/* ── Tab 2: Seguimiento (créditos normales) ── */}
         {activeTab === 'active' && (
           <div className="space-y-4">
-            <div className="space-y-2">
+            <div className="space-y-3">
               <p className="text-sm text-gray-500">
-                Clientes con al menos una compra — seguimiento activo y recarga.
+                Retención: clientes con compras de <strong className="font-medium text-gray-700">crédito normal</strong>
+                {' '}(excluye pantallas y recargas BaaS). Muestra la última transacción qualifying por cliente.
               </p>
 
-              {activeTagFilters.length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap py-2 px-3 bg-blue-50 rounded-xl ring-1 ring-blue-100">
-                  <span className="text-xs font-semibold text-blue-600 shrink-0">Filtros activos:</span>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {activeTagFilters.map((tagName) => {
-                      const gt = globalTags.find((g) => g.name === tagName)
-                      const i  = globalTags.findIndex((g) => g.name === tagName)
-                      return (
-                        <span
-                          key={tagName}
-                          className={`inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-xs font-medium ring-1 ${tagChipCls(gt, i)}`}
-                        >
-                          <Tag size={9} />{tagName}
-                          <button
-                            type="button"
-                            onClick={() => toggleTagFilter(tagName)}
-                            className="ml-0.5 rounded-full p-0.5 opacity-60 hover:opacity-100 hover:bg-black/10 transition-opacity"
-                            title={`Quitar filtro "${tagName}"`}
-                          >
-                            <X size={9} />
-                          </button>
-                        </span>
-                      )
-                    })}
+              <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+                <label className="flex flex-col gap-1 min-w-[12rem] flex-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                    Buscar
+                  </span>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    <input
+                      type="search"
+                      value={followUpSearch}
+                      onChange={(e) => setFollowUpSearch(e.target.value)}
+                      placeholder="Usuario o nombre…"
+                      className="w-full pl-8 pr-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                    />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTagFilters([])}
-                    className="ml-auto text-xs text-blue-400 hover:text-blue-600 transition-colors shrink-0"
+                </label>
+
+                <label className="flex flex-col gap-1 min-w-[9rem]">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                    Créditos
+                  </span>
+                  <select
+                    value={followUpCreditsPreset}
+                    onChange={(e) => setFollowUpCreditsPreset(e.target.value)}
+                    className="text-sm py-1.5 px-2 rounded-lg border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                   >
-                    Limpiar todo
-                  </button>
-                </div>
-              )}
+                    {FOLLOW_UP_CREDITS_PRESETS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 min-w-[9rem]">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                    Días transcurridos
+                  </span>
+                  <select
+                    value={followUpDaysPreset}
+                    onChange={(e) => setFollowUpDaysPreset(e.target.value)}
+                    className="text-sm py-1.5 px-2 rounded-lg border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  >
+                    {FOLLOW_UP_DAYS_PRESETS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 min-w-[9rem]">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                    Fecha desde
+                  </span>
+                  <input
+                    type="date"
+                    value={followUpDateFrom}
+                    onChange={(e) => setFollowUpDateFrom(e.target.value)}
+                    className="text-sm py-1.5 px-2 rounded-lg border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1 min-w-[9rem]">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                    Fecha hasta
+                  </span>
+                  <input
+                    type="date"
+                    value={followUpDateTo}
+                    onChange={(e) => setFollowUpDateTo(e.target.value)}
+                    className="text-sm py-1.5 px-2 rounded-lg border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFollowUpSearch('')
+                    setFollowUpCreditsPreset('all')
+                    setFollowUpDaysPreset('all')
+                    setFollowUpDateFrom('')
+                    setFollowUpDateTo('')
+                  }}
+                  className="text-sm py-1.5 px-3 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Limpiar filtros
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void loadFollowUp()}
+                  disabled={followUpLoading}
+                  className="inline-flex items-center gap-1.5 text-sm py-1.5 px-3 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                >
+                  <RefreshCw size={14} className={followUpLoading ? 'animate-spin' : ''} />
+                  Actualizar
+                </button>
+              </div>
             </div>
+
             <ClientTable
-              rows={activesPageRows}
-              loading={loading}
-              fetchError={fetchError}
-              emptyIcon={Users}
-              emptyText="Ningún cliente ha realizado compras todavía."
-              columns={mainColumns}
-              search={searchActive}
-              onSearch={setSearchActive}
+              rows={followUpPageRows}
+              loading={followUpLoading || loading}
+              fetchError={followUpErr || fetchError}
+              emptyIcon={Activity}
+              emptyText="Ningún cliente con compras de crédito normal registradas."
+              columns={followUpColumns}
+              search={followUpSearch}
+              onSearch={setFollowUpSearch}
+              hideSearch
               onRowClick={(c) => navigate(`/clientes/${c.id}`)}
               page={activePage}
-              totalFiltered={actives.length}
+              totalFiltered={filteredFollowUp.length}
               onPageChange={setActivePage}
               itemsPerPage={ITEMS_PER_PAGE}
             />

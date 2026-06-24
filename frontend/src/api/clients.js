@@ -35,3 +35,15 @@ export async function fetchClientsList(opts = {}) {
   }
   return all
 }
+
+/**
+ * Seguimiento CRM: clientes con última compra de créditos normales.
+ *
+ * @param {Record<string, string|number|undefined>} [params] Query opcional (search, credits_min, …).
+ */
+export async function fetchClientFollowUp(params = {}) {
+  const { data } = await api.get('/api/v1/clients/follow-up', { params })
+  if (Array.isArray(data?.items)) return data.items
+  if (Array.isArray(data)) return data
+  return []
+}
