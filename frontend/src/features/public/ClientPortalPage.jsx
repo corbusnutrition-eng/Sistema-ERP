@@ -7932,7 +7932,7 @@ function ClientPortalPageInner() {
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold text-slate-300">
-                    Precio de venta sugerido/cobrado
+                    Precio de venta
                   </label>
                   <div className="flex gap-2">
                     <span className="inline-flex shrink-0 items-center rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm font-semibold text-emerald-200 tabular-nums">
