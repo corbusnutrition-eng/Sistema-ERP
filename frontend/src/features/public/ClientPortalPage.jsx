@@ -465,14 +465,17 @@ function SubClientMobileActionCards({
   ]
 
   return (
-    <div className="border-t border-gray-700/50 pt-3 mt-1">
+    <div className="border-t border-gray-700/50 bg-slate-900/30 px-1 pt-3 md:px-0">
       <div className="grid grid-cols-5 gap-1.5">
         {cards.map(({ key, title, sub, color, Icon, onClick, disabled, extraClass }) => (
           <button
             key={key}
             type="button"
             disabled={disabled}
-            onClick={onClick}
+            onClick={(e) => {
+              e.stopPropagation()
+              onClick?.()
+            }}
             className={`${MOBILE_ACTION_CARD_BASE} ${extraClass}`}
             aria-label={`${title} — ${name}`}
             title={sub}
@@ -1747,6 +1750,7 @@ function ClientPortalPageInner() {
   const [currentPage, setCurrentPage] = useState(1)
   const [activeFilter, setActiveFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
+  const [expandedClientId, setExpandedClientId] = useState(null)
   const [deletingSubClientId, setDeletingSubClientId] = useState(null)
   const [copiedClientId, setCopiedClientId] = useState(null)
   const copySubClientLinkTimerRef = useRef(null)
@@ -3202,7 +3206,12 @@ function ClientPortalPageInner() {
 
   useEffect(() => {
     setCurrentPage(1)
+    setExpandedClientId(null)
   }, [activeFilter, searchTerm])
+
+  useEffect(() => {
+    setExpandedClientId(null)
+  }, [currentPage])
 
   useEffect(() => {
     setMisComprasPage(1)
@@ -5883,8 +5892,7 @@ function ClientPortalPageInner() {
                         <tr className="border-b border-slate-600/40 bg-slate-950/60 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400 md:text-[11px]">
                           <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Cliente</th>
                           <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Usuario</th>
-                          <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Saldo</th>
-                          <th className="hidden w-1/4 px-4 py-2 text-left md:table-cell">Acciones</th>
+                          <th className="w-1/3 px-1 py-1.5 text-left md:w-2/4 md:px-4 md:py-2">Saldo</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-700/40">
@@ -5898,9 +5906,24 @@ function ClientPortalPageInner() {
                             .toUpperCase()
                             .slice(0, 10)
                           const portalUrl = clientPortalPublicUrl(sc?.portal_token)
+                          const isExpanded = expandedClientId === sid
+                          const toggleExpanded = () =>
+                            setExpandedClientId((prev) => (prev === sid ? null : sid))
                           return (
                             <Fragment key={`sc-${sid}`}>
-                              <tr className="bg-slate-950/35 hover:bg-slate-900/50">
+                              <tr
+                                role="button"
+                                tabIndex={0}
+                                aria-expanded={isExpanded}
+                                onClick={toggleExpanded}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault()
+                                    toggleExpanded()
+                                  }
+                                }}
+                                className="cursor-pointer bg-slate-950/35 transition-colors hover:bg-white/5"
+                              >
                                 <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
                                   <span className="block break-words font-semibold leading-snug text-slate-50" title={label}>
                                     {label}
@@ -5914,42 +5937,54 @@ function ClientPortalPageInner() {
                                     {user}
                                   </span>
                                 </td>
-                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
-                                  <span
-                                    className="inline-flex rounded-md border border-green-700 bg-green-900/30 px-2 py-1 text-[10px] font-bold tabular-nums text-green-400 md:border-0 md:bg-transparent md:p-0 md:text-sm md:font-semibold md:text-fuchsia-100"
-                                  >
-                                    {formatMoney(bal, scCur)}
-                                  </span>
-                                </td>
-                                <td className="hidden align-top px-4 py-2 text-left md:table-cell">
-                                  <SubClientActionsCell
-                                    subclient={sc}
-                                    portalUrl={portalUrl}
-                                    copiedClientId={copiedClientId}
-                                    onCopyLink={handleCopySubClientPortalLink}
-                                    onTransfer={openTransferModal}
-                                    onPrices={openPricesModal}
-                                    onEdit={openEditSubClientModal}
-                                    onDelete={openDeleteSubClientModal}
-                                    deleting={deletingSubClientId === sid}
-                                  />
+                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-2/4 md:px-4 md:py-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span
+                                      className="inline-flex rounded-md border border-green-700 bg-green-900/30 px-2 py-1 text-[10px] font-bold tabular-nums text-green-400 md:border-0 md:bg-transparent md:p-0 md:text-sm md:font-semibold md:text-fuchsia-100"
+                                    >
+                                      {formatMoney(bal, scCur)}
+                                    </span>
+                                    <ChevronDown
+                                      aria-hidden
+                                      size={18}
+                                      strokeWidth={2.25}
+                                      className={`shrink-0 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                                    />
+                                  </div>
                                 </td>
                               </tr>
-                              <tr className="bg-slate-950/35 md:hidden">
-                                <td colSpan={3} className="px-2 pb-3 pt-0">
-                                  <SubClientMobileActionCards
-                                    subclient={sc}
-                                    portalUrl={portalUrl}
-                                    copiedClientId={copiedClientId}
-                                    onCopyLink={handleCopySubClientPortalLink}
-                                    onTransfer={openTransferModal}
-                                    onPrices={openPricesModal}
-                                    onEdit={openEditSubClientModal}
-                                    onDelete={openDeleteSubClientModal}
-                                    deleting={deletingSubClientId === sid}
-                                  />
-                                </td>
-                              </tr>
+                              {isExpanded ? (
+                                <tr className="bg-slate-950/25">
+                                  <td colSpan={3} className="px-2 pb-3 pt-0 md:px-4">
+                                    <div className="md:hidden">
+                                      <SubClientMobileActionCards
+                                        subclient={sc}
+                                        portalUrl={portalUrl}
+                                        copiedClientId={copiedClientId}
+                                        onCopyLink={handleCopySubClientPortalLink}
+                                        onTransfer={openTransferModal}
+                                        onPrices={openPricesModal}
+                                        onEdit={openEditSubClientModal}
+                                        onDelete={openDeleteSubClientModal}
+                                        deleting={deletingSubClientId === sid}
+                                      />
+                                    </div>
+                                    <div className="hidden border-t border-slate-700/40 pt-3 md:block">
+                                      <SubClientActionsCell
+                                        subclient={sc}
+                                        portalUrl={portalUrl}
+                                        copiedClientId={copiedClientId}
+                                        onCopyLink={handleCopySubClientPortalLink}
+                                        onTransfer={openTransferModal}
+                                        onPrices={openPricesModal}
+                                        onEdit={openEditSubClientModal}
+                                        onDelete={openDeleteSubClientModal}
+                                        deleting={deletingSubClientId === sid}
+                                      />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
                             </Fragment>
                           )
                         })}
