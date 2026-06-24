@@ -229,6 +229,134 @@ function resolveTrackedPurchaseDaysRemaining(item, referenceDate = new Date()) {
   return typeof days === 'number' && Number.isFinite(days) ? days : null
 }
 
+function trackedPurchaseCardKey(item) {
+  return `tracked-${item?.sale_id}-${item?.screen_stock_id ?? 'pending'}`
+}
+
+/** Resumen compacto de vencimiento para la cabecera de la tarjeta. */
+function TrackedPurchaseExpirySummary({ item }) {
+  const now = usePortalNowTicker(60000)
+  const days = useMemo(() => resolveTrackedPurchaseDaysRemaining(item, now), [item, now])
+
+  if (days == null) {
+    return <span className="text-[11px] font-medium text-slate-400">Sin vencimiento</span>
+  }
+  if (days <= 0) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-red-500">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden />
+        Expirado
+      </span>
+    )
+  }
+  const colorClass = days > 3 ? 'text-green-500' : 'text-orange-500'
+  const dotClass = days > 3 ? 'bg-green-500' : 'bg-orange-500'
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-bold tabular-nums ${colorClass}`}>
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${dotClass}`} aria-hidden />
+      Faltan: {days} días
+    </span>
+  )
+}
+
+/** Tarjeta colapsable de una compra rastreada en «Mis compras». */
+function TrackedPurchaseCard({ item, expanded, onToggle }) {
+  const customerName = String(item?.end_customer_name ?? '').trim() || '—'
+  const customerPhone = String(item?.end_customer_phone ?? '').trim()
+  const pkg = String(item?.package_name ?? 'Pantalla').trim() || 'Pantalla'
+  const purchaseLabel = formatPortalAssignedAt(item?.purchase_date)
+  const cardId = trackedPurchaseCardKey(item)
+
+  return (
+    <li className="overflow-hidden rounded-xl border border-emerald-500/25 bg-slate-950/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <button
+        type="button"
+        id={`${cardId}-hdr`}
+        aria-expanded={expanded}
+        aria-controls={`${cardId}-body`}
+        onClick={onToggle}
+        className="flex w-full cursor-pointer touch-manipulation items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.06]"
+      >
+        <div className="min-w-0 flex-1">
+          <p className="m-0 text-[10px] font-semibold uppercase tracking-wide text-emerald-200/70">
+            Cliente final
+          </p>
+          <p className="mt-0.5 mb-0 truncate text-sm font-bold text-slate-50">{customerName}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <TrackedPurchaseExpirySummary item={item} />
+          <ChevronDown
+            size={18}
+            strokeWidth={2.25}
+            aria-hidden
+            className={`shrink-0 text-slate-400 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          />
+        </div>
+      </button>
+      {expanded ? (
+        <div
+          id={`${cardId}-body`}
+          role="region"
+          aria-labelledby={`${cardId}-hdr`}
+          className="border-t border-slate-600/35 bg-slate-900/45 px-4 pb-4 pt-3"
+        >
+          {customerPhone ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-300 tabular-nums">
+                {formatPortalContactPhoneDisplay(customerPhone)}
+              </span>
+              <a
+                href={`https://wa.me/${whatsappDigits(customerPhone)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-950/40 px-2 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-900/50"
+                title="Escribir por WhatsApp"
+              >
+                <Phone size={12} aria-hidden />
+                WhatsApp
+              </a>
+              <a
+                href={`tel:${customerPhone.replace(/\s/g, '')}`}
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-500/40 bg-slate-900/60 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:bg-slate-800/70"
+                title="Llamar"
+              >
+                Llamar
+              </a>
+            </div>
+          ) : null}
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <div>
+              <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Producto
+              </p>
+              <p className="mt-0.5 mb-0 text-sm font-semibold text-violet-100">{pkg}</p>
+            </div>
+            <div>
+              <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Fecha de compra
+              </p>
+              <p className="mt-0.5 mb-0 text-sm text-slate-200">{purchaseLabel || '—'}</p>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+              FAC-{String(item?.sale_id ?? '').padStart(4, '0')}
+            </span>
+          </div>
+          <div className="mt-3 rounded-lg border border-slate-600/35 bg-slate-950/60 px-3 py-2">
+            <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Vencimiento
+            </p>
+            <TrackedPurchaseExpiryBlock item={item} />
+          </div>
+        </div>
+      ) : null}
+    </li>
+  )
+}
+
 /** Vencimiento en tarjeta «Mis compras» — misma lógica que Inventario IPTV. */
 function TrackedPurchaseExpiryBlock({ item }) {
   const now = usePortalNowTicker(60000)
@@ -1646,6 +1774,8 @@ function ClientPortalPageInner() {
   const [trackedPurchasesLoading, setTrackedPurchasesLoading] = useState(false)
   const [trackedPurchasesErr, setTrackedPurchasesErr] = useState(null)
   const [activeTab, setActiveTab] = useState('todos')
+  const [misComprasPage, setMisComprasPage] = useState(1)
+  const [expandedMisComprasKey, setExpandedMisComprasKey] = useState(null)
   const [accordionDebtOpen, setAccordionDebtOpen] = useState(true)
   const [accordionOrdersOpen, setAccordionOrdersOpen] = useState(true)
   const [copyFlashKey, setCopyFlashKey] = useState(null)
@@ -3067,6 +3197,18 @@ function ClientPortalPageInner() {
     })
   }, [trackedPurchases, activeTab, misComprasNow])
 
+  const MIS_COMPRAS_ITEMS_PER_PAGE = 5
+
+  const totalMisComprasPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredTrackedPurchases.length / MIS_COMPRAS_ITEMS_PER_PAGE)),
+    [filteredTrackedPurchases.length],
+  )
+
+  const paginatedMisCompras = useMemo(() => {
+    const start = (misComprasPage - 1) * MIS_COMPRAS_ITEMS_PER_PAGE
+    return filteredTrackedPurchases.slice(start, start + MIS_COMPRAS_ITEMS_PER_PAGE)
+  }, [filteredTrackedPurchases, misComprasPage])
+
   const latestActiveScreen = useMemo(
     () => (activeScreens.length > 0 ? activeScreens[0] : null),
     [activeScreens],
@@ -3105,6 +3247,15 @@ function ClientPortalPageInner() {
   useEffect(() => {
     setCurrentPage(1)
   }, [activeFilter, searchTerm])
+
+  useEffect(() => {
+    setMisComprasPage(1)
+    setExpandedMisComprasKey(null)
+  }, [activeTab])
+
+  useEffect(() => {
+    setMisComprasPage((p) => Math.min(p, totalMisComprasPages))
+  }, [totalMisComprasPages])
 
   const handleCopyScreenField = useCallback(async (text, flashKey) => {
     const ok = await copyPortalText(text)
@@ -5608,77 +5759,48 @@ function ClientPortalPageInner() {
                           : 'No hay compras para mostrar.'}
                     </p>
                   ) : (
+                <>
                 <ul className="m-0 list-none space-y-3 p-0">
-                  {filteredTrackedPurchases.map((item) => {
-                    const key = `tracked-${item?.sale_id}-${item?.screen_stock_id ?? 'pending'}`
-                    const customerName = String(item?.end_customer_name ?? '').trim() || '—'
-                    const customerPhone = String(item?.end_customer_phone ?? '').trim()
-                    const pkg = String(item?.package_name ?? 'Pantalla').trim() || 'Pantalla'
-                    const purchaseLabel = formatPortalAssignedAt(item?.purchase_date)
+                  {paginatedMisCompras.map((item) => {
+                    const key = trackedPurchaseCardKey(item)
                     return (
-                      <li
+                      <TrackedPurchaseCard
                         key={key}
-                        className="rounded-xl border border-emerald-500/25 bg-slate-950/75 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-200/75">
-                              Cliente final
-                            </p>
-                            <p className="mt-1 mb-0 text-sm font-bold text-slate-50">{customerName}</p>
-                            {customerPhone ? (
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <span className="text-xs text-slate-300 tabular-nums">
-                                  {formatPortalContactPhoneDisplay(customerPhone)}
-                                </span>
-                                <a
-                                  href={`https://wa.me/${whatsappDigits(customerPhone)}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-950/40 px-2 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-900/50"
-                                  title="Escribir por WhatsApp"
-                                >
-                                  <Phone size={12} aria-hidden />
-                                  WhatsApp
-                                </a>
-                                <a
-                                  href={`tel:${customerPhone.replace(/\s/g, '')}`}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-500/40 bg-slate-900/60 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:bg-slate-800/70"
-                                  title="Llamar"
-                                >
-                                  Llamar
-                                </a>
-                              </div>
-                            ) : null}
-                          </div>
-                          <span className="shrink-0 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                            FAC-{String(item?.sale_id ?? '').padStart(4, '0')}
-                          </span>
-                        </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <div>
-                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                              Producto
-                            </p>
-                            <p className="mt-0.5 mb-0 text-sm font-semibold text-violet-100">{pkg}</p>
-                          </div>
-                          <div>
-                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                              Fecha de compra
-                            </p>
-                            <p className="mt-0.5 mb-0 text-sm text-slate-200">{purchaseLabel || '—'}</p>
-                          </div>
-                        </div>
-                        <div className="mt-3 rounded-lg border border-slate-600/35 bg-slate-900/50 px-3 py-2">
-                          <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                            Vencimiento
-                          </p>
-                          <TrackedPurchaseExpiryBlock item={item} />
-                        </div>
-                      </li>
+                        item={item}
+                        expanded={expandedMisComprasKey === key}
+                        onToggle={() =>
+                          setExpandedMisComprasKey((prev) => (prev === key ? null : key))
+                        }
+                      />
                     )
                   })}
                 </ul>
+                {totalMisComprasPages > 1 ? (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 pt-4">
+                    <button
+                      type="button"
+                      disabled={misComprasPage <= 1}
+                      onClick={() => setMisComprasPage((p) => Math.max(1, p - 1))}
+                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Anterior
+                    </button>
+                    <span className="text-xs font-medium text-slate-300 tabular-nums">
+                      Página {misComprasPage} de {totalMisComprasPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={misComprasPage >= totalMisComprasPages}
+                      onClick={() =>
+                        setMisComprasPage((p) => Math.min(totalMisComprasPages, p + 1))
+                      }
+                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                ) : null}
+                </>
                   )}
                 </>
               )}
