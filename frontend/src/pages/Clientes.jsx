@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   UserPlus, Search, Pencil, Trash2, Mail, Phone, MessageSquare,
-  X, Download, Upload, Users, Star, RefreshCw, ClipboardList, Loader2, CheckCircle2, Globe,
+  X, Download, Upload, Users, RefreshCw, ClipboardList, Loader2, CheckCircle2, Globe,
   Activity, Tag, Tags, ChevronDown, Check, Plus, Sparkles, CreditCard,
 } from 'lucide-react'
 import api from '../api/axios'
@@ -41,7 +41,6 @@ const ITEMS_PER_PAGE = 10
 
 const TABS = [
   { id: 'register', label: 'Registro de Clientes',    icon: ClipboardList },
-  { id: 'leads',    label: 'Clientes Potenciales',     icon: Star          },
   { id: 'active',   label: 'Seguimiento de Clientes',  icon: Activity      },
 ]
 
@@ -1341,7 +1340,6 @@ export default function Clientes() {
   const [fetchError, setFetchError]         = useState(null)
   const [activeTab, setActiveTab]           = useState('register')
   const [searchReg, setSearchReg]           = useState('')
-  const [searchLeads, setSearchLeads]       = useState('')
   const [searchActive, setSearchActive]     = useState('')
   const [timelineClient, setTimelineClient]   = useState(null)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
@@ -1365,16 +1363,11 @@ export default function Clientes() {
   }, [])
 
   const [registerPage, setRegisterPage] = useState(1)
-  const [leadsPage, setLeadsPage] = useState(1)
   const [activePage, setActivePage] = useState(1)
 
   useEffect(() => {
     setRegisterPage(1)
   }, [searchReg])
-
-  useEffect(() => {
-    setLeadsPage(1)
-  }, [searchLeads])
 
   useEffect(() => {
     setActivePage(1)
@@ -1511,13 +1504,6 @@ export default function Clientes() {
     return clientes.filter((c) => clientMatchesSearch(c, q))
   }, [clientes, searchReg])
 
-  const leads = useMemo(() => {
-    const q = searchLeads.toLowerCase()
-    return clientes
-      .filter((c) => c.status === 'lead')
-      .filter((c) => clientMatchesSearch(c, q) || (c.lead_source ?? '').toLowerCase().includes(q))
-  }, [clientes, searchLeads])
-
   const actives = useMemo(() => {
     const q = searchActive.toLowerCase()
     return clientes
@@ -1530,16 +1516,11 @@ export default function Clientes() {
   }, [clientes, searchActive, activeTagFilters])
 
   const registerTotalPages = Math.max(1, Math.ceil(registered.length / ITEMS_PER_PAGE))
-  const leadsTotalPages = Math.max(1, Math.ceil(leads.length / ITEMS_PER_PAGE))
   const activeTotalPages = Math.max(1, Math.ceil(actives.length / ITEMS_PER_PAGE))
 
   useEffect(() => {
     setRegisterPage((p) => Math.min(p, registerTotalPages))
   }, [registerTotalPages])
-
-  useEffect(() => {
-    setLeadsPage((p) => Math.min(p, leadsTotalPages))
-  }, [leadsTotalPages])
 
   useEffect(() => {
     setActivePage((p) => Math.min(p, activeTotalPages))
@@ -1550,11 +1531,6 @@ export default function Clientes() {
     return registered.slice(start, start + ITEMS_PER_PAGE)
   }, [registered, registerPage])
 
-  const leadsPageRows = useMemo(() => {
-    const start = (leadsPage - 1) * ITEMS_PER_PAGE
-    return leads.slice(start, start + ITEMS_PER_PAGE)
-  }, [leads, leadsPage])
-
   const activesPageRows = useMemo(() => {
     const start = (activePage - 1) * ITEMS_PER_PAGE
     return actives.slice(start, start + ITEMS_PER_PAGE)
@@ -1562,7 +1538,6 @@ export default function Clientes() {
 
   const tabCounts = {
     register: clientes.length,
-    leads:    clientes.filter((c) => c.status === 'lead').length,
     active:   clientes.filter((c) => c.status === 'active').length,
   }
 
@@ -1911,31 +1886,7 @@ export default function Clientes() {
           </div>
         )}
 
-        {/* ── Tab 2: Clientes Potenciales ── */}
-        {activeTab === 'leads' && (
-          <div className="space-y-4">
-            <p className="text-sm text-gray-500">
-              Leads captados desde la página web — aún no han comprado.
-            </p>
-            <ClientTable
-              rows={leadsPageRows}
-              loading={loading}
-              fetchError={fetchError}
-              emptyIcon={Star}
-              emptyText="No hay clientes potenciales registrados."
-              columns={mainColumns}
-              search={searchLeads}
-              onSearch={setSearchLeads}
-              onRowClick={(c) => navigate(`/clientes/${c.id}`)}
-              page={leadsPage}
-              totalFiltered={leads.length}
-              onPageChange={setLeadsPage}
-              itemsPerPage={ITEMS_PER_PAGE}
-            />
-          </div>
-        )}
-
-        {/* ── Tab 3: Seguimiento ── */}
+        {/* ── Tab 2: Seguimiento ── */}
         {activeTab === 'active' && (
           <div className="space-y-4">
             <div className="space-y-2">
