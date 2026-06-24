@@ -2,7 +2,13 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, ChevronDown, ChevronsUp, Copy, Loader2, Link2, Pencil, Phone, Plus, Search, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, Search, Tag, Trash2, X } from 'lucide-react'
+import PortalAccordionSortableList from './PortalAccordionSortableList'
+import {
+  filterVisiblePortalAccordionOrder,
+  loadPortalAccordionOrder,
+  savePortalAccordionOrder,
+} from './portalAccordionOrder'
 import { formatDateTimeEcuador } from '../../utils/datetime'
 import { clientPortalPublicUrl } from '../sales/saleTableHelpers'
 import {
@@ -1545,6 +1551,8 @@ function PortalNeoAccordion({
   onToggle,
   accent = 'violet',
   children,
+  sortableDragHandleProps,
+  isSortableDragging = false,
 }) {
   const presets = {
     violet: {
@@ -1575,7 +1583,9 @@ function PortalNeoAccordion({
   const p = presets[accent] ?? presets.violet
 
   return (
-    <section className={`${PORTAL_SECTION_SHELL_CLASS} relative mb-4 overflow-hidden rounded-[20px] transition-all duration-300 md:mb-6 md:rounded-[22px] ${p.wrap}`}>
+    <section
+      className={`${PORTAL_SECTION_SHELL_CLASS} relative mb-4 overflow-hidden rounded-[20px] transition-all duration-300 md:mb-6 md:rounded-[22px] ${p.wrap} ${isSortableDragging ? 'ring-1 ring-cyan-400/35' : ''}`}
+    >
       <div aria-hidden className={`pointer-events-none absolute inset-0 rounded-[inherit] opacity-95 ${p.wash}`} />
       <button
         type="button"
@@ -1604,6 +1614,18 @@ function PortalNeoAccordion({
             ) : (
               headerAside
             )
+          ) : null}
+          {sortableDragHandleProps ? (
+            <button
+              type="button"
+              aria-label="Arrastrar para reordenar sección"
+              title="Mantén presionado para mover"
+              className="touch-none shrink-0 rounded-md border border-white/10 bg-white/5 p-1 text-slate-400 transition hover:bg-white/10 hover:text-slate-200 active:cursor-grabbing"
+              {...sortableDragHandleProps}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <GripVertical size={16} strokeWidth={2.25} aria-hidden />
+            </button>
           ) : null}
           <ChevronDown
             aria-hidden
@@ -4891,6 +4913,27 @@ function ClientPortalPageInner() {
   /** Formularios de nuevos pedidos visibles cuando hay elementos en esta sección (sin selector previo). */
   const showNewOrderForms = hasNewOrders && isDirectLineClient
 
+  const [accordionSectionOrder, setAccordionSectionOrder] = useState(() =>
+    loadPortalAccordionOrder(token),
+  )
+
+  useEffect(() => {
+    setAccordionSectionOrder(loadPortalAccordionOrder(token))
+  }, [token])
+
+  const handleAccordionSectionOrderChange = useCallback(
+    (nextOrder) => {
+      setAccordionSectionOrder(nextOrder)
+      savePortalAccordionOrder(token, nextOrder)
+    },
+    [token],
+  )
+
+  const visibleAccordionSectionOrder = useMemo(
+    () => filterVisiblePortalAccordionOrder(accordionSectionOrder, { isDirectLineClient }),
+    [accordionSectionOrder, isDirectLineClient],
+  )
+
   // ── Debt payment form helper ───────────────────────────────────────────────
   const debtFormCard = (title = 'Subir comprobante de abono') => {
     const obligationReady = Boolean(currentDebtPayObligation)
@@ -5288,7 +5331,32 @@ function ClientPortalPageInner() {
 
         <MiniDashboard metrics={data?.dashboard_metrics} />
 
+        {showCxcDebtBanner ? (
+          <div
+            role="alert"
+            className="mb-3 w-full min-w-0 rounded-2xl border-2 border-red-500 px-3 py-4 text-center shadow-[0_0_28px_rgba(239,68,68,0.45)] md:mb-4 md:px-4"
+            style={{
+              background: 'linear-gradient(180deg, rgba(127,29,29,0.95) 0%, rgba(69,10,10,0.98) 100%)',
+            }}
+          >
+            <p className="m-0 text-[15px] font-extrabold leading-snug tracking-wide text-red-50 sm:text-base">
+              ⚠️ TIENES UN SALDO PENDIENTE DE {formatMoney(cxcTotalAmount, cxcTotalCurrency)}
+            </p>
+            <p className="m-0 mt-2 text-[12px] font-medium leading-relaxed text-red-100/95 sm:text-[13px]">
+              Tu cuenta tiene facturas con pagos parciales o fallidos. Regulariza tu saldo para evitar la
+              suspensión del servicio.
+            </p>
+          </div>
+        ) : null}
+
+        <PortalAccordionSortableList
+          order={visibleAccordionSectionOrder}
+          onOrderChange={handleAccordionSectionOrderChange}
+          sections={{
+            notifications: ({ dragHandleProps, isDragging }) => (
         <PortalNeoAccordion
+          sortableDragHandleProps={dragHandleProps}
+          isSortableDragging={isDragging}
           sectionId="portal-acc-notifications"
           title="📬 MIS NOTIFICACIONES"
           headerAside={notificationsAccordionAside}
@@ -5417,25 +5485,11 @@ function ClientPortalPageInner() {
             </div>
           ) : null}
         </PortalNeoAccordion>
-        {showCxcDebtBanner ? (
-          <div
-            role="alert"
-            className="mb-3 w-full min-w-0 rounded-2xl border-2 border-red-500 px-3 py-4 text-center shadow-[0_0_28px_rgba(239,68,68,0.45)] md:mb-4 md:px-4"
-            style={{
-              background: 'linear-gradient(180deg, rgba(127,29,29,0.95) 0%, rgba(69,10,10,0.98) 100%)',
-            }}
-          >
-            <p className="m-0 text-[15px] font-extrabold leading-snug tracking-wide text-red-50 sm:text-base">
-              ⚠️ TIENES UN SALDO PENDIENTE DE {formatMoney(cxcTotalAmount, cxcTotalCurrency)}
-            </p>
-            <p className="m-0 mt-2 text-[12px] font-medium leading-relaxed text-red-100/95 sm:text-[13px]">
-              Tu cuenta tiene facturas con pagos parciales o fallidos. Regulariza tu saldo para evitar la
-              suspensión del servicio.
-            </p>
-          </div>
-        ) : null}
-        {isDirectLineClient ? (
+            ),
+            'new-orders': ({ dragHandleProps, isDragging }) => (
         <PortalNeoAccordion
+          sortableDragHandleProps={dragHandleProps}
+          isSortableDragging={isDragging}
           sectionId="portal-acc-orders"
           title="NUEVOS PEDIDOS PARA PAGO"
           subtitle="Pedidos y recargas con saldo pendiente (incluye abonos parciales con saldo a favor)"
@@ -6728,8 +6782,11 @@ function ClientPortalPageInner() {
 
         </div>
         </PortalNeoAccordion>
-        ) : null}
+            ),
+            wallet: ({ dragHandleProps, isDragging }) => (
         <PortalNeoAccordion
+          sortableDragHandleProps={dragHandleProps}
+          isSortableDragging={isDragging}
           sectionId="portal-acc-baas"
           title="MI BILLETERA"
           headerAside={walletAccordionAside || '—'}
@@ -7023,7 +7080,11 @@ function ClientPortalPageInner() {
             )
           ) : null}
         </PortalNeoAccordion>
+            ),
+            'tracked-purchases': ({ dragHandleProps, isDragging }) => (
         <PortalNeoAccordion
+          sortableDragHandleProps={dragHandleProps}
+          isSortableDragging={isDragging}
           sectionId="portal-acc-tracked-purchases"
           title="MIS COMPRAS"
           subtitle="Seguimiento de clientes finales y vencimiento de pantallas"
@@ -7174,7 +7235,11 @@ function ClientPortalPageInner() {
             </div>
           ) : null}
         </PortalNeoAccordion>
+            ),
+            'reseller-network': ({ dragHandleProps, isDragging }) => (
         <PortalNeoAccordion
+          sortableDragHandleProps={dragHandleProps}
+          isSortableDragging={isDragging}
           sectionId="portal-acc-reseller-network"
           title="MI RED DE DISTRIBUIDORES"
           subtitle="Crea sub-clientes, transfiere saldo BaaS y asigna precios"
@@ -7409,7 +7474,11 @@ function ClientPortalPageInner() {
             </div>
           ) : null}
         </PortalNeoAccordion>
+            ),
+            'active-screens': ({ dragHandleProps, isDragging }) => (
         <PortalNeoAccordion
+          sortableDragHandleProps={dragHandleProps}
+          isSortableDragging={isDragging}
           sectionId="portal-acc-active-screens"
           title="MIS PANTALLAS ACTIVAS"
           subtitle="Credenciales de tus compras ya activadas"
@@ -7530,6 +7599,9 @@ function ClientPortalPageInner() {
             </div>
           ) : null}
         </PortalNeoAccordion>
+            ),
+          }}
+        />
         {showSaldoAFavorCard ? (
         <section
           aria-label="Saldo a favor"
