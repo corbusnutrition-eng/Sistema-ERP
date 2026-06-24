@@ -4743,16 +4743,15 @@ function ClientPortalPageInner() {
             href={`https://wa.me/${whatsappDigits(parentContactPhone)}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="mb-3 inline-flex max-w-[min(100%,22rem)] items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-900/40 px-2.5 py-1.5 text-xs font-medium text-indigo-200 shadow-[0_4px_14px_rgba(0,0,0,0.22)] backdrop-blur-sm transition-colors hover:bg-indigo-800/60 md:absolute md:left-0 md:top-0 md:z-20 md:mb-0"
+            className="mb-3 inline-flex max-w-[min(100%,22rem)] flex-col items-start justify-center rounded-lg border border-indigo-500/40 bg-indigo-900/40 px-2.5 py-1.5 shadow-[0_4px_14px_rgba(0,0,0,0.22)] backdrop-blur-sm transition-colors hover:bg-indigo-800/60 md:absolute md:left-0 md:top-0 md:z-20 md:mb-0"
             title={`WhatsApp: ${formatPortalContactPhoneDisplay(parentContactPhone)}`}
           >
-            {PORTAL_WA_SVG}
-            <span className="min-w-0 truncate leading-tight">
-              <span className="font-semibold">Contacto</span>
-              <span className="mx-1 text-indigo-400/70" aria-hidden>•</span>
-              <span className="tabular-nums text-indigo-100/95">
-                {formatPortalContactPhoneDisplay(parentContactPhone)}
-              </span>
+            <div className="flex flex-row items-center gap-1.5">
+              {PORTAL_WA_SVG}
+              <span className="text-xs font-bold text-indigo-200">Contacto</span>
+            </div>
+            <span className="mt-0.5 text-[10px] tracking-wide tabular-nums text-indigo-300">
+              {formatPortalContactPhoneDisplay(parentContactPhone)}
             </span>
           </a>
         ) : null}
