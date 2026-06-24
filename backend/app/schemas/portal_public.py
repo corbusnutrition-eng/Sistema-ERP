@@ -185,6 +185,29 @@ class DebtPaymentItem(BaseModel):
     notes: Optional[str] = None
 
 
+class PortalTrackedPurchaseItem(BaseModel):
+    """Compra BaaS con seguimiento de cliente final (mini-CRM «Mis compras»)."""
+
+    sale_id: int = Field(..., ge=1)
+    screen_stock_id: Optional[int] = Field(
+        default=None,
+        description="Unidad de bodega asignada; null si la venta aún no tiene pantalla.",
+    )
+    end_customer_name: str
+    end_customer_phone: Optional[str] = None
+    package_name: str
+    purchase_date: str = Field(description="ISO 8601 (UTC/Z) de creación de la venta.")
+    expiration_date: Optional[str] = Field(
+        default=None,
+        description="Fecha de vencimiento ISO (YYYY-MM-DD) desde inventario.",
+    )
+    days_until_expiration: Optional[int] = Field(
+        default=None,
+        description="Días restantes hasta vencimiento (negativo si ya expiró).",
+    )
+    expired: bool = False
+
+
 class PortalActiveScreen(BaseModel):
     """Pantalla de bodega asignada a una venta activada del cliente (portal público)."""
 

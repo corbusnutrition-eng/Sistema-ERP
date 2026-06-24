@@ -80,6 +80,9 @@ class Sale(Base):
         index=True,
     )
     notes: Mapped[Optional[str]] = mapped_column(String(4000), nullable=True)
+    #: Cliente final registrado por el distribuidor en autocompra portal (mini-CRM «Mis compras»).
+    end_customer_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    end_customer_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     #: full_credits | screen_stock cuando la venta se creó desde ERP (activación aplaza inventario).
     inventory_channel: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     #: Paquete de bodega (screen_stock).

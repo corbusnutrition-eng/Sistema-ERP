@@ -114,6 +114,16 @@ class AdminClientPackagePricesUpsertResponse(BaseModel):
 class PortalAutoPurchaseRequest(BaseModel):
     package_catalog_id: int = Field(..., ge=1)
     quantity: int = Field(default=1, ge=1, le=200)
+    end_customer_name: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Nombre del cliente final (seguimiento mini-CRM).",
+    )
+    end_customer_phone: Optional[str] = Field(
+        default=None,
+        max_length=30,
+        description="Teléfono del cliente final (seguimiento mini-CRM).",
+    )
 
 
 class PortalAutoPurchaseCredential(BaseModel):

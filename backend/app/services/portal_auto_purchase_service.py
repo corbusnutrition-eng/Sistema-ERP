@@ -200,6 +200,8 @@ def execute_portal_auto_purchase(
     client: Client,
     package_catalog_id: int,
     quantity: int = 1,
+    end_customer_name: str | None = None,
+    end_customer_phone: str | None = None,
 ) -> PortalAutoPurchaseResponse:
     qty = int(quantity)
     if qty < 1 or qty > 200:
@@ -293,6 +295,19 @@ def execute_portal_auto_purchase(
     message = "Solicitud enviada, en espera de asignación de pantalla."
     creds_missing = False
 
+    ec_name = (end_customer_name or "").strip() or None
+    ec_phone = (end_customer_phone or "").strip() or None
+    if ec_name and len(ec_name) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El nombre del cliente final es demasiado largo (máx. 200 caracteres).",
+        )
+    if ec_phone and len(ec_phone) > 30:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El teléfono del cliente final es demasiado largo (máx. 30 caracteres).",
+        )
+
     try:
         sale = Sale(
             client_id=int(client.id),
@@ -317,6 +332,8 @@ def execute_portal_auto_purchase(
             payment_method_id=None,
             deposit_account_id=None,
             notes=BAAS_WALLET_AUTO_PURCHASE_NOTE,
+            end_customer_name=ec_name,
+            end_customer_phone=ec_phone,
             invoice_lines=inv_base,
             allowed_payment_methods=None,
             allowed_deposit_accounts=None,

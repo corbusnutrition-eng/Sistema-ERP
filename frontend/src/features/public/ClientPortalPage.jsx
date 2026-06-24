@@ -205,6 +205,35 @@ function formatPortalScreenExpiry(isoDate) {
   }
 }
 
+/** Etiqueta de vencimiento para «Mis compras» (días restantes o fecha; verde/rojo). */
+function formatTrackedPurchaseExpiry(item) {
+  const days = item?.days_until_expiration
+  const expired = Boolean(item?.expired)
+  const dateLabel = formatPortalScreenExpiry(item?.expiration_date)
+  if (typeof days === 'number' && Number.isFinite(days)) {
+    if (expired || days < 0) {
+      const abs = Math.abs(days)
+      return {
+        text: abs === 0 ? 'Venció hoy' : `Expiró hace ${abs} día${abs === 1 ? '' : 's'}`,
+        tone: 'expired',
+        dateLabel,
+      }
+    }
+    if (days === 0) {
+      return { text: 'Vence hoy', tone: 'warning', dateLabel }
+    }
+    return {
+      text: `Faltan ${days} día${days === 1 ? '' : 's'}`,
+      tone: 'active',
+      dateLabel,
+    }
+  }
+  if (dateLabel) {
+    return { text: dateLabel, tone: expired ? 'expired' : 'neutral', dateLabel }
+  }
+  return { text: 'Sin vencimiento en inventario', tone: 'neutral', dateLabel: null }
+}
+
 function formatPortalAssignedAt(iso) {
   const raw = String(iso ?? '').trim()
   if (!raw) return null
@@ -1567,6 +1596,10 @@ function ClientPortalPageInner() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false)
   const [isActiveScreensOpen, setIsActiveScreensOpen] = useState(false)
   const [activeScreensPage, setActiveScreensPage] = useState(1)
+  const [isTrackedPurchasesOpen, setIsTrackedPurchasesOpen] = useState(false)
+  const [trackedPurchases, setTrackedPurchases] = useState([])
+  const [trackedPurchasesLoading, setTrackedPurchasesLoading] = useState(false)
+  const [trackedPurchasesErr, setTrackedPurchasesErr] = useState(null)
   const [accordionDebtOpen, setAccordionDebtOpen] = useState(true)
   const [accordionOrdersOpen, setAccordionOrdersOpen] = useState(true)
   const [copyFlashKey, setCopyFlashKey] = useState(null)
@@ -1709,6 +1742,24 @@ function ClientPortalPageInner() {
       setAutoPurchaseProducts([])
     } finally {
       setAutoPurchaseLoading(false)
+    }
+  }, [api, token])
+
+  const loadTrackedPurchases = useCallback(async () => {
+    if (!token) return
+    setTrackedPurchasesLoading(true)
+    setTrackedPurchasesErr(null)
+    try {
+      const { data: rows } = await api.get(
+        `/api/v1/portal/${encodeURIComponent(token)}/tracked-purchases`,
+      )
+      setTrackedPurchases(Array.isArray(rows) ? rows : [])
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      setTrackedPurchasesErr(typeof d === 'string' ? d : 'No se pudieron cargar tus compras con seguimiento.')
+      setTrackedPurchases([])
+    } finally {
+      setTrackedPurchasesLoading(false)
     }
   }, [api, token])
 
@@ -2171,24 +2222,53 @@ function ClientPortalPageInner() {
     [api, token],
   )
 
-  const executeConfirmedAutoPurchase = useCallback(async () => {
+  const executeConfirmedAutoPurchase = useCallback(async (options = {}) => {
     const pending = confirmingPurchase
     if (!pending || !token) return
     const pkgId = Number(pending.packageCatalogId)
     const qty = Math.max(1, Math.min(200, parseInt(String(pending.quantity ?? 1), 10) || 1))
     if (!Number.isFinite(pkgId)) return
 
+    const withTracking = !options.noTracking && pending.step === 'tracking'
+    let endCustomerName = null
+    let endCustomerPhone = null
+    if (withTracking) {
+      endCustomerName = String(pending.endCustomerName ?? '').trim()
+      endCustomerPhone = mergePhoneParts(
+        pending.endCustomerDialCode ?? '+593',
+        pending.endCustomerLocalNumber ?? '',
+      )
+      if (!endCustomerName) {
+        setConfirmingPurchase((prev) =>
+          prev ? { ...prev, trackingErr: 'Ingresa el nombre del cliente o usuario.' } : prev,
+        )
+        return
+      }
+      if (!endCustomerPhone || endCustomerPhone.length < 10) {
+        setConfirmingPurchase((prev) =>
+          prev ? { ...prev, trackingErr: 'Ingresa un número de teléfono válido.' } : prev,
+        )
+        return
+      }
+    }
+
     setAutoPurchaseBusyId(pkgId)
     setAutoPurchaseFeedback(null)
     try {
+      const payload = { package_catalog_id: pkgId, quantity: qty }
+      if (withTracking) {
+        payload.end_customer_name = endCustomerName
+        payload.end_customer_phone = endCustomerPhone
+      }
       const { data: res } = await api.post(
         `/api/v1/portal/${encodeURIComponent(token)}/auto-purchase`,
-        { package_catalog_id: pkgId, quantity: qty },
+        payload,
       )
       setConfirmingPurchase(null)
       setAutoPurchaseFeedback(normalizeAutoPurchaseFeedback(res))
       await loadPortal()
       await loadAutoPurchaseCatalog()
+      if (isTrackedPurchasesOpen) await loadTrackedPurchases()
     } catch (err) {
       const d = err?.response?.data?.detail
       setConfirmingPurchase(null)
@@ -2199,7 +2279,15 @@ function ClientPortalPageInner() {
     } finally {
       setAutoPurchaseBusyId(null)
     }
-  }, [api, token, loadPortal, loadAutoPurchaseCatalog, confirmingPurchase])
+  }, [
+    api,
+    token,
+    loadPortal,
+    loadAutoPurchaseCatalog,
+    confirmingPurchase,
+    isTrackedPurchasesOpen,
+    loadTrackedPurchases,
+  ])
 
   useEffect(() => {
     loadPortal()
@@ -2227,6 +2315,12 @@ function ClientPortalPageInner() {
     void loadSubClients()
     return undefined
   }, [isResellerNetworkOpen, token, loadSubClients])
+
+  useEffect(() => {
+    if (!isTrackedPurchasesOpen || !token) return undefined
+    void loadTrackedPurchases()
+    return undefined
+  }, [isTrackedPurchasesOpen, token, loadTrackedPurchases])
 
   useEffect(() => {
     if (loading || !data) return undefined
@@ -5106,6 +5200,11 @@ function ClientPortalPageInner() {
                                       unitPrice,
                                       totalPrice: lineTotal,
                                       currency: cur,
+                                      step: 'choose',
+                                      endCustomerName: '',
+                                      endCustomerDialCode: '+593',
+                                      endCustomerLocalNumber: '',
+                                      trackingErr: null,
                                     })
                                   }
                                   className={
@@ -5332,6 +5431,135 @@ function ClientPortalPageInner() {
                     </div>
                   ) : null}
                 </>
+              )}
+            </div>
+          ) : null}
+        </PortalNeoAccordion>
+
+        <PortalNeoAccordion
+          sectionId="portal-acc-tracked-purchases"
+          title="MIS COMPRAS"
+          subtitle="Seguimiento de clientes finales y vencimiento de pantallas"
+          headerAside={
+            trackedPurchases.length > 0 ? (
+              <span
+                className="inline-flex min-h-[1.75rem] min-w-[1.75rem] items-center justify-center rounded-full border border-emerald-300/45 bg-emerald-500/20 px-2 text-xs font-extrabold tabular-nums text-emerald-50 shadow-[0_0_12px_rgba(52,211,153,0.25)]"
+                title={`${trackedPurchases.length} compra${trackedPurchases.length === 1 ? '' : 's'} con seguimiento`}
+              >
+                {trackedPurchases.length}
+              </span>
+            ) : (
+              '0'
+            )
+          }
+          accent="emerald"
+          expanded={isTrackedPurchasesOpen}
+          onToggle={() => {
+            setIsTrackedPurchasesOpen((o) => {
+              const next = !o
+              if (next) void loadTrackedPurchases()
+              return next
+            })
+          }}
+        >
+          {isTrackedPurchasesOpen ? (
+            <div className="space-y-3">
+              {trackedPurchasesLoading ? (
+                <p className="m-0 flex items-center gap-2 text-sm text-slate-300">
+                  <Loader2 size={16} className="animate-spin" />
+                  Cargando compras…
+                </p>
+              ) : trackedPurchasesErr ? (
+                <p className="m-0 text-sm text-red-200">{trackedPurchasesErr}</p>
+              ) : trackedPurchases.length === 0 ? (
+                <p className="m-0 text-sm text-slate-400/85">
+                  Aún no tienes compras con seguimiento de cliente. Al confirmar una compra, elige
+                  «Comprar con seguimiento al cliente» para registrar nombre y teléfono.
+                </p>
+              ) : (
+                <ul className="m-0 list-none space-y-3 p-0">
+                  {trackedPurchases.map((item) => {
+                    const key = `tracked-${item?.sale_id}-${item?.screen_stock_id ?? 'pending'}`
+                    const customerName = String(item?.end_customer_name ?? '').trim() || '—'
+                    const customerPhone = String(item?.end_customer_phone ?? '').trim()
+                    const pkg = String(item?.package_name ?? 'Pantalla').trim() || 'Pantalla'
+                    const purchaseLabel = formatPortalAssignedAt(item?.purchase_date)
+                    const expiry = formatTrackedPurchaseExpiry(item)
+                    const expiryClass =
+                      expiry.tone === 'expired'
+                        ? 'text-red-300 font-bold'
+                        : expiry.tone === 'active'
+                          ? 'text-emerald-300 font-bold'
+                          : expiry.tone === 'warning'
+                            ? 'text-amber-300 font-bold'
+                            : 'text-slate-300'
+                    return (
+                      <li
+                        key={key}
+                        className="rounded-xl border border-emerald-500/25 bg-slate-950/75 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-emerald-200/75">
+                              Cliente final
+                            </p>
+                            <p className="mt-1 mb-0 text-sm font-bold text-slate-50">{customerName}</p>
+                            {customerPhone ? (
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <span className="text-xs text-slate-300 tabular-nums">
+                                  {formatPortalContactPhoneDisplay(customerPhone)}
+                                </span>
+                                <a
+                                  href={`https://wa.me/${whatsappDigits(customerPhone)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/35 bg-emerald-950/40 px-2 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-900/50"
+                                  title="Escribir por WhatsApp"
+                                >
+                                  <Phone size={12} aria-hidden />
+                                  WhatsApp
+                                </a>
+                                <a
+                                  href={`tel:${customerPhone.replace(/\s/g, '')}`}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-500/40 bg-slate-900/60 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:bg-slate-800/70"
+                                  title="Llamar"
+                                >
+                                  Llamar
+                                </a>
+                              </div>
+                            ) : null}
+                          </div>
+                          <span className="shrink-0 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                            FAC-{String(item?.sale_id ?? '').padStart(4, '0')}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          <div>
+                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              Producto
+                            </p>
+                            <p className="mt-0.5 mb-0 text-sm font-semibold text-violet-100">{pkg}</p>
+                          </div>
+                          <div>
+                            <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              Fecha de compra
+                            </p>
+                            <p className="mt-0.5 mb-0 text-sm text-slate-200">{purchaseLabel || '—'}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded-lg border border-slate-600/35 bg-slate-900/50 px-3 py-2">
+                          <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                            Vencimiento
+                          </p>
+                          <p className={`mt-0.5 mb-0 text-sm ${expiryClass}`}>{expiry.text}</p>
+                          {expiry.dateLabel && expiry.tone !== 'neutral' ? (
+                            <p className="mt-1 mb-0 text-xs text-slate-400">Fecha: {expiry.dateLabel}</p>
+                          ) : null}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
               )}
             </div>
           ) : null}
@@ -7166,6 +7394,92 @@ function ClientPortalPageInner() {
             <p className="mt-3 mb-0 text-xs leading-relaxed text-amber-200/85">
               Este valor se descontará automáticamente de tu Billetera BaaS.
             </p>
+            {confirmingPurchase.step === 'tracking' ? (
+              <div className="mt-5 space-y-3 rounded-xl border border-violet-400/25 bg-slate-950/60 p-4">
+                <p className="m-0 text-xs font-semibold uppercase tracking-wide text-violet-200/80">
+                  Datos del cliente final
+                </p>
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-300">
+                    Nombre del cliente o usuario
+                  </label>
+                  <input
+                    type="text"
+                    value={confirmingPurchase.endCustomerName ?? ''}
+                    onChange={(e) =>
+                      setConfirmingPurchase((prev) =>
+                        prev
+                          ? { ...prev, endCustomerName: e.target.value, trackingErr: null }
+                          : prev,
+                      )
+                    }
+                    placeholder="Ej. Juan Pérez"
+                    className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2.5 text-sm text-white"
+                    autoComplete="name"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-300">
+                    Número de teléfono
+                  </label>
+                  <div className="mb-2">
+                    <Select
+                      options={phoneCountryOptions}
+                      value={
+                        phoneCountryOptions.find(
+                          (o) => o.value === (confirmingPurchase.endCustomerDialCode ?? '+593'),
+                        ) ?? phoneCountryOptions[0]
+                      }
+                      onChange={(opt) =>
+                        setConfirmingPurchase((prev) =>
+                          prev
+                            ? { ...prev, endCustomerDialCode: opt?.value ?? '+593', trackingErr: null }
+                            : prev,
+                        )
+                      }
+                      isSearchable
+                      filterOption={(option, input) => {
+                        const q = String(input || '').trim().toLowerCase()
+                        if (!q) return true
+                        const hay = String(option.searchText ?? option.label ?? '').toLowerCase()
+                        return hay.includes(q)
+                      }}
+                      styles={portalPaymentMethodSelectStyles}
+                      placeholder="Buscar país…"
+                      className="text-sm"
+                      classNamePrefix="portal-track-phone-country"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="inline-flex shrink-0 items-center rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm font-mono text-violet-200 tabular-nums">
+                      {confirmingPurchase.endCustomerDialCode ?? '+593'}
+                    </span>
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      value={confirmingPurchase.endCustomerLocalNumber ?? ''}
+                      onChange={(e) =>
+                        setConfirmingPurchase((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                endCustomerLocalNumber: e.target.value.replace(/[^\d\s-]/g, ''),
+                                trackingErr: null,
+                              }
+                            : prev,
+                        )
+                      }
+                      placeholder="999999999"
+                      className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white tabular-nums"
+                      autoComplete="tel-national"
+                    />
+                  </div>
+                </div>
+                {confirmingPurchase.trackingErr ? (
+                  <p className="m-0 text-xs text-red-300">{confirmingPurchase.trackingErr}</p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
@@ -7175,14 +7489,51 @@ function ClientPortalPageInner() {
               >
                 Cancelar
               </button>
-              <button
-                type="button"
-                disabled={autoPurchaseBusyId != null}
-                onClick={() => void executeConfirmedAutoPurchase()}
-                className="rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:from-violet-400 hover:to-fuchsia-400"
-              >
-                {autoPurchaseBusyId != null ? 'Procesando…' : 'Sí, confirmar compra'}
-              </button>
+              {confirmingPurchase.step === 'tracking' ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={autoPurchaseBusyId != null}
+                    onClick={() =>
+                      setConfirmingPurchase((prev) =>
+                        prev ? { ...prev, step: 'choose', trackingErr: null } : prev,
+                      )
+                    }
+                    className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    type="button"
+                    disabled={autoPurchaseBusyId != null}
+                    onClick={() => void executeConfirmedAutoPurchase()}
+                    className="rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:from-violet-400 hover:to-fuchsia-400"
+                  >
+                    {autoPurchaseBusyId != null ? 'Procesando…' : 'Confirmar compra y guardar cliente'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={autoPurchaseBusyId != null}
+                    onClick={() =>
+                      setConfirmingPurchase((prev) => (prev ? { ...prev, step: 'tracking' } : prev))
+                    }
+                    className="rounded-xl border border-violet-400/45 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-100 transition-colors hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Comprar con seguimiento al cliente
+                  </button>
+                  <button
+                    type="button"
+                    disabled={autoPurchaseBusyId != null}
+                    onClick={() => void executeConfirmedAutoPurchase({ noTracking: true })}
+                    className="rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:from-violet-400 hover:to-fuchsia-400"
+                  >
+                    {autoPurchaseBusyId != null ? 'Procesando…' : 'Comprar sin seguimiento'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

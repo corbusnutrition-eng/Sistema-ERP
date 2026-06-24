@@ -37,7 +37,11 @@ from app.api.v1.distributors import (
     _linked_matches_pm,
     _matched_accounts_for_payment_methods,
 )
-from app.services.sale_accounting_sync import commit_db_or_rollback, sync_sale_accounting_ledgers
+from app.services.sale_accounting_sync import (
+    commit_db_or_rollback,
+    is_baas_wallet_auto_purchase_sale,
+    sync_sale_accounting_ledgers,
+)
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.models.account import Account
@@ -84,6 +88,7 @@ from app.schemas.portal_public import (
     PortalSubClientTransferRequest,
     PortalSubClientTransferResponse,
     PortalSubClientUpdate,
+    PortalTrackedPurchaseItem,
     PortalWalletRechargeItem,
     ReceiptAnalysisResponse,
     SalePaymentEvent,
@@ -1705,6 +1710,8 @@ def portal_auto_purchase(
             client=client,
             package_catalog_id=int(payload.package_catalog_id),
             quantity=int(payload.quantity),
+            end_customer_name=payload.end_customer_name,
+            end_customer_phone=payload.end_customer_phone,
         )
     except HTTPException:
         db.rollback()
@@ -1721,6 +1728,17 @@ def portal_auto_purchase(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"No se pudo completar la compra: {exc}",
         ) from exc
+
+
+@router.get(
+    "/{portal_token}/tracked-purchases",
+    response_model=list[PortalTrackedPurchaseItem],
+    summary="Compras con seguimiento de cliente final (mini-CRM)",
+)
+def portal_tracked_purchases(portal_token: uuid_pkg.UUID, db: DbDep) -> list[PortalTrackedPurchaseItem]:
+    """Lista pantallas compradas con cliente final registrado y vencimiento desde inventario."""
+    client = _portal_client_from_token(db, portal_token)
+    return _portal_tracked_purchases_for_client(db, int(client.id))
 
 
 async def _portal_wallet_recharge_submit_abono_manual_review(
@@ -2099,6 +2117,84 @@ def _portal_active_screens_for_client(db: Session, client_id: int) -> list[Porta
         )
     staged.sort(key=lambda t: (t[0], t[1]), reverse=True)
     return [item[2] for item in staged]
+
+
+def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[PortalTrackedPurchaseItem]:
+    """
+    Compras BaaS del distribuidor con cliente final registrado (mini-CRM «Mis compras»).
+    Una fila por unidad de bodega asignada; ventas sin pantalla aún generan una fila sin vencimiento.
+    """
+    from datetime import date
+
+    sales = (
+        db.query(Sale)
+        .filter(
+            Sale.client_id == int(client_id),
+            Sale.end_customer_name.isnot(None),
+            func.trim(Sale.end_customer_name) != "",
+        )
+        .order_by(Sale.created_at.desc(), Sale.id.desc())
+        .all()
+    )
+    today: date = now_ecuador().date()
+    items: list[PortalTrackedPurchaseItem] = []
+
+    for sale in sales:
+        if not is_baas_wallet_auto_purchase_sale(sale):
+            continue
+        ec_name = (sale.end_customer_name or "").strip()
+        if not ec_name:
+            continue
+        ec_phone = (sale.end_customer_phone or "").strip() or None
+        purchase_dt = ensure_aware(sale.created_at)
+        purchase_iso = isoformat_z(purchase_dt)
+        screens = (
+            db.query(ScreenStock)
+            .filter(ScreenStock.sale_id == int(sale.id))
+            .order_by(ScreenStock.id.asc())
+            .all()
+        )
+        if screens:
+            for stk in screens:
+                exp = stk.expiration_date
+                exp_s = exp.isoformat() if exp is not None else None
+                days_left: int | None = None
+                expired = False
+                if exp is not None:
+                    days_left = (exp - today).days
+                    expired = days_left < 0
+                items.append(
+                    PortalTrackedPurchaseItem(
+                        sale_id=int(sale.id),
+                        screen_stock_id=int(stk.id),
+                        end_customer_name=ec_name,
+                        end_customer_phone=ec_phone,
+                        package_name=_portal_package_label_for_screen(db, stk, sale),
+                        purchase_date=purchase_iso,
+                        expiration_date=exp_s,
+                        days_until_expiration=days_left,
+                        expired=expired,
+                    )
+                )
+        else:
+            pkg_raw = (sale.inventory_package or "").strip()
+            pkg_label = _package_display_name(pkg_raw) if pkg_raw else "Pantalla IPTV"
+            items.append(
+                PortalTrackedPurchaseItem(
+                    sale_id=int(sale.id),
+                    screen_stock_id=None,
+                    end_customer_name=ec_name,
+                    end_customer_phone=ec_phone,
+                    package_name=pkg_label,
+                    purchase_date=purchase_iso,
+                    expiration_date=None,
+                    days_until_expiration=None,
+                    expired=False,
+                )
+            )
+
+    items.sort(key=lambda i: i.purchase_date, reverse=True)
+    return items
 
 
 # ── GET home ──────────────────────────────────────────────────────────────────
