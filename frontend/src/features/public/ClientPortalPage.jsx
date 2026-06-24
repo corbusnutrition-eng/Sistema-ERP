@@ -213,54 +213,34 @@ function PortalScreenCredentialRow({ label, value, flashKey, copyFlashKey, onCop
 }
 
 const SUB_CLIENT_ACTION_BTN =
-  'inline-flex w-full items-center justify-center gap-1 rounded-md border text-center transition-colors whitespace-nowrap text-xs px-2 py-1 md:text-sm md:gap-1.5 md:px-3 md:py-1.5'
+  'inline-flex items-center justify-center gap-0.5 rounded border text-center leading-tight transition-colors text-[10px] px-1 py-0.5 md:text-sm md:gap-1.5 md:rounded-md md:px-3 md:py-1.5'
 
 function SubClientActionsCell({
   subclient,
   portalUrl,
+  copiedClientId,
+  onCopyLink,
   onTransfer,
   onPrices,
   onEdit,
   onDelete,
   deleting,
 }) {
+  const clientId = Number(subclient?.id)
   const baasBalance = Number(subclient?.wallet_balance) || 0
   const canDelete = baasBalance <= 1e-9
-  const [isCopied, setIsCopied] = useState(false)
-  const copyResetTimerRef = useRef(null)
-
-  useEffect(
-    () => () => {
-      if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current)
-    },
-    [],
-  )
-
-  const handleCopyPortalLink = useCallback(async () => {
-    const url = String(portalUrl ?? '').trim()
-    if (!url) return
-    let ok = false
-    try {
-      await navigator.clipboard.writeText(url)
-      ok = true
-    } catch {
-      ok = await copyPortalText(url)
-    }
-    if (!ok) return
-    setIsCopied(true)
-    if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current)
-    copyResetTimerRef.current = setTimeout(() => setIsCopied(false), 2000)
-  }, [portalUrl])
+  const isCopied = Number.isFinite(clientId) && copiedClientId === clientId
 
   return (
-    <div className="flex w-full min-w-[8.25rem] flex-col items-stretch gap-1 md:min-w-[10.5rem] md:gap-2">
+    <div className="flex flex-wrap gap-0.5 md:flex-col md:gap-2">
       <button
         type="button"
         onClick={() => onEdit?.(subclient)}
         className={`${SUB_CLIENT_ACTION_BTN} border-amber-400/40 bg-amber-950/20 text-amber-50 hover:border-amber-300/60 hover:bg-amber-900/40`}
         aria-label={`Editar ${String(subclient?.name ?? subclient?.username ?? 'sub-cliente')}`}
       >
-        <span>✏️ Editar</span>
+        <span className="md:hidden">✏️</span>
+        <span className="hidden md:inline">✏️ Editar</span>
       </button>
       <button
         type="button"
@@ -268,9 +248,10 @@ function SubClientActionsCell({
         className={`${SUB_CLIENT_ACTION_BTN} border-emerald-400/40 bg-emerald-950/25 text-emerald-50 hover:border-emerald-300/60 hover:bg-emerald-900/45`}
         aria-label={`Transferir saldo a ${String(subclient?.name ?? subclient?.username ?? 'sub-cliente')}`}
       >
-        <ArrowLeftRight size={12} className="shrink-0 md:hidden" aria-hidden />
-        <ArrowLeftRight size={13} className="hidden shrink-0 md:block" aria-hidden />
-        <span>💸 Transferir</span>
+        <ArrowLeftRight className="h-3 w-3 shrink-0 md:hidden" aria-hidden />
+        <ArrowLeftRight className="hidden h-3.5 w-3.5 shrink-0 md:block" aria-hidden />
+        <span className="md:hidden">💸</span>
+        <span className="hidden md:inline">💸 Transferir</span>
       </button>
       <button
         type="button"
@@ -278,25 +259,29 @@ function SubClientActionsCell({
         className={`${SUB_CLIENT_ACTION_BTN} border-violet-400/40 bg-violet-950/25 text-violet-50 hover:border-violet-300/60 hover:bg-violet-900/45`}
         aria-label={`Asignar precios a ${String(subclient?.name ?? subclient?.username ?? 'sub-cliente')}`}
       >
-        <Tag size={12} className="shrink-0 md:hidden" aria-hidden />
-        <Tag size={13} className="hidden shrink-0 md:block" aria-hidden />
-        <span>🏷️ Precios</span>
+        <Tag className="h-3 w-3 shrink-0 md:hidden" aria-hidden />
+        <Tag className="hidden h-3.5 w-3.5 shrink-0 md:block" aria-hidden />
+        <span className="md:hidden">🏷️</span>
+        <span className="hidden md:inline">🏷️ Precios</span>
       </button>
       {portalUrl ? (
         <button
           type="button"
-          onClick={() => void handleCopyPortalLink()}
+          onClick={() => void onCopyLink?.(subclient)}
           className={`${SUB_CLIENT_ACTION_BTN} ${
             isCopied
-              ? 'border-emerald-400/70 bg-emerald-950/45 text-emerald-100 shadow-[0_0_12px_rgba(52,211,153,0.25)]'
+              ? 'border-emerald-400/70 bg-emerald-950/45 text-emerald-100 shadow-[0_0_8px_rgba(52,211,153,0.22)]'
               : 'border-sky-400/40 bg-sky-950/20 text-sky-50 hover:border-sky-300/60 hover:bg-sky-900/40'
           }`}
-          title={isCopied ? 'Enlace copiado al portapapeles' : portalUrl}
+          title={isCopied ? 'Enlace copiado' : portalUrl}
           aria-label={isCopied ? 'Enlace copiado' : 'Copiar enlace del portal'}
         >
-          {!isCopied ? <Link2 size={12} className="shrink-0 md:hidden" aria-hidden /> : null}
-          {!isCopied ? <Link2 size={13} className="hidden shrink-0 md:block" aria-hidden /> : null}
-          <span>{isCopied ? '✅ Enlace copiado' : '🔗 Copiar enlace'}</span>
+          {!isCopied ? <Link2 className="h-3 w-3 shrink-0 md:hidden" aria-hidden /> : null}
+          {!isCopied ? <Link2 className="hidden h-3.5 w-3.5 shrink-0 md:block" aria-hidden /> : null}
+          <span className="whitespace-nowrap md:hidden">{isCopied ? '✅ Copiado' : '🔗 Link'}</span>
+          <span className="hidden whitespace-nowrap md:inline">
+            {isCopied ? '✅ Copiado' : '🔗 Copiar enlace'}
+          </span>
         </button>
       ) : null}
       <button
@@ -312,7 +297,8 @@ function SubClientActionsCell({
         className={`${SUB_CLIENT_ACTION_BTN} border-red-400/45 bg-red-950/30 text-red-50 hover:border-red-300/60 hover:bg-red-900/45 disabled:cursor-not-allowed disabled:opacity-40`}
         aria-label={`Eliminar ${String(subclient?.name ?? subclient?.username ?? 'sub-cliente')}`}
       >
-        <span>{deleting ? 'Eliminando…' : '🗑️ Eliminar'}</span>
+        <span className="hidden md:inline">{deleting ? 'Eliminando…' : '🗑️ Eliminar'}</span>
+        <span className="md:hidden">{deleting ? '…' : '🗑️'}</span>
       </button>
     </div>
   )
@@ -1488,6 +1474,8 @@ function ClientPortalPageInner() {
   const [currentPage, setCurrentPage] = useState(1)
   const [activeFilter, setActiveFilter] = useState('all')
   const [deletingSubClientId, setDeletingSubClientId] = useState(null)
+  const [copiedClientId, setCopiedClientId] = useState(null)
+  const copySubClientLinkTimerRef = useRef(null)
   const [deleteSubClientTarget, setDeleteSubClientTarget] = useState(null)
   const [deleteSubClientStep, setDeleteSubClientStep] = useState('warn')
   const [deleteSubClientErr, setDeleteSubClientErr] = useState(null)
@@ -1959,6 +1947,29 @@ function ClientPortalPageInner() {
     },
     [editSubClientBusy],
   )
+
+  useEffect(() => {
+    return () => {
+      if (copySubClientLinkTimerRef.current) clearTimeout(copySubClientLinkTimerRef.current)
+    }
+  }, [])
+
+  const handleCopySubClientPortalLink = useCallback(async (subclient) => {
+    const sid = Number(subclient?.id)
+    const url = clientPortalPublicUrl(subclient?.portal_token)
+    if (!url || !Number.isFinite(sid)) return
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(url)
+      ok = true
+    } catch {
+      ok = await copyPortalText(url)
+    }
+    if (!ok) return
+    setCopiedClientId(sid)
+    if (copySubClientLinkTimerRef.current) clearTimeout(copySubClientLinkTimerRef.current)
+    copySubClientLinkTimerRef.current = setTimeout(() => setCopiedClientId(null), 2000)
+  }, [])
 
   const openDeleteSubClientModal = useCallback((subclient) => {
     if (!subclient) return
@@ -5208,16 +5219,20 @@ function ClientPortalPageInner() {
                       ) : null}
                     </button>
                   </div>
-                  <div className="w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-                    <table className="w-full min-w-[640px] table-auto text-sm">
+                  <div className="w-full">
+                    <table className="w-full table-fixed text-[11px] md:text-sm">
+                      <colgroup>
+                        <col className="w-[26%]" />
+                        <col className="w-[24%]" />
+                        <col className="w-[22%]" />
+                        <col className="w-[28%]" />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-slate-600/40 bg-slate-950/60 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400 md:text-[11px]">
-                          <th className="min-w-[7rem] whitespace-nowrap px-2 py-2 md:px-3">Cliente</th>
-                          <th className="min-w-[5.5rem] whitespace-nowrap px-2 py-2 md:px-3">Usuario</th>
-                          <th className="min-w-[5rem] whitespace-nowrap px-2 py-2 text-right md:px-3">Saldo BaaS</th>
-                          <th className="min-w-[8.25rem] whitespace-nowrap px-2 py-2 md:min-w-[10.5rem] md:px-3">
-                            Acciones
-                          </th>
+                          <th className="px-1 py-1.5 md:px-4 md:py-2">Cliente</th>
+                          <th className="px-1 py-1.5 md:px-4 md:py-2">Usuario</th>
+                          <th className="px-1 py-1.5 text-right md:px-4 md:py-2">Saldo</th>
+                          <th className="px-1 py-1.5 md:px-4 md:py-2">Acciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-700/40">
@@ -5233,23 +5248,28 @@ function ClientPortalPageInner() {
                           const portalUrl = clientPortalPublicUrl(sc?.portal_token)
                           return (
                             <tr key={`sc-${sid}`} className="bg-slate-950/35 hover:bg-slate-900/50">
-                              <td className="min-w-[7rem] max-w-[12rem] truncate whitespace-nowrap px-2 py-2 text-[13px] font-semibold text-slate-50 md:max-w-none md:px-3 md:text-sm">
-                                <span className="block truncate" title={label}>
+                              <td className="px-1 py-1.5 align-top md:px-4 md:py-2">
+                                <span className="block break-words font-semibold leading-snug text-slate-50" title={label}>
                                   {label}
                                 </span>
                               </td>
-                              <td className="min-w-[5.5rem] max-w-[9rem] truncate whitespace-nowrap px-2 py-2 font-mono text-[11px] text-cyan-100/90 md:max-w-none md:px-3 md:text-xs">
-                                <span className="block truncate" title={user}>
+                              <td className="px-1 py-1.5 align-top md:px-4 md:py-2">
+                                <span
+                                  className="block break-all font-mono text-[10px] leading-snug text-cyan-100/90 md:text-xs"
+                                  title={user}
+                                >
                                   {user}
                                 </span>
                               </td>
-                              <td className="min-w-[5rem] whitespace-nowrap px-2 py-2 text-right text-[13px] tabular-nums font-semibold text-fuchsia-100 md:px-3 md:text-sm">
+                              <td className="px-1 py-1.5 text-right align-top tabular-nums font-semibold leading-snug text-fuchsia-100 md:px-4 md:py-2">
                                 {formatMoney(bal, scCur)}
                               </td>
-                              <td className="min-w-[8.25rem] px-2 py-2 align-top md:min-w-[10.5rem] md:px-3">
+                              <td className="px-1 py-1.5 align-top md:px-4 md:py-2">
                                 <SubClientActionsCell
                                   subclient={sc}
                                   portalUrl={portalUrl}
+                                  copiedClientId={copiedClientId}
+                                  onCopyLink={handleCopySubClientPortalLink}
                                   onTransfer={openTransferModal}
                                   onPrices={openPricesModal}
                                   onEdit={openEditSubClientModal}
@@ -5263,9 +5283,6 @@ function ClientPortalPageInner() {
                       </tbody>
                     </table>
                   </div>
-                  <p className="m-0 border-t border-slate-600/25 px-3 py-2 text-[10px] text-slate-500 md:hidden">
-                    Desliza horizontalmente para ver todas las columnas →
-                  </p>
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 px-3 py-3">
                     <button
                       type="button"
