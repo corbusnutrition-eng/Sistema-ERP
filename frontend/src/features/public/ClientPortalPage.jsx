@@ -4842,69 +4842,81 @@ function ClientPortalPageInner() {
                       return (
                         <li
                           key={`ap-${pkgId}`}
-                          className="rounded-xl border border-violet-300/25 bg-slate-950/30 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                          className="flex flex-col rounded-xl border border-violet-300/25 bg-slate-950/30 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
                         >
-                          <div className="min-w-0 flex-1">
-                            <p className="m-0 font-semibold text-violet-50">{String(p?.name ?? '—')}</p>
-                            <p className="m-1 mb-0 text-xs text-slate-300/80">
-                              Stock:{' '}
-                              <span className="tabular-nums font-medium text-cyan-100">{stock}</span>
-                              {hasAssignedPrice ? (
-                                <>
-                                  {' · '}
+                          <p className="mb-4 w-full text-center text-lg font-bold leading-snug text-violet-50">
+                            {String(p?.name ?? '—')}
+                          </p>
+
+                          {hasAssignedPrice ? (
+                            <div className="flex w-full flex-row items-center justify-between gap-2">
+                              <div className="flex min-w-0 flex-col gap-1">
+                                <p className="m-0 text-xs leading-snug text-slate-300/80">
+                                  Stock:{' '}
+                                  <span className="text-xl font-bold tabular-nums text-green-500">{stock}</span>
+                                </p>
+                                <p className="m-0 text-xs leading-snug text-slate-300/80">
                                   Precio:{' '}
-                                  <span className="tabular-nums font-medium text-fuchsia-100">
+                                  <span className="font-medium tabular-nums text-fuchsia-100">
                                     {formatMoney(unitPrice, cur)}
                                   </span>
-                                </>
-                              ) : null}
-                            </p>
-                          </div>
-                          {hasAssignedPrice ? (
-                            <div className="flex flex-wrap items-center gap-2 shrink-0">
-                              <label className="flex items-center gap-1.5 text-xs text-slate-300">
-                                Cant.
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={200}
-                                  value={qty}
-                                  disabled={purchaseLocked}
-                                  onChange={(e) => {
-                                    const v = e.target.value
-                                    setAutoPurchaseQtyByPackageId((prev) => ({
-                                      ...prev,
-                                      [String(pkgId)]: v,
-                                    }))
-                                  }}
-                                  className="min-h-[44px] w-16 rounded-lg border border-violet-400/35 bg-slate-900/70 px-2 py-2 text-sm text-violet-50 tabular-nums touch-manipulation"
-                                />
-                              </label>
-                              <span className="text-xs text-slate-400 tabular-nums min-w-[4.5rem] text-right">
-                                {Number.isFinite(lineTotal) ? formatMoney(lineTotal, cur) : '—'}
-                              </span>
-                              <button
-                                type="button"
-                                disabled={!canAfford || purchaseLocked}
-                                onClick={() =>
-                                  setConfirmingPurchase({
-                                    packageCatalogId: pkgId,
-                                    packageName: String(p?.name ?? '—'),
-                                    quantity: qty,
-                                    unitPrice,
-                                    totalPrice: lineTotal,
-                                    currency: cur,
-                                  })
-                                }
-                                className={`${PORTAL_TOUCH_BUTTON_PRIMARY_CLASS} !w-auto shrink-0 px-4 text-sm font-bold`}
-                              >
-                                {busy ? 'Procesando…' : 'Comprar'}
-                              </button>
+                                </p>
+                                <p className="m-0 text-[11px] tabular-nums text-slate-400">
+                                  Total:{' '}
+                                  {Number.isFinite(lineTotal) ? formatMoney(lineTotal, cur) : '—'}
+                                </p>
+                              </div>
+
+                              <div className="flex shrink-0 flex-row items-center gap-2">
+                                <label className="flex flex-col items-center gap-0.5 text-[11px] text-slate-300">
+                                  Cant.
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={200}
+                                    value={qty}
+                                    disabled={purchaseLocked}
+                                    onChange={(e) => {
+                                      const v = e.target.value
+                                      setAutoPurchaseQtyByPackageId((prev) => ({
+                                        ...prev,
+                                        [String(pkgId)]: v,
+                                      }))
+                                    }}
+                                    className="min-h-[40px] w-14 rounded-lg border border-violet-400/35 bg-slate-900/70 px-1.5 py-1.5 text-sm text-violet-50 tabular-nums touch-manipulation"
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  disabled={!canAfford || purchaseLocked}
+                                  onClick={() =>
+                                    setConfirmingPurchase({
+                                      packageCatalogId: pkgId,
+                                      packageName: String(p?.name ?? '—'),
+                                      quantity: qty,
+                                      unitPrice,
+                                      totalPrice: lineTotal,
+                                      currency: cur,
+                                    })
+                                  }
+                                  className={`${PORTAL_TOUCH_BUTTON_PRIMARY_CLASS} !w-auto shrink-0 px-3 text-xs font-bold sm:px-4 sm:text-sm`}
+                                >
+                                  {busy ? 'Procesando…' : 'Comprar'}
+                                </button>
+                              </div>
                             </div>
                           ) : (
-                            <p className="m-0 text-xs text-amber-200/90 max-w-[16rem] leading-snug">
-                              Contacta a tu distribuidor para habilitar y asignar precios a este producto.
-                            </p>
+                            <div className="flex w-full flex-row items-center justify-between gap-2">
+                              <div className="flex min-w-0 flex-col gap-1">
+                                <p className="m-0 text-xs leading-snug text-slate-300/80">
+                                  Stock:{' '}
+                                  <span className="text-xl font-bold tabular-nums text-green-500">{stock}</span>
+                                </p>
+                              </div>
+                              <p className="m-0 max-w-[10rem] shrink-0 text-right text-[11px] leading-snug text-amber-200/90">
+                                Contacta a tu distribuidor para habilitar y asignar precios a este producto.
+                              </p>
+                            </div>
                           )}
                         </li>
                       )
