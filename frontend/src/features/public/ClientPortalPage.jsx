@@ -2,9 +2,15 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, ChevronDown, Copy, Loader2, Link2, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, Copy, Loader2, Link2, Pencil, Phone, Plus, Tag, Trash2, X } from 'lucide-react'
 import { formatDateTimeEcuador } from '../../utils/datetime'
 import { clientPortalPublicUrl } from '../sales/saleTableHelpers'
+import {
+  mergePhoneParts,
+  phoneCountrySelectOptions,
+  splitPhoneParts,
+  whatsappDigits,
+} from '../../constants/phoneCountryCodes'
 import CodigosRetiroWidget, { RetiroSuccessPanel } from './CodigosRetiroWidget'
 import {
   extractRetiroMonto,
@@ -42,6 +48,12 @@ const PORTAL_TOUCH_BUTTON_CLASS =
   'inline-flex min-h-[44px] h-12 w-full items-center justify-center rounded-xl px-4 text-[15px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 touch-manipulation'
 
 const PORTAL_TOUCH_BUTTON_PRIMARY_CLASS = `${PORTAL_TOUCH_BUTTON_CLASS} bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:from-violet-400 hover:to-fuchsia-400`
+
+const PORTAL_WA_SVG = (
+  <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 fill-current" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.611-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+  </svg>
+)
 
 /** Estilos oscuros para react-select en el portal público. */
 const portalPaymentMethodSelectStyles = {
@@ -1609,6 +1621,13 @@ function ClientPortalPageInner() {
   const [pricingBusy, setPricingBusy] = useState(false)
   const [pricingErr, setPricingErr] = useState(null)
   const [pricingDraft, setPricingDraft] = useState({})
+  const [contactModalOpen, setContactModalOpen] = useState(false)
+  const [contactDialCode, setContactDialCode] = useState('+593')
+  const [contactLocalNumber, setContactLocalNumber] = useState('')
+  const [contactSaving, setContactSaving] = useState(false)
+  const [contactErr, setContactErr] = useState(null)
+
+  const phoneCountryOptions = useMemo(() => phoneCountrySelectOptions(), [])
 
   const loadPortal = useCallback(async (opts = {}) => {
     const silent = Boolean(opts?.silent)
@@ -2657,6 +2676,50 @@ function ClientPortalPageInner() {
 
   /** Cliente de 1ª línea (sin ``parent_id``): único con CxC / pedidos de pago frente al admin. */
   const isDirectLineClient = useMemo(() => data?.client?.parent_id == null, [data?.client?.parent_id])
+
+  const parentContactPhone = useMemo(
+    () => String(data?.parent_contact_phone ?? '').trim() || null,
+    [data?.parent_contact_phone],
+  )
+
+  const openContactModal = useCallback(() => {
+    const parts = splitPhoneParts(data?.client?.phone)
+    setContactDialCode(parts.dialCode)
+    setContactLocalNumber(parts.local)
+    setContactErr(null)
+    setContactModalOpen(true)
+  }, [data?.client?.phone])
+
+  const handleSaveContact = useCallback(async () => {
+    const fullPhone = mergePhoneParts(contactDialCode, contactLocalNumber)
+    if (!fullPhone || fullPhone.length < 10) {
+      setContactErr('Ingresa un número válido con código de país.')
+      return
+    }
+    setContactSaving(true)
+    setContactErr(null)
+    try {
+      const { data: res } = await api.patch(
+        `/api/v1/portal/${encodeURIComponent(token)}/contact`,
+        { phone: fullPhone },
+      )
+      const saved = String(res?.phone ?? fullPhone).trim()
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              client: { ...prev.client, phone: saved },
+            }
+          : prev,
+      )
+      setContactModalOpen(false)
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      setContactErr(typeof d === 'string' ? d : 'No se pudo guardar el contacto.')
+    } finally {
+      setContactSaving(false)
+    }
+  }, [api, contactDialCode, contactLocalNumber, token])
 
   const showSaldoPendienteSection = useMemo(() => {
     if (!isDirectLineClient) return false
@@ -4658,8 +4721,20 @@ function ClientPortalPageInner() {
 
   return (
     <div className={PORTAL_PAGE_ROOT_CLASS}>
-      <div className={PORTAL_PAGE_MAIN_CLASS}>
-        <p className="mb-2 text-center text-[11px] font-semibold uppercase tracking-[0.22em] text-white/45">
+      <div className={`${PORTAL_PAGE_MAIN_CLASS} relative`}>
+        {parentContactPhone ? (
+          <a
+            href={`https://wa.me/${whatsappDigits(parentContactPhone)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mb-3 inline-flex max-w-[min(100%,14rem)] items-center gap-1.5 rounded-lg border border-emerald-200/80 bg-white/95 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 shadow-[0_4px_14px_rgba(0,0,0,0.18)] backdrop-blur-sm transition hover:bg-white md:absolute md:left-0 md:top-0 md:z-20 md:mb-0"
+            title={`WhatsApp: ${parentContactPhone}`}
+          >
+            {PORTAL_WA_SVG}
+            <span className="truncate leading-tight">Soporte / Contacto</span>
+          </a>
+        ) : null}
+        <p className={`mb-2 text-center text-[11px] font-semibold uppercase tracking-[0.22em] text-white/45 ${parentContactPhone ? 'md:pt-10' : ''}`}>
           Autogestión
         </p>
         <h1 className="m-0 mb-1.5 text-center text-2xl font-extrabold leading-tight tracking-tight md:text-[1.65rem]">
@@ -5258,6 +5333,16 @@ function ClientPortalPageInner() {
                 >
                   Actualizar lista
                 </button>
+                {isDirectLineClient ? (
+                  <button
+                    type="button"
+                    onClick={openContactModal}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-950/30 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-900/40"
+                  >
+                    <Phone size={14} aria-hidden />
+                    Contacto
+                  </button>
+                ) : null}
               </div>
 
               {subClientsLoading ? (
@@ -7762,6 +7847,110 @@ function ClientPortalPageInner() {
                 className="rounded-xl bg-violet-500 px-4 py-2 text-sm font-bold text-white hover:bg-violet-400 disabled:opacity-50"
               >
                 {pricingBusy ? 'Guardando…' : 'Guardar precios'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {contactModalOpen ? (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            aria-label="Cerrar"
+            className="absolute inset-0 bg-slate-950/72 backdrop-blur-sm"
+            onClick={() => !contactSaving && setContactModalOpen(false)}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-emerald-400/35 bg-slate-900 shadow-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-700/50 px-5 py-4">
+              <div>
+                <h2 className="m-0 text-lg font-extrabold text-emerald-50">Contacto de soporte</h2>
+                <p className="m-1 mb-0 text-xs text-slate-400">
+                  Tu número aparecerá en el portal de tus sub-clientes para WhatsApp.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={contactSaving}
+                onClick={() => setContactModalOpen(false)}
+                className="rounded-lg p-1 text-slate-400 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-300">País / código</label>
+                <Select
+                  options={phoneCountryOptions}
+                  value={phoneCountryOptions.find((o) => o.value === contactDialCode) ?? phoneCountryOptions[0]}
+                  onChange={(opt) => setContactDialCode(opt?.value ?? '+593')}
+                  isSearchable
+                  filterOption={(option, input) => {
+                    const q = String(input || '').trim().toLowerCase()
+                    if (!q) return true
+                    const hay = String(option.searchText ?? option.label ?? '').toLowerCase()
+                    return hay.includes(q)
+                  }}
+                  styles={portalPaymentMethodSelectStyles}
+                  placeholder="Buscar país…"
+                  className="text-sm"
+                  classNamePrefix="portal-contact-country"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-300">Número móvil</label>
+                <div className="flex gap-2">
+                  <span className="inline-flex shrink-0 items-center rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm font-mono text-emerald-200 tabular-nums">
+                    {contactDialCode}
+                  </span>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    value={contactLocalNumber}
+                    onChange={(e) => setContactLocalNumber(e.target.value.replace(/[^\d\s-]/g, ''))}
+                    placeholder="999999999"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white tabular-nums"
+                    autoComplete="tel-national"
+                  />
+                </div>
+              </div>
+              {mergePhoneParts(contactDialCode, contactLocalNumber) ? (
+                <p className="m-0 text-xs text-slate-400">
+                  Vista previa:{' '}
+                  <span className="font-mono font-semibold text-emerald-200">
+                    {mergePhoneParts(contactDialCode, contactLocalNumber)}
+                  </span>
+                </p>
+              ) : null}
+              {contactErr ? <p className="m-0 text-sm text-red-300">{contactErr}</p> : null}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-700/50 px-5 py-4">
+              <button
+                type="button"
+                disabled={contactSaving}
+                onClick={() => setContactModalOpen(false)}
+                className="rounded-xl border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-45"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={contactSaving}
+                onClick={() => void handleSaveContact()}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500 disabled:opacity-45"
+              >
+                {contactSaving ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" aria-hidden />
+                    Guardando…
+                  </>
+                ) : (
+                  <>
+                    {PORTAL_WA_SVG}
+                    Guardar contacto
+                  </>
+                )}
               </button>
             </div>
           </div>

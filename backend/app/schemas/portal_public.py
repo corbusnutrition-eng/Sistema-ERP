@@ -21,6 +21,10 @@ class PortalCheckoutLinePublic(BaseModel):
 class PortalClientBrief(BaseModel):
     name: str
     email: str
+    phone: Optional[str] = Field(
+        default=None,
+        description="Teléfono/WhatsApp del cliente (E.164 compacto, ej. +593999999999).",
+    )
     parent_id: Optional[int] = Field(
         default=None,
         description="Distribuidor padre; null = cliente directo (1ª línea) con CxC frente al admin.",
@@ -399,6 +403,19 @@ class PortalHomeResponse(BaseModel):
         default_factory=list,
         description="Todas las solicitudes BaaS abiertas del cliente (portal checkout).",
     )
+    parent_contact_phone: Optional[str] = Field(
+        default=None,
+        description="WhatsApp/teléfono del distribuidor padre (solo sub-clientes con parent_id).",
+    )
+
+
+class PortalContactUpdate(BaseModel):
+    phone: str = Field(..., min_length=8, max_length=30, description="Número E.164, ej. +593999999999.")
+
+
+class PortalContactResponse(BaseModel):
+    phone: str
+    message: str = "Contacto actualizado."
 
 
 class PortalPaymentSubmitResponse(BaseModel):

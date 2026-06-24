@@ -63,6 +63,8 @@ from app.schemas.portal_public import (
     PortalActiveScreen,
     PortalAssignedPaymentMethod,
     PortalClientBrief,
+    PortalContactResponse,
+    PortalContactUpdate,
     PortalCxcBalanceResponse,
     PortalCheckoutLinePublic,
     PortalDepositPick,
@@ -1351,6 +1353,38 @@ def _portal_client_from_token(db: Session, portal_token: uuid_pkg.UUID) -> Clien
     return client
 
 
+def _normalize_portal_phone(raw: str) -> str:
+    """E.164 compacto (+ y dígitos) para WhatsApp."""
+    s = str(raw or "").strip()
+    if not s:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El teléfono es obligatorio.")
+    digits = re.sub(r"\D", "", s)
+    if not digits or len(digits) < 8 or len(digits) > 18:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Número de teléfono inválido (use código de país, ej. +593999999999).",
+        )
+    return f"+{digits}"
+
+
+def _parent_contact_phone_for_client(db: Session, client: Client) -> Optional[str]:
+    """Teléfono del distribuidor padre visible para sub-clientes."""
+    pid = getattr(client, "parent_id", None)
+    if pid is None:
+        return None
+    try:
+        parent_id = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if parent_id < 1:
+        return None
+    parent = db.get(Client, parent_id)
+    if parent is None:
+        return None
+    phone = str(parent.phone or "").strip()
+    return phone or None
+
+
 def _portal_subclient_brief(row: Client) -> PortalSubClientBrief:
     from app.services.client_currency_service import get_client_currency
     from app.services.wallet_balance_service import get_client_wallet_balance
@@ -1376,6 +1410,26 @@ def portal_list_sub_clients(portal_token: uuid_pkg.UUID, db: DbDep) -> list[Port
     parent = _portal_client_from_token(db, portal_token)
     rows = list_subclients_for_parent(db, int(parent.id), active_only=True)
     return [_portal_subclient_brief(r) for r in rows]
+
+
+@router.patch(
+    "/{portal_token}/contact",
+    response_model=PortalContactResponse,
+    summary="Actualizar teléfono/WhatsApp del titular del portal",
+)
+def portal_update_contact(
+    portal_token: uuid_pkg.UUID,
+    payload: PortalContactUpdate,
+    db: DbDep,
+) -> PortalContactResponse:
+    """Permite al distribuidor guardar su número de contacto para la red BaaS."""
+    client = _portal_client_from_token(db, portal_token)
+    phone = _normalize_portal_phone(payload.phone)
+    client.phone = phone
+    db.add(client)
+    db.commit()
+    db.refresh(client)
+    return PortalContactResponse(phone=str(client.phone or phone))
 
 
 @router.get("/{portal_token}/selling-packages", response_model=list[PortalSubClientPricingRow])
@@ -2266,10 +2320,13 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
         outstanding_wallet_recharges = []
 
     try:
+        parent_contact_phone = _parent_contact_phone_for_client(db, client)
+        owner_phone = str(client.phone or "").strip() or None
         return PortalHomeResponse(
             client=PortalClientBrief(
                 name=client.display_name() or "Cliente",
                 email=str(client.email or ""),
+                phone=owner_phone,
                 parent_id=int(client.parent_id) if client.parent_id is not None else None,
                 credit_balance=primary_credit,
                 credit_balance_currency=primary_credit_cur,
@@ -2304,6 +2361,7 @@ def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
             assigned_deposit_accounts=list(assigned_dep_models or []),
             allowed_payment_account_ids=list(allowed_payment_account_ids or []),
             outstanding_wallet_recharges=list(outstanding_wallet_recharges or []),
+            parent_contact_phone=parent_contact_phone,
         )
     except Exception:
         logger.exception("portal_home response build failed client_id=%s", client.id)
