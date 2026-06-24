@@ -9,6 +9,7 @@ import {
   Globe,
   Loader2,
   Mail,
+  Pencil,
   Phone,
   Link2,
 } from 'lucide-react'
@@ -569,9 +570,19 @@ export default function ClientDetail() {
 
               {/* Contacto y credenciales del panel */}
               <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-md">
-                <p className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-4">
-                  Datos de contacto
-                </p>
+                <div className="mb-4 flex w-full items-center justify-between gap-3">
+                  <p className="text-xs font-bold uppercase tracking-wide text-gray-500 m-0">
+                    Datos de contacto
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setEditHeaderOpen(true)}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-600 transition-colors hover:bg-blue-100"
+                  >
+                    <Pencil size={14} aria-hidden />
+                    Editar
+                  </button>
+                </div>
 
                 <dl className="grid grid-cols-1 sm:[grid-template-columns:minmax(7.5rem,10rem)_1fr] gap-x-4 gap-y-3 text-sm mb-6 pb-6 border-b border-gray-100">
                   <dt className="text-gray-500 font-medium shrink-0 pt-0.5">
@@ -670,14 +681,6 @@ export default function ClientDetail() {
                 <p className="text-sm text-gray-500 italic mb-0">No hay credenciales de panel IPTV guardadas.</p>
               )}
               </div>
-
-              <button
-                type="button"
-                onClick={() => setEditHeaderOpen(true)}
-                className="text-sm font-medium text-emerald-600 hover:text-emerald-700 self-start"
-              >
-                Editar datos del cliente
-              </button>
             </div>
 
             {/* Columna derecha: nueva transacción + resumen */}
