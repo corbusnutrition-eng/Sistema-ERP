@@ -1,18 +1,16 @@
 import { useEffect, useState, useCallback } from 'react'
-import { MessageSquarePlus, User, Clock, Send, X } from 'lucide-react'
+import { MessageSquarePlus, User, Clock, Send, X, Pencil, Check } from 'lucide-react'
 import api from '../../../api/axios'
-import { formatRelativeTimeEcuador } from '../../../utils/datetime'
+import { formatSaleTableDate } from '../../../utils/datetime'
 
-function formatRelativeTime(dateStr) {
-  const rel = formatRelativeTimeEcuador(dateStr)
-  if (rel === 'Ahora') return 'Ahora mismo'
-  if (rel.startsWith('Hace ') && rel.endsWith(' h')) return rel.replace(' h', 'h')
-  if (rel.startsWith('Hace ') && rel.endsWith(' d')) {
-    const n = parseInt(rel.replace(/\D/g, ''), 10)
-    if (n === 1) return 'Ayer'
-    return `Hace ${n} días`
-  }
-  return rel
+function NoteDateLabel({ iso }) {
+  const label = formatSaleTableDate(iso)
+  return (
+    <span className="flex items-center gap-1 text-[11px] text-gray-400 shrink-0" title={label}>
+      <Clock size={10} className="shrink-0" aria-hidden />
+      {label}
+    </span>
+  )
 }
 
 export default function ClientTimeline({ clientId, clientName }) {
@@ -21,13 +19,16 @@ export default function ClientTimeline({ clientId, clientName }) {
   const [newNote, setNewNote] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState(null)
+  const [editingNoteId, setEditingNoteId] = useState(null)
+  const [editDraft, setEditDraft] = useState('')
+  const [savingEditId, setSavingEditId] = useState(null)
 
   const fetchNotes = useCallback(async () => {
     if (!clientId) return
     setLoading(true)
     try {
       const { data } = await api.get(`/api/v1/client-notes/${clientId}`)
-      setNotes(data)
+      setNotes(Array.isArray(data) ? data : [])
     } catch {
       setError('No se pudieron cargar las notas.')
     } finally {
@@ -38,6 +39,17 @@ export default function ClientTimeline({ clientId, clientName }) {
   useEffect(() => {
     fetchNotes()
   }, [fetchNotes])
+
+  function startEdit(note) {
+    setEditingNoteId(note.id)
+    setEditDraft(note.note || '')
+    setError(null)
+  }
+
+  function cancelEdit() {
+    setEditingNoteId(null)
+    setEditDraft('')
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -55,6 +67,27 @@ export default function ClientTimeline({ clientId, clientName }) {
       setError('No se pudo guardar la nota. Inténtalo de nuevo.')
     } finally {
       setSending(false)
+    }
+  }
+
+  async function handleSaveEdit(noteId) {
+    const trimmed = editDraft.trim()
+    if (!trimmed) {
+      setError('La nota no puede quedar vacía.')
+      return
+    }
+    setSavingEditId(noteId)
+    setError(null)
+    try {
+      const { data } = await api.patch(`/api/v1/client-notes/${clientId}/${noteId}`, {
+        note: trimmed,
+      })
+      setNotes((prev) => prev.map((n) => (n.id === noteId ? data : n)))
+      cancelEdit()
+    } catch {
+      setError('No se pudo actualizar la nota. Inténtalo de nuevo.')
+    } finally {
+      setSavingEditId(null)
     }
   }
 
@@ -124,31 +157,80 @@ export default function ClientTimeline({ clientId, clientName }) {
         )}
 
         {!loading &&
-          notes.map((note) => (
-            <div
-              key={note.id}
-              className="flex gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100 hover:border-blue-100 transition-colors"
-            >
-              {/* Avatar */}
-              <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center shrink-0 mt-0.5">
-                <User size={12} className="text-blue-600" />
-              </div>
-
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-xs font-semibold text-gray-700 truncate">
-                    {note.author_name || 'Usuario'}
-                  </span>
-                  <span className="flex items-center gap-1 text-xs text-gray-400 shrink-0">
-                    <Clock size={10} />
-                    {formatRelativeTime(note.created_at)}
-                  </span>
+          notes.map((note) => {
+            const isEditing = editingNoteId === note.id
+            const isSaving = savingEditId === note.id
+            return (
+              <div
+                key={note.id}
+                className="flex gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100 hover:border-blue-100 transition-colors group"
+              >
+                <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center shrink-0 mt-0.5">
+                  <User size={12} className="text-blue-600" />
                 </div>
-                <p className="text-sm text-gray-600 leading-relaxed break-words">{note.note}</p>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <span className="text-xs font-semibold text-gray-700 truncate pt-0.5">
+                      {note.author_name || 'Usuario'}
+                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {!isEditing && (
+                        <button
+                          type="button"
+                          onClick={() => startEdit(note)}
+                          className="p-1 rounded-md text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                          title="Editar nota"
+                          aria-label="Editar nota"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      )}
+                      <NoteDateLabel iso={note.created_at} />
+                    </div>
+                  </div>
+
+                  {isEditing ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                        rows={3}
+                        disabled={isSaving}
+                        className="w-full px-2.5 py-2 text-sm border border-blue-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 resize-none"
+                        autoFocus
+                      />
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isSaving || !editDraft.trim()}
+                          onClick={() => void handleSaveEdit(note.id)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-45 disabled:cursor-not-allowed"
+                        >
+                          {isSaving ? (
+                            <span className="w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                          ) : (
+                            <Check size={11} />
+                          )}
+                          Guardar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSaving}
+                          onClick={cancelEdit}
+                          className="px-2 py-1 rounded-md text-[11px] font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-45"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-600 leading-relaxed break-words">{note.note}</p>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
       </div>
     </div>
   )
