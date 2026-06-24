@@ -4861,10 +4861,6 @@ function ClientPortalPageInner() {
                                     {formatMoney(unitPrice, cur)}
                                   </span>
                                 </p>
-                                <p className="m-0 text-[11px] tabular-nums text-slate-400">
-                                  Total:{' '}
-                                  {Number.isFinite(lineTotal) ? formatMoney(lineTotal, cur) : '—'}
-                                </p>
                               </div>
 
                               <div className="flex shrink-0 flex-row items-center gap-2">
