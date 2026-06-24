@@ -88,6 +88,7 @@ from app.schemas.portal_public import (
     PortalSubClientTransferRequest,
     PortalSubClientTransferResponse,
     PortalSubClientUpdate,
+    PortalTrackedPurchaseDeleteResponse,
     PortalTrackedPurchaseItem,
     PortalWalletRechargeItem,
     ReceiptAnalysisResponse,
@@ -1741,6 +1742,31 @@ def portal_tracked_purchases(portal_token: uuid_pkg.UUID, db: DbDep) -> list[Por
     return _portal_tracked_purchases_for_client(db, int(client.id))
 
 
+@router.delete(
+    "/{portal_token}/tracked-purchases/{sale_id}",
+    response_model=PortalTrackedPurchaseDeleteResponse,
+    summary="Eliminar cliente caducado de Mis compras",
+)
+def portal_delete_tracked_purchase(
+    portal_token: uuid_pkg.UUID,
+    sale_id: int,
+    db: DbDep,
+    screen_stock_id: Optional[int] = Query(
+        default=None,
+        ge=1,
+        description="Unidad de bodega de la fila; omitir si la compra aún no tiene pantalla.",
+    ),
+) -> PortalTrackedPurchaseDeleteResponse:
+    """Oculta una compra caducada del mini-CRM (doble confirmación en el portal)."""
+    client = _portal_client_from_token(db, portal_token)
+    return _portal_delete_tracked_purchase_for_client(
+        db,
+        int(client.id),
+        int(sale_id),
+        screen_stock_id=screen_stock_id,
+    )
+
+
 async def _portal_wallet_recharge_submit_abono_manual_review(
     db: Session,
     client: Client,
@@ -2119,6 +2145,24 @@ def _portal_active_screens_for_client(db: Session, client_id: int) -> list[Porta
     return [item[2] for item in staged]
 
 
+def _tracked_purchase_dismiss_key(screen_stock_id: int | None) -> int:
+    """Clave estable para ocultar una fila del mini-CRM (0 = sin pantalla asignada)."""
+    return 0 if screen_stock_id is None else int(screen_stock_id)
+
+
+def _sale_dismissed_tracked_keys(sale: Sale) -> set[int]:
+    raw = getattr(sale, "dismissed_tracked_screen_stock_ids", None)
+    if not isinstance(raw, list):
+        return set()
+    out: set[int] = set()
+    for item in raw:
+        try:
+            out.add(int(item))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _portal_tracked_purchase_expiry_fields(
     *,
     stk: ScreenStock | None,
@@ -2195,6 +2239,9 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
                 screens = [stk_single]
         if screens:
             for stk in screens:
+                dismiss_key = _tracked_purchase_dismiss_key(int(stk.id))
+                if dismiss_key in _sale_dismissed_tracked_keys(sale):
+                    continue
                 expiry = _portal_tracked_purchase_expiry_fields(stk=stk, sale=sale)
                 items.append(
                     PortalTrackedPurchaseItem(
@@ -2208,23 +2255,115 @@ def _portal_tracked_purchases_for_client(db: Session, client_id: int) -> list[Po
                     )
                 )
         else:
-            expiry = _portal_tracked_purchase_expiry_fields(stk=None, sale=sale)
-            pkg_raw = (sale.inventory_package or "").strip()
-            pkg_label = _package_display_name(pkg_raw) if pkg_raw else "Pantalla IPTV"
-            items.append(
-                PortalTrackedPurchaseItem(
-                    sale_id=int(sale.id),
-                    screen_stock_id=None,
-                    end_customer_name=ec_name,
-                    end_customer_phone=ec_phone,
-                    package_name=pkg_label,
-                    purchase_date=purchase_iso,
-                    **expiry,
+            dismiss_key = _tracked_purchase_dismiss_key(None)
+            if dismiss_key not in _sale_dismissed_tracked_keys(sale):
+                expiry = _portal_tracked_purchase_expiry_fields(stk=None, sale=sale)
+                pkg_raw = (sale.inventory_package or "").strip()
+                pkg_label = _package_display_name(pkg_raw) if pkg_raw else "Pantalla IPTV"
+                items.append(
+                    PortalTrackedPurchaseItem(
+                        sale_id=int(sale.id),
+                        screen_stock_id=None,
+                        end_customer_name=ec_name,
+                        end_customer_phone=ec_phone,
+                        package_name=pkg_label,
+                        purchase_date=purchase_iso,
+                        **expiry,
+                    )
                 )
-            )
 
     items.sort(key=lambda i: i.purchase_date, reverse=True)
     return items
+
+
+def _portal_tracked_unit_keys_for_sale(db: Session, sale: Sale) -> set[int]:
+    """Todas las claves de filas del mini-CRM para una venta (sin filtrar ocultas)."""
+    screens = (
+        db.query(ScreenStock)
+        .filter(ScreenStock.sale_id == int(sale.id))
+        .order_by(ScreenStock.id.asc())
+        .all()
+    )
+    if not screens and sale.screen_stock_id:
+        stk_single = db.get(ScreenStock, int(sale.screen_stock_id))
+        if stk_single is not None:
+            screens = [stk_single]
+    if screens:
+        return {_tracked_purchase_dismiss_key(int(stk.id)) for stk in screens}
+    return {_tracked_purchase_dismiss_key(None)}
+
+
+def _portal_delete_tracked_purchase_for_client(
+    db: Session,
+    client_id: int,
+    sale_id: int,
+    *,
+    screen_stock_id: int | None,
+) -> PortalTrackedPurchaseDeleteResponse:
+    """Oculta una fila caducada del mini-CRM «Mis compras» (no borra la venta)."""
+    sale = db.get(Sale, int(sale_id))
+    if sale is None or int(sale.client_id) != int(client_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Compra no encontrada.")
+    if not is_baas_wallet_auto_purchase_sale(sale):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta compra no admite seguimiento de cliente final.",
+        )
+    ec_name = (sale.end_customer_name or "").strip()
+    if not ec_name:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Esta compra ya no tiene cliente final registrado.",
+        )
+
+    dismiss_key = _tracked_purchase_dismiss_key(screen_stock_id)
+    if dismiss_key in _sale_dismissed_tracked_keys(sale):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Esta compra ya fue eliminada de Mis compras.",
+        )
+
+    tracked_rows = _portal_tracked_purchases_for_client(db, int(client_id))
+    target = next(
+        (
+            row
+            for row in tracked_rows
+            if int(row.sale_id) == int(sale_id)
+            and (
+                (row.screen_stock_id is None and screen_stock_id is None)
+                or (
+                    row.screen_stock_id is not None
+                    and screen_stock_id is not None
+                    and int(row.screen_stock_id) == int(screen_stock_id)
+                )
+            )
+        ),
+        None,
+    )
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Compra no encontrada.")
+
+    days_remaining = target.days_remaining
+    if days_remaining is None or int(days_remaining) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo puedes eliminar compras caducadas.",
+        )
+
+    dismissed = sorted(_sale_dismissed_tracked_keys(sale) | {dismiss_key})
+    sale.dismissed_tracked_screen_stock_ids = dismissed
+
+    if _portal_tracked_unit_keys_for_sale(db, sale).issubset(set(dismissed)):
+        sale.end_customer_name = None
+        sale.end_customer_phone = None
+        sale.dismissed_tracked_screen_stock_ids = None
+
+    commit_db_or_rollback(db)
+    db.refresh(sale)
+    return PortalTrackedPurchaseDeleteResponse(
+        sale_id=int(sale.id),
+        screen_stock_id=int(screen_stock_id) if screen_stock_id is not None else None,
+    )
 
 
 # ── GET home ──────────────────────────────────────────────────────────────────

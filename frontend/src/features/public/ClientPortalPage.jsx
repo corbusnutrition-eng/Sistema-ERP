@@ -260,7 +260,7 @@ function TrackedPurchaseExpirySummary({ item }) {
 }
 
 /** Tarjeta colapsable de una compra rastreada en «Mis compras». */
-function TrackedPurchaseCard({ item, expanded, onToggle }) {
+function TrackedPurchaseCard({ item, expanded, onToggle, showDeleteButton, onDelete, deleting }) {
   const customerName = String(item?.end_customer_name ?? '').trim() || '—'
   const customerPhone = String(item?.end_customer_phone ?? '').trim()
   const pkg = String(item?.package_name ?? 'Pantalla').trim() || 'Pantalla'
@@ -345,6 +345,26 @@ function TrackedPurchaseCard({ item, expanded, onToggle }) {
               FAC-{String(item?.sale_id ?? '').padStart(4, '0')}
             </span>
           </div>
+          {showDeleteButton ? (
+            <div className="mt-4 flex justify-end border-t border-slate-700/40 pt-3">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete?.(item)
+                }}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/25 bg-red-950/25 px-3 py-1.5 text-xs font-semibold text-red-400/90 transition hover:border-red-500/40 hover:bg-red-950/45 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleting ? (
+                  <Loader2 size={14} className="animate-spin" aria-hidden />
+                ) : (
+                  <Trash2 size={14} aria-hidden />
+                )}
+                Eliminar cliente
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </li>
@@ -1721,6 +1741,7 @@ function ClientPortalPageInner() {
   const [trackedPurchasesLoading, setTrackedPurchasesLoading] = useState(false)
   const [trackedPurchasesErr, setTrackedPurchasesErr] = useState(null)
   const [activeTab, setActiveTab] = useState('todos')
+  const [deletingTrackedPurchaseKey, setDeletingTrackedPurchaseKey] = useState(null)
   const [misComprasPage, setMisComprasPage] = useState(1)
   const [expandedMisComprasKey, setExpandedMisComprasKey] = useState(null)
   const [accordionDebtOpen, setAccordionDebtOpen] = useState(true)
@@ -1898,6 +1919,48 @@ function ClientPortalPageInner() {
       setTrackedPurchasesLoading(false)
     }
   }, [api, token])
+
+  const handleDeleteTrackedPurchase = useCallback(
+    async (item) => {
+      const confirmed = window.confirm(
+        '¿Estás seguro de que deseas eliminar este cliente caducado? Esta acción no se puede deshacer.',
+      )
+      if (!confirmed) return
+
+      const key = trackedPurchaseCardKey(item)
+      const saleId = Number(item?.sale_id)
+      if (!token || !Number.isFinite(saleId) || saleId < 1) return
+
+      setDeletingTrackedPurchaseKey(key)
+      try {
+        const screenStockId = item?.screen_stock_id
+        const params =
+          screenStockId != null && Number.isFinite(Number(screenStockId))
+            ? { screen_stock_id: Number(screenStockId) }
+            : undefined
+        await api.delete(
+          `/api/v1/portal/${encodeURIComponent(token)}/tracked-purchases/${saleId}`,
+          params ? { params } : undefined,
+        )
+        setTrackedPurchases((prev) =>
+          (Array.isArray(prev) ? prev : []).filter(
+            (row) =>
+              !(
+                Number(row?.sale_id) === saleId &&
+                (row?.screen_stock_id ?? null) === (item?.screen_stock_id ?? null)
+              ),
+          ),
+        )
+        setExpandedMisComprasKey((prev) => (prev === key ? null : prev))
+      } catch (err) {
+        const d = err?.response?.data?.detail
+        window.alert(typeof d === 'string' ? d : 'No se pudo eliminar el cliente caducado.')
+      } finally {
+        setDeletingTrackedPurchaseKey(null)
+      }
+    },
+    [api, token],
+  )
 
   const loadSubClients = useCallback(async () => {
     if (!token) return
@@ -6909,6 +6972,9 @@ function ClientPortalPageInner() {
                 <ul className="m-0 list-none space-y-3 p-0">
                   {paginatedMisCompras.map((item) => {
                     const key = trackedPurchaseCardKey(item)
+                    const days = resolveTrackedPurchaseDaysRemaining(item, misComprasNow)
+                    const showDeleteButton =
+                      activeTab === 'caducados' || (days != null && days <= 0)
                     return (
                       <TrackedPurchaseCard
                         key={key}
@@ -6917,6 +6983,9 @@ function ClientPortalPageInner() {
                         onToggle={() =>
                           setExpandedMisComprasKey((prev) => (prev === key ? null : key))
                         }
+                        showDeleteButton={showDeleteButton}
+                        onDelete={handleDeleteTrackedPurchase}
+                        deleting={deletingTrackedPurchaseKey === key}
                       />
                     )
                   })}

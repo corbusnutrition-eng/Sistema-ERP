@@ -307,6 +307,16 @@ class PortalSubClientDeleteResponse(BaseModel):
     message: str = "Sub-cliente eliminado de tu red."
 
 
+class PortalTrackedPurchaseDeleteResponse(BaseModel):
+    ok: bool = True
+    sale_id: int = Field(..., ge=1)
+    screen_stock_id: Optional[int] = Field(
+        default=None,
+        description="Unidad ocultada; null si la fila era sin pantalla asignada.",
+    )
+    message: str = "Cliente caducado eliminado de Mis compras."
+
+
 class PortalSubClientPriceItem(BaseModel):
     package_catalog_id: int = Field(..., ge=1)
     product_id: int = Field(..., ge=1)
