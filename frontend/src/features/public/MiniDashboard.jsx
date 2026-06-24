@@ -66,7 +66,7 @@ export default function MiniDashboard({ metrics }) {
         valueClassName="text-emerald-50"
       />
       <DashboardCard
-        title="Saldo BaaS"
+        title="Saldo Billetera"
         value={formatMoney(saldo, saldoCur)}
         icon={Wallet}
         iconClassName="text-sky-400"
