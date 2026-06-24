@@ -41,6 +41,8 @@ export default function SearchableSelect({
   className,
   /** z-index del panel portaleado (`fixed`, en document.body); debe estar por encima de modales (suelen llevar z-200–300). */
   dropdownZClass = 'z-[6000]',
+  /** Muestra la caja «Buscar…» en el panel; desactívalo en listas cortas (p. ej. presets de filtro). */
+  showSearch = true,
 }) {
   const triggerRef = useRef(null)
   const panelRef = useRef(null)
@@ -127,17 +129,19 @@ export default function SearchableSelect({
         className={`${SEARCHABLE_SELECT_PANEL_CLASSES} fixed ${dropdownZClass}`}
         style={{ top: coords.top, left: coords.left, width: coords.width }}
       >
-        <div className="p-2 border-b border-gray-200 shrink-0">
-          <input
-            autoFocus
-            type="text"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            onKeyDown={(e) => e.stopPropagation()}
-            className="w-full h-8 px-2 rounded border border-gray-300 text-sm text-gray-900 bg-white outline-none focus:outline-none focus:ring-0"
-            placeholder="Buscar…"
-          />
-        </div>
+        {showSearch && (
+          <div className="p-2 border-b border-gray-200 shrink-0">
+            <input
+              autoFocus
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()}
+              className="w-full h-8 px-2 rounded border border-gray-300 text-sm text-gray-900 bg-white outline-none focus:outline-none focus:ring-0"
+              placeholder="Buscar…"
+            />
+          </div>
+        )}
         {onAddNew && (
           <button
             type="button"

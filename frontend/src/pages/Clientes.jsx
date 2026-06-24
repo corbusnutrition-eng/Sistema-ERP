@@ -1471,6 +1471,23 @@ export default function Clientes() {
     followUpTagFilter,
   ])
 
+  const followUpCreditsSelectOptions = useMemo(
+    () => FOLLOW_UP_CREDITS_PRESETS.map((o) => ({ value: o.value, label: o.label })),
+    [],
+  )
+  const followUpDaysSelectOptions = useMemo(
+    () => FOLLOW_UP_DAYS_PRESETS.map((o) => ({ value: o.value, label: o.label })),
+    [],
+  )
+  const followUpTagSelectOptions = useMemo(
+    () =>
+      globalTags.map((tag) => ({
+        value: String(tag.id),
+        label: tag.name,
+      })),
+    [globalTags],
+  )
+
   const loadFollowUp = useCallback(async () => {
     setFollowUpLoading(true)
     setFollowUpErr(null)
@@ -2186,35 +2203,35 @@ export default function Clientes() {
                   </div>
                 </label>
 
-                <label className="flex flex-col gap-1 min-w-[9rem]">
+                <div className="flex flex-col gap-1 min-w-[9rem]">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                     Créditos
                   </span>
-                  <select
+                  <SearchableSelect
                     value={followUpCreditsPreset}
-                    onChange={(e) => setFollowUpCreditsPreset(e.target.value)}
-                    className="text-sm py-1.5 px-2 rounded-lg border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                  >
-                    {FOLLOW_UP_CREDITS_PRESETS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </label>
+                    onChange={setFollowUpCreditsPreset}
+                    options={followUpCreditsSelectOptions}
+                    placeholder="Todos los créditos"
+                    hideClear
+                    showSearch={false}
+                    className="[&_button]:min-h-9 [&_button]:h-9 [&_button]:text-sm"
+                  />
+                </div>
 
-                <label className="flex flex-col gap-1 min-w-[9rem]">
+                <div className="flex flex-col gap-1 min-w-[9rem]">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                     Días transcurridos
                   </span>
-                  <select
+                  <SearchableSelect
                     value={followUpDaysPreset}
-                    onChange={(e) => setFollowUpDaysPreset(e.target.value)}
-                    className="text-sm py-1.5 px-2 rounded-lg border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                  >
-                    {FOLLOW_UP_DAYS_PRESETS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                </label>
+                    onChange={setFollowUpDaysPreset}
+                    options={followUpDaysSelectOptions}
+                    placeholder="Cualquier antigüedad"
+                    hideClear
+                    showSearch={false}
+                    className="[&_button]:min-h-9 [&_button]:h-9 [&_button]:text-sm"
+                  />
+                </div>
 
                 <label className="flex flex-col gap-1 min-w-[9rem]">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
@@ -2240,23 +2257,19 @@ export default function Clientes() {
                   />
                 </label>
 
-                <label className="flex flex-col gap-1 min-w-[9rem]">
+                <div className="flex flex-col gap-1 min-w-[9rem]">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                     Etiquetas
                   </span>
-                  <select
+                  <SearchableSelect
                     value={followUpTagFilter}
-                    onChange={(e) => setFollowUpTagFilter(e.target.value)}
-                    className="text-sm py-1.5 px-2 rounded-lg border border-gray-200 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                  >
-                    <option value="">Todas</option>
-                    {globalTags.map((tag) => (
-                      <option key={tag.id} value={tag.id}>
-                        {tag.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    onChange={setFollowUpTagFilter}
+                    options={followUpTagSelectOptions}
+                    placeholder="Todas"
+                    clearLabel="Todas"
+                    className="[&_button]:min-h-9 [&_button]:h-9 [&_button]:text-sm"
+                  />
+                </div>
 
                 <button
                   type="button"
