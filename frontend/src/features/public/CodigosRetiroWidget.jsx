@@ -75,12 +75,12 @@ export default function CodigosRetiroWidget({
 
   return (
     <div
-      className={`portal-receipt-upload-glow-wrap portal-codigos-retiro-glow mb-4 h-fit w-full rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] ${className}`.trim()}
+      className={`portal-receipt-upload-glow-wrap portal-codigos-retiro-glow portal-public-section mb-3 h-fit w-full min-w-0 rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] md:mb-4 ${className}`.trim()}
       style={style}
     >
-      <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full overflow-visible">
+      <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full min-w-0 overflow-visible">
         <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
-        <div className="portal-order-summary-inner h-fit w-full px-5 pb-6 pt-5">
+        <div className="portal-order-summary-inner h-fit w-full px-3 pb-4 pt-4 md:px-5 md:pb-6 md:pt-5">
           <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.06em] text-green-300">
             Códigos de retiro
           </p>

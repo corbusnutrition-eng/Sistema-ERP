@@ -24,6 +24,25 @@ function publicApi() {
   })
 }
 
+/** Layout mobile-first del portal público (link de pago / autogestión). */
+const PORTAL_PAGE_ROOT_CLASS =
+  'portal-public-root min-h-screen w-full overflow-x-hidden bg-[linear-gradient(145deg,#0f0c29_0%,#1a1440_42%,#16324a_100%)] px-3 pb-12 pt-3 font-[DM_Sans,Inter,-apple-system,BlinkMacSystemFont,sans-serif] text-slate-50 md:px-4 md:pb-16 md:pt-4'
+
+const PORTAL_PAGE_MAIN_CLASS = 'portal-public-main mx-auto w-full max-w-full md:max-w-lg'
+
+const PORTAL_SECTION_SHELL_CLASS = 'portal-public-section w-full min-w-0'
+
+const PORTAL_PAYMENT_SHELL_CLASS =
+  'portal-payment-method-shell mb-3.5 w-full min-w-0 rounded-[20px] border border-white/10 bg-slate-900/55 p-3 md:mb-4 md:rounded-[22px] md:p-4'
+
+const PORTAL_TOUCH_INPUT_CLASS =
+  'w-full min-h-[44px] rounded-xl border border-white/15 bg-white/[0.06] px-3 py-2.5 text-sm text-slate-50 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50 touch-manipulation'
+
+const PORTAL_TOUCH_BUTTON_CLASS =
+  'inline-flex min-h-[44px] h-12 w-full items-center justify-center rounded-xl px-4 text-[15px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 touch-manipulation'
+
+const PORTAL_TOUCH_BUTTON_PRIMARY_CLASS = `${PORTAL_TOUCH_BUTTON_CLASS} bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:from-violet-400 hover:to-fuchsia-400`
+
 /** Estilos oscuros para react-select en el portal público. */
 const portalPaymentMethodSelectStyles = {
   control: (base, state) => ({
@@ -33,9 +52,10 @@ const portalPaymentMethodSelectStyles = {
     color: 'white',
     boxShadow: 'none',
     borderRadius: 12,
-    minHeight: 46,
+    minHeight: 48,
     '&:hover': { borderColor: '#3b82f6' },
   }),
+  valueContainer: (base) => ({ ...base, padding: '2px 10px' }),
   singleValue: (base) => ({ ...base, color: 'white' }),
   menu: (base) => ({ ...base, background: '#1f2937', border: '1px solid #374151' }),
   menuPortal: (base) => ({ ...base, zIndex: 9999 }),
@@ -44,12 +64,14 @@ const portalPaymentMethodSelectStyles = {
     backgroundColor: state.isFocused ? '#374151' : 'transparent',
     color: 'white',
     cursor: 'pointer',
+    minHeight: 44,
+    padding: '10px 12px',
     '&:active': { backgroundColor: '#4b5563' },
   }),
   input: (base) => ({ ...base, color: 'white' }),
   placeholder: (base) => ({ ...base, color: '#9ca3af' }),
   indicatorSeparator: (base) => ({ ...base, backgroundColor: '#4b5563' }),
-  dropdownIndicator: (base) => ({ ...base, color: '#9ca3af' }),
+  dropdownIndicator: (base) => ({ ...base, color: '#9ca3af', padding: '8px 10px' }),
 }
 
 function portalPaymentMethodOptions(methods) {
@@ -1124,18 +1146,18 @@ function PortalNeoOrderSummaryCard({
   footerText,
 }) {
   return (
-    <div className="portal-order-summary-glow-wrap mb-6">
-      <section className="portal-order-summary-card">
+    <div className={`portal-order-summary-glow-wrap ${PORTAL_SECTION_SHELL_CLASS} mb-4 md:mb-6`}>
+      <section className="portal-order-summary-card w-full min-w-0">
         <div className="portal-order-summary-circuit-overlay" aria-hidden />
-        <div className="portal-order-summary-inner border-b border-white/10 px-5 pb-5 pt-5">
+        <div className="portal-order-summary-inner border-b border-white/10 px-3 pb-4 pt-4 md:px-5 md:pb-5 md:pt-5">
           <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
             Resumen del pedido
           </p>
           {pricingBreakdownSlot ?? null}
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <p className="text-3xl font-semibold tracking-tight text-white sm:text-[2rem]">{headlineAmountFormatted}</p>
-              <p className="mt-1.5 text-sm text-slate-400">{headlineCaption}</p>
+          <div className="flex min-w-0 items-start justify-between gap-3 sm:gap-4">
+            <div className="min-w-0 flex-1 break-words">
+              <p className="text-2xl font-semibold tracking-tight text-white break-words sm:text-3xl md:text-[2rem]">{headlineAmountFormatted}</p>
+              <p className="mt-1.5 text-sm text-slate-400 break-words">{headlineCaption}</p>
             </div>
             <div className="portal-order-summary-hud shrink-0">
               {countdownMmSs ? (
@@ -1159,7 +1181,7 @@ function PortalNeoOrderSummaryCard({
         </div>
         {detailLinesSlot ?? null}
         {footerText != null && String(footerText).trim() !== '' ? (
-          <p className="portal-order-summary-inner border-t border-white/10 px-5 pb-4 pt-3 text-xs text-slate-500">
+          <p className="portal-order-summary-inner break-words border-t border-white/10 px-3 pb-4 pt-3 text-xs text-slate-500 md:px-5">
             {footerText}
           </p>
         ) : null}
@@ -1211,7 +1233,7 @@ function PortalNeoAccordion({
   const p = presets[accent] ?? presets.violet
 
   return (
-    <section className={`relative mb-6 overflow-hidden rounded-[22px] transition-all duration-300 ${p.wrap}`}>
+    <section className={`${PORTAL_SECTION_SHELL_CLASS} relative mb-4 overflow-hidden rounded-[20px] transition-all duration-300 md:mb-6 md:rounded-[22px] ${p.wrap}`}>
       <div aria-hidden className={`pointer-events-none absolute inset-0 rounded-[inherit] opacity-95 ${p.wash}`} />
       <button
         type="button"
@@ -1219,12 +1241,12 @@ function PortalNeoAccordion({
         aria-expanded={expanded}
         aria-controls={`${sectionId}-panel`}
         onClick={onToggle}
-        className={`relative z-[1] flex min-h-[56px] w-full touch-manipulation flex-wrap items-center justify-between gap-x-3 gap-y-2 px-[18px] py-4 text-left transition-all duration-300 hover:bg-white/[0.055] active:bg-white/[0.085] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/55 ${p.divider} border-b border-opacity-70`}
+        className={`relative z-[1] flex min-h-[48px] w-full touch-manipulation flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-3.5 text-left transition-all duration-300 hover:bg-white/[0.055] active:bg-white/[0.085] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/55 md:px-[18px] md:py-4 ${p.divider} border-b border-opacity-70`}
       >
-        <div className="min-w-[min(100%,12rem)] flex-1 pr-2">
-          <p className={`m-0 text-[11px] font-extrabold uppercase leading-tight tracking-[0.16em] ${p.title} sm:text-xs`}>{title}</p>
+        <div className="min-w-0 flex-1 pr-2">
+          <p className={`m-0 break-words text-[11px] font-extrabold uppercase leading-tight tracking-[0.16em] ${p.title} sm:text-xs`}>{title}</p>
           {subtitle ?
-            <p className="m-1.5 mb-0 text-[13px] font-medium leading-snug text-slate-200/82">{subtitle}</p>
+            <p className="m-1.5 mb-0 break-words text-[13px] font-medium leading-snug text-slate-200/82">{subtitle}</p>
           : null}
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
@@ -1233,7 +1255,7 @@ function PortalNeoAccordion({
             typeof headerAside === 'string' ? (
               <span
                 title={headerAside}
-                className={`max-w-[11.5rem] whitespace-normal text-right text-sm font-bold leading-snug sm:max-w-[16rem] sm:text-[16px] sm:leading-tight ${p.aside} tabular-nums tracking-tight`}
+                className={`max-w-[9.5rem] truncate whitespace-normal break-words text-right text-sm font-bold leading-snug sm:max-w-[16rem] sm:text-[16px] sm:leading-tight md:max-w-none ${p.aside} tabular-nums tracking-tight`}
               >
                 {headerAside}
               </span>
@@ -1253,23 +1275,15 @@ function PortalNeoAccordion({
         id={`${sectionId}-panel`}
         role="region"
         aria-labelledby={`${sectionId}-hdr`}
-        className={`relative z-[1] grid transition-all duration-300 ease-out ${expanded ? 'overflow-x-auto overflow-y-visible' : 'overflow-hidden'}`}
+        className={`relative z-[1] grid transition-all duration-300 ease-out ${expanded ? 'overflow-x-hidden overflow-y-visible' : 'overflow-hidden'}`}
         style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
       >
-        <div className="min-h-0">
-          <div className="px-[18px] pb-6 pt-5 transition-all duration-300 ease-out">{children}</div>
+        <div className="min-h-0 min-w-0">
+          <div className="px-3 pb-5 pt-4 transition-all duration-300 ease-out md:px-[18px] md:pb-6 md:pt-5">{children}</div>
         </div>
       </div>
     </section>
   )
-}
-
-const pageChromeStyle = {
-  minHeight: '100vh',
-  background: 'linear-gradient(145deg, #0f0c29 0%, #1a1440 42%, #16324a 100%)',
-  padding: '20px 16px 48px',
-  fontFamily: "'DM Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-  color: '#f8fafc',
 }
 
 function isAccountBlockedError(err) {
@@ -1297,24 +1311,16 @@ class PortalPageErrorBoundary extends Component {
   render() {
     if (this.state.error) {
       return (
-        <div style={pageChromeStyle}>
-          <div
-            style={{
-              maxWidth: 520,
-              margin: '48px auto',
-              padding: '28px 24px',
-              borderRadius: 20,
-              background: 'rgba(15,23,42,0.85)',
-              border: '1px solid rgba(248,113,113,0.35)',
-              textAlign: 'center',
-            }}
-          >
+        <div className={PORTAL_PAGE_ROOT_CLASS}>
+          <div className={`${PORTAL_PAGE_MAIN_CLASS} py-12`}>
+            <div className="rounded-[20px] border border-red-400/35 bg-slate-900/85 px-4 py-7 text-center md:px-6 md:py-8">
             <p style={{ margin: 0, fontSize: 16, fontWeight: 650, color: '#fecaca' }}>
               No pudimos mostrar el portal en este momento.
             </p>
             <p style={{ margin: '12px 0 0', fontSize: 13, lineHeight: 1.55, color: '#94a3b8' }}>
               Recarga la página. Si el problema continúa, contacta a tu proveedor.
             </p>
+            </div>
           </div>
         </div>
       )
@@ -4107,19 +4113,11 @@ function ClientPortalPageInner() {
 
   if (loading) {
     return (
-      <div style={pageChromeStyle}>
-        <div style={{ maxWidth: 460, margin: '0 auto' }}>
-          <div
-            style={{
-              padding: '40px 20px',
-              textAlign: 'center',
-              borderRadius: 20,
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
-            }}
-          >
+      <div className={PORTAL_PAGE_ROOT_CLASS}>
+        <div className={PORTAL_PAGE_MAIN_CLASS}>
+          <div className="rounded-[20px] border border-white/10 bg-white/[0.06] px-4 py-10 text-center md:px-5">
             <Loader2 className="animate-spin mx-auto mb-3 text-violet-300" size={36} aria-hidden />
-            <p style={{ margin: 0, opacity: 0.72 }}>Cargando tu cuenta…</p>
+            <p className="m-0 opacity-72">Cargando tu cuenta…</p>
           </div>
         </div>
       </div>
@@ -4128,17 +4126,10 @@ function ClientPortalPageInner() {
 
   if (isBlocked) {
     return (
-      <div
-        style={pageChromeStyle}
-        className="flex min-h-screen items-center justify-center px-4 py-12"
-      >
+      <div className={`${PORTAL_PAGE_ROOT_CLASS} flex min-h-screen items-center justify-center`}>
+        <div className={`${PORTAL_PAGE_MAIN_CLASS} w-full py-8`}>
         <div
-          className="w-full max-w-md text-center rounded-2xl px-6 py-10"
-          style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(248,113,113,0.35)',
-            boxShadow: '0 24px 48px rgba(0,0,0,0.35)',
-          }}
+          className="w-full rounded-[20px] border border-red-400/35 bg-white/[0.06] px-4 py-10 text-center shadow-[0_24px_48px_rgba(0,0,0,0.35)] md:px-6"
         >
           <div className="text-5xl mb-5" aria-hidden>
             🔒
@@ -4148,28 +4139,21 @@ function ClientPortalPageInner() {
             Por favor, contacta a tu administrador para más información.
           </p>
         </div>
+        </div>
       </div>
     )
   }
 
   if (loadError || !data) {
     return (
-      <div style={pageChromeStyle}>
-        <div className="max-w-md mx-auto pt-12 px-4">
-          <div
-            style={{
-              padding: '24px',
-              borderRadius: 22,
-              background: 'rgba(248,113,113,0.12)',
-              border: '1px solid rgba(248,113,113,0.35)',
-              textAlign: 'center',
-            }}
-          >
+      <div className={PORTAL_PAGE_ROOT_CLASS}>
+        <div className={`${PORTAL_PAGE_MAIN_CLASS} pt-8 md:pt-12`}>
+          <div className="rounded-[22px] border border-red-400/35 bg-red-950/20 px-4 py-6 text-center md:px-6">
             <h1 className="text-lg font-semibold text-white mb-2">Portal de cliente</h1>
-            <p className="text-sm text-red-200">{loadError || 'No disponible.'}</p>
+            <p className="text-sm text-red-200 break-words">{loadError || 'No disponible.'}</p>
             <Link
               to="/login"
-              className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-white/10 px-4 py-3 text-sm font-semibold text-white hover:bg-white/15"
+              className={`${PORTAL_TOUCH_BUTTON_CLASS} mt-6 bg-white/10 text-white hover:bg-white/15`}
             >
               Acceso interno
             </Link>
@@ -4287,7 +4271,7 @@ function ClientPortalPageInner() {
             type="button"
             disabled={debtForm.submitting}
             onClick={submitDebtPaymentWithCredit}
-            className="w-full rounded-xl border border-emerald-400/45 bg-emerald-950/35 px-4 py-[14px] text-[15px] font-semibold leading-tight text-emerald-50 shadow-lg outline-none ring-2 ring-transparent transition hover:bg-emerald-950/50 focus-visible:ring-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+            className={`${PORTAL_TOUCH_BUTTON_CLASS} border border-emerald-400/45 bg-emerald-950/35 text-emerald-50 shadow-lg outline-none ring-2 ring-transparent hover:bg-emerald-950/50 focus-visible:ring-emerald-400/60`}
           >
             {debtForm.submitting
               ? 'Aplicando saldo a favor…'
@@ -4299,11 +4283,13 @@ function ClientPortalPageInner() {
         </>
       ) : null}
 
-      {/* Method */}
-      <label style={{ display: 'block', fontSize: 11, opacity: 0.55, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>
-        Método de pago
-      </label>
-      <div style={{ marginBottom: 12 }}>
+      <div className={`${PORTAL_PAYMENT_SHELL_CLASS} mb-3`}>
+        <label
+          htmlFor="portal-debt-payment-method"
+          className="mb-2 block text-[11px] uppercase tracking-[0.07em] text-white/55"
+        >
+          Método de pago
+        </label>
         <Select
           inputId="portal-debt-payment-method"
           classNamePrefix="portal-rs"
@@ -4328,10 +4314,14 @@ function ClientPortalPageInner() {
       {/* Account */}
       {debtPaymentAccounts.length > 1 && (
         <>
-          <label style={{ display: 'block', fontSize: 11, opacity: 0.55, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>
+          <label
+            htmlFor="portal-debt-deposit-account"
+            className="mb-2 block text-[11px] uppercase tracking-[0.07em] text-white/55"
+          >
             Cuenta donde depositaste
           </label>
           <select
+            id="portal-debt-deposit-account"
             disabled={!obligationReady || debtPaymentAccounts.length <= 1}
             value={debtForm.account}
             onChange={(e) => {
@@ -4341,7 +4331,7 @@ function ClientPortalPageInner() {
               const expected = currentDebtPayObligation?.pendingAmount ?? null
               if (filesNow?.length) analyzeDebtReceiptWithAI(filesNow, expected, debtCurrency)
             }}
-            style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: '#f8fafc', fontSize: 14, marginBottom: 12 }}
+            className={`${PORTAL_TOUCH_INPUT_CLASS} mb-3`}
           >
             <option value="" disabled>Seleccionar cuenta…</option>
             {debtPaymentAccounts.map((d) => (
@@ -4390,10 +4380,10 @@ function ClientPortalPageInner() {
           </>
         )
       ) : (
-      <div className="portal-receipt-upload-glow-wrap mb-4 rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)]">
-        <section className="portal-receipt-upload-card">
+      <div className="portal-receipt-upload-glow-wrap mb-3 w-full min-w-0 rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] md:mb-4">
+        <section className="portal-receipt-upload-card w-full min-w-0">
           <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
-          <div className="portal-order-summary-inner px-5 pb-5 pt-5">
+          <div className="portal-order-summary-inner px-3 pb-4 pt-4 md:px-5 md:pb-5 md:pt-5">
             <p className="mb-1.5 text-[12px] font-medium uppercase tracking-[0.06em] text-green-300">
               Comprobante
             </p>
@@ -4540,38 +4530,18 @@ function ClientPortalPageInner() {
   }
 
   return (
-    <div style={pageChromeStyle}>
-      <div style={{ maxWidth: 460, margin: '0 auto' }}>
-        <div style={{ paddingTop: 12 }} />
-        <p
-          style={{
-            textAlign: 'center',
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: '0.22em',
-            textTransform: 'uppercase',
-            color: 'rgba(255,255,255,0.45)',
-            marginBottom: 8,
-          }}
-        >
+    <div className={PORTAL_PAGE_ROOT_CLASS}>
+      <div className={PORTAL_PAGE_MAIN_CLASS}>
+        <p className="mb-2 text-center text-[11px] font-semibold uppercase tracking-[0.22em] text-white/45">
           Autogestión
         </p>
-        <h1
-          style={{
-            margin: '0 0 6px',
-            fontSize: 24,
-            fontWeight: 800,
-            letterSpacing: -0.5,
-            lineHeight: 1.15,
-            textAlign: 'center',
-          }}
-        >
-          Hola, <span style={{ color: '#7dd3fc' }}>{clientName}</span>
+        <h1 className="m-0 mb-1.5 text-center text-2xl font-extrabold leading-tight tracking-tight md:text-[1.65rem]">
+          Hola, <span className="text-sky-300 break-words">{clientName}</span>
         </h1>
         {data?.client?.email ? (
-          <p style={{ margin: '0 0 22px', textAlign: 'center', opacity: 0.62, fontSize: 14 }}>{String(data.client.email)}</p>
+          <p className="mb-5 break-all text-center text-sm text-white/60 md:mb-6">{String(data.client.email)}</p>
         ) : (
-          <div style={{ marginBottom: 22 }} />
+          <div className="mb-5 md:mb-6" />
         )}
 
         <PortalNeoAccordion
@@ -4707,7 +4677,7 @@ function ClientPortalPageInner() {
         {showCxcDebtBanner ? (
           <div
             role="alert"
-            className="mb-4 rounded-2xl border-2 border-red-500 px-4 py-4 text-center shadow-[0_0_28px_rgba(239,68,68,0.45)]"
+            className="mb-3 w-full min-w-0 rounded-2xl border-2 border-red-500 px-3 py-4 text-center shadow-[0_0_28px_rgba(239,68,68,0.45)] md:mb-4 md:px-4"
             style={{
               background: 'linear-gradient(180deg, rgba(127,29,29,0.95) 0%, rgba(69,10,10,0.98) 100%)',
             }}
@@ -4879,7 +4849,7 @@ function ClientPortalPageInner() {
                                       [String(pkgId)]: v,
                                     }))
                                   }}
-                                  className="w-16 rounded-lg border border-violet-400/35 bg-slate-900/70 px-2 py-1.5 text-sm text-violet-50 tabular-nums"
+                                  className="min-h-[44px] w-16 rounded-lg border border-violet-400/35 bg-slate-900/70 px-2 py-2 text-sm text-violet-50 tabular-nums touch-manipulation"
                                 />
                               </label>
                               <span className="text-xs text-slate-400 tabular-nums min-w-[4.5rem] text-right">
@@ -4898,7 +4868,7 @@ function ClientPortalPageInner() {
                                     currency: cur,
                                   })
                                 }
-                                className="rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-45 disabled:cursor-not-allowed bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:from-violet-400 hover:to-fuchsia-400"
+                                className={`${PORTAL_TOUCH_BUTTON_PRIMARY_CLASS} !w-auto shrink-0 px-4 text-sm font-bold`}
                               >
                                 {busy ? 'Procesando…' : 'Comprar'}
                               </button>
@@ -5295,7 +5265,7 @@ function ClientPortalPageInner() {
         {showSaldoAFavorCard ? (
         <section
           aria-label="Saldo a favor"
-          className="relative mb-6 overflow-hidden rounded-[22px] border-2 border-emerald-400/45 shadow-[inset_0_1px_0_rgba(167,243,208,0.12),0_22px_48px_rgba(0,0,0,0.38)] transition-all duration-300"
+          className={`${PORTAL_SECTION_SHELL_CLASS} relative mb-4 overflow-hidden rounded-[20px] border-2 border-emerald-400/45 shadow-[inset_0_1px_0_rgba(167,243,208,0.12),0_22px_48px_rgba(0,0,0,0.38)] transition-all duration-300 md:mb-6 md:rounded-[22px]`}
           style={{
             background: 'linear-gradient(145deg, rgba(6,78,59,0.52), rgba(16,185,129,0.22), rgba(14,21,41,0.72))',
           }}
@@ -5304,7 +5274,7 @@ function ClientPortalPageInner() {
             aria-hidden
             className="pointer-events-none absolute inset-0 rounded-[inherit] bg-gradient-to-br from-emerald-400/30 via-transparent to-teal-400/18 opacity-95"
           />
-          <div className="relative z-[1] flex min-h-[56px] touch-manipulation flex-wrap items-center justify-between gap-x-4 gap-y-3 px-[18px] py-4">
+          <div className="relative z-[1] flex min-h-[48px] touch-manipulation flex-wrap items-center justify-between gap-x-4 gap-y-3 px-3 py-3.5 md:px-[18px] md:py-4">
             <div className="min-w-0 flex-1 pr-2">
               <p className="m-0 text-[11px] font-extrabold uppercase leading-tight tracking-[0.16em] text-emerald-100 sm:text-xs">
                 SALDO A FAVOR
@@ -5418,6 +5388,7 @@ function ClientPortalPageInner() {
                   </label>
                   <select
                     id="portal-ledger-obligation-select"
+                    className={`${PORTAL_TOUCH_INPUT_CLASS} mt-2`}
                     value={effectiveLedgerFocusKey}
                     onChange={(e) => setLedgerFocusKey(e.target.value)}
                     className="w-full rounded-xl border border-emerald-500/25 bg-slate-950/60 px-3 py-2.5 text-[13px] font-medium text-emerald-50 outline-none ring-0 focus:border-emerald-400/50"
@@ -5434,7 +5405,7 @@ function ClientPortalPageInner() {
                 type="button"
                 aria-expanded={ledgerOpen}
                 onClick={() => setLedgerOpen((o) => !o)}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-4 py-2.5 text-[13px] font-medium text-emerald-50/95 transition hover:bg-emerald-950/35"
+                className={`${PORTAL_TOUCH_BUTTON_CLASS} mt-4 border border-emerald-500/30 bg-emerald-950/20 text-[13px] font-medium text-emerald-50/95 hover:bg-emerald-950/35`}
               >
                 <span className="text-base leading-none" aria-hidden>
                   ⬇️
@@ -5789,25 +5760,10 @@ function ClientPortalPageInner() {
                       </>
                     ) : null}
 
-                    <section
-                      style={{
-                        padding: '18px',
-                        marginBottom: 14,
-                        borderRadius: 22,
-                        background: 'rgba(15,23,42,0.55)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                      }}
-                    >
+                    <section className={PORTAL_PAYMENT_SHELL_CLASS}>
                       <label
                         htmlFor={`recharge-baas-pm-${frId}`}
-                        style={{
-                          display: 'block',
-                          fontSize: 12,
-                          opacity: 0.5,
-                          letterSpacing: '0.06em',
-                          textTransform: 'uppercase',
-                          marginBottom: 10,
-                        }}
+                        className="mb-2.5 block text-xs uppercase tracking-[0.06em] text-white/50"
                       >
                         Método de pago
                       </label>
@@ -5828,14 +5784,7 @@ function ClientPortalPageInner() {
                         isDisabled={rechargePaymentMethods.length === 0}
                         isClearable={false}
                         placeholder="Seleccionar…"
-                        styles={{
-                          ...portalPaymentMethodSelectStyles,
-                          control: (base, state) => ({
-                            ...portalPaymentMethodSelectStyles.control(base, state),
-                            borderRadius: 14,
-                            minHeight: 48,
-                          }),
-                        }}
+                        styles={portalPaymentMethodSelectStyles}
                         menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
                         menuPosition="fixed"
                       />
@@ -5847,24 +5796,8 @@ function ClientPortalPageInner() {
                     </section>
 
                     {needsDepositPickFeat ? (
-                      <section
-                        style={{
-                          padding: '18px',
-                          marginBottom: 14,
-                          borderRadius: 22,
-                          background: 'rgba(15,23,42,0.45)',
-                          border: '1px solid rgba(255,255,255,0.1)',
-                        }}
-                      >
-                        <p
-                          style={{
-                            margin: '0 0 4px',
-                            fontSize: 12,
-                            opacity: 0.5,
-                            letterSpacing: '0.06em',
-                            textTransform: 'uppercase',
-                          }}
-                        >
+                      <section className={PORTAL_PAYMENT_SHELL_CLASS}>
+                        <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
                           Cuenta donde depositar
                         </p>
                         <p style={{ margin: '0 0 12px', fontSize: 12, opacity: 0.55, lineHeight: 1.45 }}>
@@ -5922,16 +5855,7 @@ function ClientPortalPageInner() {
                                   )
                                 }
                               }}
-                              style={{
-                                width: '100%',
-                                padding: '14px 16px',
-                                borderRadius: 14,
-                                border: '1px solid rgba(255,255,255,0.12)',
-                                background: 'rgba(255,255,255,0.06)',
-                                color: '#f8fafc',
-                                fontSize: 15,
-                                fontWeight: 600,
-                              }}
+                              className={PORTAL_TOUCH_INPUT_CLASS}
                             >
                               <option value="" disabled>
                                 Seleccionar cuenta…
@@ -6435,25 +6359,10 @@ function ClientPortalPageInner() {
                             </p>
                           </section>
                         ) : (
-                          <section
-                            style={{
-                              padding: '18px',
-                              marginBottom: 14,
-                              borderRadius: 22,
-                              background: 'rgba(15,23,42,0.55)',
-                              border: '1px solid rgba(255,255,255,0.1)',
-                            }}
-                          >
+                          <section className={PORTAL_PAYMENT_SHELL_CLASS}>
                             <label
                               htmlFor={`pm-${sid}`}
-                              style={{
-                                display: 'block',
-                                fontSize: 12,
-                                opacity: 0.5,
-                                letterSpacing: '0.06em',
-                                textTransform: 'uppercase',
-                                marginBottom: 10,
-                              }}
+                              className="mb-2.5 block text-xs uppercase tracking-[0.06em] text-white/50"
                             >
                               Método de pago
                             </label>
@@ -6476,14 +6385,7 @@ function ClientPortalPageInner() {
                               isDisabled={pmList.length === 0}
                               isClearable={false}
                               placeholder="Seleccionar…"
-                              styles={{
-                                ...portalPaymentMethodSelectStyles,
-                                control: (base, state) => ({
-                                  ...portalPaymentMethodSelectStyles.control(base, state),
-                                  borderRadius: 14,
-                                  minHeight: 48,
-                                }),
-                              }}
+                              styles={portalPaymentMethodSelectStyles}
                               menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
                               menuPosition="fixed"
                             />
@@ -6497,24 +6399,8 @@ function ClientPortalPageInner() {
                         )}
 
                         {!paysOnlyWithCredit && needsDepositPick ? (
-                          <section
-                            style={{
-                              padding: '18px',
-                              marginBottom: 14,
-                              borderRadius: 22,
-                              background: 'rgba(15,23,42,0.45)',
-                              border: '1px solid rgba(255,255,255,0.1)',
-                            }}
-                          >
-                            <p
-                              style={{
-                                margin: '0 0 4px',
-                                fontSize: 12,
-                                opacity: 0.5,
-                                letterSpacing: '0.06em',
-                                textTransform: 'uppercase',
-                              }}
-                            >
+                          <section className={PORTAL_PAYMENT_SHELL_CLASS}>
+                            <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
                               Cuenta donde depositar
                             </p>
                             <p style={{ margin: '0 0 12px', fontSize: 12, opacity: 0.55, lineHeight: 1.45 }}>
@@ -6569,16 +6455,7 @@ function ClientPortalPageInner() {
                                       saleCurrency,
                                     )
                                   }}
-                                  style={{
-                                    width: '100%',
-                                    padding: '14px 16px',
-                                    borderRadius: 14,
-                                    border: '1px solid rgba(255,255,255,0.12)',
-                                    background: 'rgba(255,255,255,0.06)',
-                                    color: '#f8fafc',
-                                    fontSize: 15,
-                                    fontWeight: 600,
-                                  }}
+                                  className={PORTAL_TOUCH_INPUT_CLASS}
                                 >
                                   <option value="" disabled>
                                     Seleccionar cuenta…
