@@ -1,8 +1,8 @@
 import axios from 'axios'
-import { useCallback, useEffect, useMemo, useRef, useState, Component } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, ChevronDown, Copy, Loader2, Link2, Plus, Tag, X } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, Copy, Loader2, Link2, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
 import { formatDateTimeEcuador } from '../../utils/datetime'
 import { clientPortalPublicUrl } from '../sales/saleTableHelpers'
 import CodigosRetiroWidget, { RetiroSuccessPanel } from './CodigosRetiroWidget'
@@ -214,6 +214,105 @@ function PortalScreenCredentialRow({ label, value, flashKey, copyFlashKey, onCop
 
 const SUB_CLIENT_ACTION_BTN =
   'flex w-full items-center justify-center gap-1 rounded border py-1 px-1.5 text-[10px] leading-tight transition-colors md:inline-flex md:w-auto md:justify-center md:gap-1.5 md:rounded-md md:px-3 md:py-1.5 md:text-sm'
+
+const MOBILE_ACTION_CARD_BASE =
+  'flex min-w-0 flex-col items-center justify-center rounded-lg border border-gray-700 bg-gray-800/40 p-2 transition-colors hover:bg-gray-700/50 disabled:cursor-not-allowed disabled:opacity-40'
+
+function SubClientMobileActionCards({
+  subclient,
+  portalUrl,
+  copiedClientId,
+  onCopyLink,
+  onTransfer,
+  onPrices,
+  onEdit,
+  onDelete,
+  deleting,
+}) {
+  const clientId = Number(subclient?.id)
+  const baasBalance = Number(subclient?.wallet_balance) || 0
+  const canDelete = baasBalance <= 1e-9
+  const isCopied = Number.isFinite(clientId) && copiedClientId === clientId
+  const name = String(subclient?.name ?? subclient?.username ?? 'sub-cliente')
+
+  const cards = [
+    {
+      key: 'edit',
+      title: 'Editar',
+      sub: 'Modificar datos del cliente',
+      color: 'text-yellow-500',
+      Icon: Pencil,
+      onClick: () => onEdit?.(subclient),
+      extraClass: '',
+    },
+    {
+      key: 'transfer',
+      title: 'Transferir',
+      sub: 'Transferir saldo a distribuidores',
+      color: 'text-emerald-500',
+      Icon: ArrowLeftRight,
+      onClick: () => onTransfer(subclient),
+      extraClass: '',
+    },
+    {
+      key: 'prices',
+      title: 'Precios',
+      sub: 'Asignar y gestionar precios',
+      color: 'text-purple-500',
+      Icon: Tag,
+      onClick: () => void onPrices(subclient),
+      extraClass: '',
+    },
+    {
+      key: 'link',
+      title: isCopied ? 'Copiado' : 'Link',
+      sub: 'Compartir enlace del cliente',
+      color: isCopied ? 'text-emerald-400' : 'text-blue-500',
+      Icon: Link2,
+      onClick: () => void onCopyLink?.(subclient),
+      disabled: !portalUrl,
+      extraClass: isCopied ? 'border-emerald-700/50 bg-emerald-950/25' : '',
+    },
+    {
+      key: 'delete',
+      title: deleting ? '…' : 'Eliminar',
+      sub: 'Eliminar cliente de la lista',
+      color: 'text-red-500',
+      Icon: Trash2,
+      onClick: () => {
+        if (!canDelete) {
+          window.alert('No puedes eliminar un sub-cliente que aún tiene fondos en su billetera.')
+          return
+        }
+        onDelete?.(subclient)
+      },
+      disabled: !canDelete || deleting,
+      extraClass: 'border-red-900/50',
+    },
+  ]
+
+  return (
+    <div className="border-t border-gray-700/50 pt-3 mt-1">
+      <div className="grid grid-cols-5 gap-1.5">
+        {cards.map(({ key, title, sub, color, Icon, onClick, disabled, extraClass }) => (
+          <button
+            key={key}
+            type="button"
+            disabled={disabled}
+            onClick={onClick}
+            className={`${MOBILE_ACTION_CARD_BASE} ${extraClass}`}
+            aria-label={`${title} — ${name}`}
+            title={sub}
+          >
+            <Icon className={`mb-1 h-5 w-5 shrink-0 ${color}`} aria-hidden />
+            <span className={`text-[10px] font-bold leading-tight ${color}`}>{title}</span>
+            <span className="mt-0.5 text-center text-[8px] leading-tight text-gray-400">{sub}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 function SubClientActionsCell({
   subclient,
@@ -5240,18 +5339,12 @@ function ClientPortalPageInner() {
                   </div>
                   <div className="w-full">
                     <table className="w-full table-fixed text-[11px] md:text-sm">
-                      <colgroup>
-                        <col className="w-1/4" />
-                        <col className="w-1/4" />
-                        <col className="w-1/4" />
-                        <col className="w-1/4" />
-                      </colgroup>
                       <thead>
                         <tr className="border-b border-slate-600/40 bg-slate-950/60 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400 md:text-[11px]">
-                          <th className="w-1/4 px-1 py-1.5 text-left md:px-4 md:py-2">Cliente</th>
-                          <th className="w-1/4 px-1 py-1.5 text-left md:px-4 md:py-2">Usuario</th>
-                          <th className="w-1/4 px-1 py-1.5 text-left md:px-4 md:py-2">Saldo</th>
-                          <th className="w-1/4 px-1 py-1.5 text-left md:px-4 md:py-2">Acciones</th>
+                          <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Cliente</th>
+                          <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Usuario</th>
+                          <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Saldo</th>
+                          <th className="hidden w-1/4 px-4 py-2 text-left md:table-cell">Acciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-700/40">
@@ -5266,37 +5359,58 @@ function ClientPortalPageInner() {
                             .slice(0, 10)
                           const portalUrl = clientPortalPublicUrl(sc?.portal_token)
                           return (
-                            <tr key={`sc-${sid}`} className="bg-slate-950/35 hover:bg-slate-900/50">
-                              <td className="w-1/4 px-1 py-1.5 text-left align-top md:px-4 md:py-2">
-                                <span className="block break-words font-semibold leading-snug text-slate-50" title={label}>
-                                  {label}
-                                </span>
-                              </td>
-                              <td className="w-1/4 px-1 py-1.5 text-left align-top md:px-4 md:py-2">
-                                <span
-                                  className="block break-all font-mono text-[10px] leading-snug text-cyan-100/90 md:text-xs"
-                                  title={user}
-                                >
-                                  {user}
-                                </span>
-                              </td>
-                              <td className="w-1/4 px-1 py-1.5 text-left align-top tabular-nums font-semibold leading-snug text-fuchsia-100 md:px-4 md:py-2">
-                                {formatMoney(bal, scCur)}
-                              </td>
-                              <td className="w-1/4 px-1 py-1.5 text-left align-top md:px-4 md:py-2">
-                                <SubClientActionsCell
-                                  subclient={sc}
-                                  portalUrl={portalUrl}
-                                  copiedClientId={copiedClientId}
-                                  onCopyLink={handleCopySubClientPortalLink}
-                                  onTransfer={openTransferModal}
-                                  onPrices={openPricesModal}
-                                  onEdit={openEditSubClientModal}
-                                  onDelete={openDeleteSubClientModal}
-                                  deleting={deletingSubClientId === sid}
-                                />
-                              </td>
-                            </tr>
+                            <Fragment key={`sc-${sid}`}>
+                              <tr className="bg-slate-950/35 hover:bg-slate-900/50">
+                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
+                                  <span className="block break-words font-semibold leading-snug text-slate-50" title={label}>
+                                    {label}
+                                  </span>
+                                </td>
+                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
+                                  <span
+                                    className="block break-all font-mono text-[10px] leading-snug text-cyan-100/90 md:text-xs"
+                                    title={user}
+                                  >
+                                    {user}
+                                  </span>
+                                </td>
+                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
+                                  <span
+                                    className="inline-flex rounded-md border border-green-700 bg-green-900/30 px-2 py-1 text-[10px] font-bold tabular-nums text-green-400 md:border-0 md:bg-transparent md:p-0 md:text-sm md:font-semibold md:text-fuchsia-100"
+                                  >
+                                    {formatMoney(bal, scCur)}
+                                  </span>
+                                </td>
+                                <td className="hidden align-top px-4 py-2 text-left md:table-cell">
+                                  <SubClientActionsCell
+                                    subclient={sc}
+                                    portalUrl={portalUrl}
+                                    copiedClientId={copiedClientId}
+                                    onCopyLink={handleCopySubClientPortalLink}
+                                    onTransfer={openTransferModal}
+                                    onPrices={openPricesModal}
+                                    onEdit={openEditSubClientModal}
+                                    onDelete={openDeleteSubClientModal}
+                                    deleting={deletingSubClientId === sid}
+                                  />
+                                </td>
+                              </tr>
+                              <tr className="bg-slate-950/35 md:hidden">
+                                <td colSpan={3} className="px-2 pb-3 pt-0">
+                                  <SubClientMobileActionCards
+                                    subclient={sc}
+                                    portalUrl={portalUrl}
+                                    copiedClientId={copiedClientId}
+                                    onCopyLink={handleCopySubClientPortalLink}
+                                    onTransfer={openTransferModal}
+                                    onPrices={openPricesModal}
+                                    onEdit={openEditSubClientModal}
+                                    onDelete={openDeleteSubClientModal}
+                                    deleting={deletingSubClientId === sid}
+                                  />
+                                </td>
+                              </tr>
+                            </Fragment>
                           )
                         })}
                       </tbody>
