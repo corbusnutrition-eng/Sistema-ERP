@@ -2,7 +2,7 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, ChevronDown, Copy, Loader2, Link2, Pencil, Phone, Plus, Search, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, ChevronsUp, Copy, Loader2, Link2, Pencil, Phone, Plus, Search, Tag, Trash2, X } from 'lucide-react'
 import { formatDateTimeEcuador } from '../../utils/datetime'
 import { clientPortalPublicUrl } from '../sales/saleTableHelpers'
 import {
@@ -1797,6 +1797,18 @@ function ClientPortalPageInner() {
   const [contactErr, setContactErr] = useState(null)
 
   const phoneCountryOptions = useMemo(() => phoneCountrySelectOptions(), [])
+
+  const collapseAllSections = useCallback(() => {
+    setIsNotificationsOpen(false)
+    setIsBaasOpen(false)
+    setIsActiveScreensOpen(false)
+    setIsTrackedPurchasesOpen(false)
+    setIsResellerNetworkOpen(false)
+    setAccordionDebtOpen(false)
+    setAccordionOrdersOpen(false)
+    setLedgerOpen(false)
+    setExpandedMisComprasKey(null)
+  }, [])
 
   const loadPortal = useCallback(async (opts = {}) => {
     const silent = Boolean(opts?.silent)
@@ -5038,10 +5050,21 @@ function ClientPortalPageInner() {
           Hola, <span className="text-sky-300 break-words">{clientName}</span>
         </h1>
         {data?.client?.email ? (
-          <p className="mb-5 break-all text-center text-sm text-white/60 md:mb-6">{String(data.client.email)}</p>
+          <p className="mb-3 break-all text-center text-sm text-white/60 md:mb-4">{String(data.client.email)}</p>
         ) : (
-          <div className="mb-5 md:mb-6" />
+          <div className="mb-3 md:mb-4" />
         )}
+
+        <div className="mb-3 flex w-full justify-end px-1">
+          <button
+            type="button"
+            onClick={collapseAllSections}
+            className="flex cursor-pointer items-center gap-1.5 rounded-full border border-indigo-800/50 bg-indigo-950/50 px-3 py-1.5 text-xs text-indigo-300 transition-all hover:bg-indigo-900/80"
+          >
+            <ChevronsUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Minimizar todo
+          </button>
+        </div>
 
         <PortalNeoAccordion
           sectionId="portal-acc-notifications"
