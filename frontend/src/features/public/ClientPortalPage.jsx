@@ -5204,7 +5204,6 @@ function ClientPortalPageInner() {
             </div>
           ) : null}
         </PortalNeoAccordion>
-
         {showCxcDebtBanner ? (
           <div
             role="alert"
@@ -5222,1077 +5221,6 @@ function ClientPortalPageInner() {
             </p>
           </div>
         ) : null}
-
-        <PortalNeoAccordion
-          sectionId="portal-acc-baas"
-          title="MI BILLETERA"
-          headerAside={walletAccordionAside || '—'}
-          accent="violet"
-          expanded={isBaasOpen}
-          onToggle={() => setIsBaasOpen((o) => !o)}
-        >
-          {isBaasOpen ? (
-            portalShowsBaasSection ? (
-            <div className="space-y-5">
-              <p className="m-0 text-[13px] font-medium leading-snug text-slate-200/88">
-                Tu saldo actual
-                {walletRowsDisplay.length > 1 ? (
-                  <span className="block mt-1 text-[12px] text-violet-100/90 tabular-nums">
-                    {walletRowsDisplay.map((r) => formatMoney(r.amount, r.currency)).join(' · ')}
-                  </span>
-                ) : (
-                  <span className="block mt-1 text-lg font-bold tabular-nums text-violet-50">
-                    {formatMoney(clientWalletBalanceNum, portalWalletCurrencyLabel)}
-                  </span>
-                )}
-              </p>
-
-              {latestActiveScreen ? (
-                <div
-                  className="rounded-2xl border border-cyan-400/35 p-5 transition-all duration-300"
-                  style={{
-                    background: 'rgba(34,211,238,0.08)',
-                    boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
-                  }}
-                  aria-label="Última pantalla asignada"
-                >
-                  <p className="m-0 text-[11px] font-extrabold uppercase leading-tight tracking-[0.14em] text-cyan-100/95 sm:text-xs">
-                    Última pantalla asignada
-                  </p>
-                  <p className="mt-2 mb-0 text-sm font-bold text-slate-50">
-                    {String(latestActiveScreen?.package_name ?? 'Pantalla').trim() || 'Pantalla'}
-                  </p>
-                  {formatPortalAssignedAt(latestActiveScreen?.assigned_at) ? (
-                    <p className="mt-1 mb-0 text-xs text-slate-400">
-                      Asignada:{' '}
-                      <span className="font-medium text-cyan-100/90">
-                        {formatPortalAssignedAt(latestActiveScreen.assigned_at)}
-                      </span>
-                    </p>
-                  ) : null}
-                  <div className="mt-3 space-y-2">
-                    <PortalScreenCredentialRow
-                      label="Usuario"
-                      value={latestActiveScreen?.username}
-                      flashKey={`latest-user-${latestActiveScreen?.screen_stock_id}`}
-                      copyFlashKey={copyFlashKey}
-                      onCopy={handleCopyScreenField}
-                    />
-                    <PortalScreenCredentialRow
-                      label="Contraseña"
-                      value={latestActiveScreen?.password}
-                      flashKey={`latest-pass-${latestActiveScreen?.screen_stock_id}`}
-                      copyFlashKey={copyFlashKey}
-                      onCopy={handleCopyScreenField}
-                    />
-                  </div>
-                  {!String(latestActiveScreen?.username ?? '').trim() &&
-                  !String(latestActiveScreen?.password ?? '').trim() ? (
-                    <p className="mt-2 mb-0 text-xs text-amber-200/85">
-                      Pantalla activa sin credenciales en bodega. Contacta a soporte.
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <div
-                className="rounded-2xl border border-violet-500/35 p-5 transition-all duration-300"
-                style={{
-                  background: 'rgba(139,92,246,0.12)',
-                  boxShadow: '0 14px 40px rgba(0,0,0,0.28)',
-                }}
-                aria-label="Comprar pantallas"
-              >
-                <div className="mb-4">
-                  <p className="m-0 text-[11px] font-extrabold uppercase leading-tight tracking-[0.14em] text-cyan-100/95 sm:text-xs">
-                    Comprar pantallas
-                  </p>
-                  <p className="m-1.5 mb-0 text-[12px] font-medium leading-snug text-slate-200/75">
-                    Catálogo Flujo completo — los productos sin precio requieren asignación por tu distribuidor
-                  </p>
-                </div>
-
-                {autoPurchaseLoading ? (
-                  <p className="m-0 text-sm text-violet-100/75 flex items-center gap-2">
-                    <Loader2 size={16} className="animate-spin" />
-                    Cargando catálogo…
-                  </p>
-                ) : autoPurchaseErr ? (
-                  <p className="m-0 text-sm text-red-200">{autoPurchaseErr}</p>
-                ) : autoPurchaseProducts.length === 0 ? (
-                  <p className="m-0 text-sm text-slate-300/65">
-                    No hay productos Flujo activos en el catálogo en este momento.
-                  </p>
-                ) : (
-                  <ul className="m-0 p-0 list-none space-y-3">
-                    {autoPurchaseProducts.map((p) => {
-                      const pkgId = Number(p?.package_catalog_id)
-                      const cur = portalProductCurrency(p, clientBaseCurrency)
-                      const unitPrice = portalSaleUnitPrice(p, assignedPricesMap, clientBaseCurrency)
-                      const hasAssignedPrice = Number.isFinite(unitPrice) && unitPrice > 0
-                      const stock = Number(p?.free_stock ?? 0)
-                      const isOutOfStock = stock <= 0
-                      const qty = Math.max(
-                        1,
-                        Math.min(200, parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1),
-                      )
-                      const lineTotal = hasAssignedPrice ? unitPrice * qty : NaN
-                      const canAfford =
-                        hasAssignedPrice &&
-                        Number.isFinite(lineTotal) &&
-                        getClientWalletBalance(cur) + 1e-9 >= lineTotal
-                      const busy = autoPurchaseBusyId === pkgId
-                      const purchaseLocked = busy || confirmingPurchase != null || autoPurchaseBusyId != null
-                      return (
-                        <li
-                          key={`ap-${pkgId}`}
-                          className="flex flex-col rounded-xl border border-violet-300/25 bg-slate-950/30 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                        >
-                          <p className="mb-4 w-full text-center text-lg font-bold leading-snug text-violet-50">
-                            {String(p?.name ?? '—')}
-                          </p>
-
-                          {hasAssignedPrice ? (
-                            <div className="flex w-full flex-row items-center justify-between gap-2">
-                              <div className="flex min-w-0 flex-col gap-1">
-                                <p className="m-0 text-xs leading-snug text-slate-300/80">
-                                  Stock:{' '}
-                                  <span
-                                    className={`text-xl font-bold tabular-nums ${
-                                      isOutOfStock ? 'text-red-500' : 'text-green-500'
-                                    }`}
-                                  >
-                                    {stock}
-                                  </span>
-                                </p>
-                                <p className="m-0 text-xs leading-snug text-slate-300/80">
-                                  Precio:{' '}
-                                  <span className="font-medium tabular-nums text-fuchsia-100">
-                                    {formatMoney(unitPrice, cur)}
-                                  </span>
-                                </p>
-                              </div>
-
-                              <div className="flex shrink-0 flex-row items-center gap-2">
-                                <label className="flex flex-col items-center gap-0.5 text-[11px] text-slate-300">
-                                  Cant.
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={200}
-                                    value={qty}
-                                    disabled={isOutOfStock || purchaseLocked}
-                                    onChange={(e) => {
-                                      const v = e.target.value
-                                      setAutoPurchaseQtyByPackageId((prev) => ({
-                                        ...prev,
-                                        [String(pkgId)]: v,
-                                      }))
-                                    }}
-                                    className="min-h-[40px] w-14 rounded-lg border border-violet-400/35 bg-slate-900/70 px-1.5 py-1.5 text-sm text-violet-50 tabular-nums touch-manipulation"
-                                  />
-                                </label>
-                                <button
-                                  type="button"
-                                  disabled={isOutOfStock || !canAfford || purchaseLocked}
-                                  onClick={() =>
-                                    setConfirmingPurchase({
-                                      packageCatalogId: pkgId,
-                                      packageName: String(p?.name ?? '—'),
-                                      quantity: qty,
-                                      unitPrice,
-                                      totalPrice: lineTotal,
-                                      currency: cur,
-                                      step: 'choose',
-                                      endCustomerName: '',
-                                      endCustomerDialCode: '+593',
-                                      endCustomerLocalNumber: '',
-                                      trackingErr: null,
-                                    })
-                                  }
-                                  className={
-                                    isOutOfStock
-                                      ? `${PORTAL_TOUCH_BUTTON_CLASS} !w-auto shrink-0 bg-gray-500 px-3 text-xs font-bold opacity-60 cursor-not-allowed sm:px-4 sm:text-sm`
-                                      : `${PORTAL_TOUCH_BUTTON_PRIMARY_CLASS} !w-auto shrink-0 px-3 text-xs font-bold sm:px-4 sm:text-sm`
-                                  }
-                                >
-                                  {busy ? 'Procesando…' : isOutOfStock ? 'Agotado' : 'Comprar'}
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex w-full flex-row items-center justify-between gap-2">
-                              <div className="flex min-w-0 flex-col gap-1">
-                                <p className="m-0 text-xs leading-snug text-slate-300/80">
-                                  Stock:{' '}
-                                  <span
-                                    className={`text-xl font-bold tabular-nums ${
-                                      isOutOfStock ? 'text-red-500' : 'text-green-500'
-                                    }`}
-                                  >
-                                    {stock}
-                                  </span>
-                                </p>
-                              </div>
-                              <p className="m-0 max-w-[10rem] shrink-0 text-right text-[11px] leading-snug text-amber-200/90">
-                                Contacta a tu distribuidor para habilitar y asignar precios a este producto.
-                              </p>
-                            </div>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-
-                {autoPurchaseProducts.some((p) => {
-                  const pkgId = Number(p?.package_catalog_id)
-                  const pCur = portalProductCurrency(p, clientBaseCurrency)
-                  const unitPrice = portalSaleUnitPrice(p, assignedPricesMap, clientBaseCurrency)
-                  if (!Number.isFinite(unitPrice) || unitPrice <= 0) return false
-                  const qty = Math.max(
-                    1,
-                    Math.min(200, parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1),
-                  )
-                  const total = unitPrice * qty
-                  return Number.isFinite(total) && getClientWalletBalance(pCur) + 1e-9 < total
-                }) ? (
-                  <p className="mt-4 mb-0 text-xs text-amber-200/90">
-                    Algunos paquetes requieren más saldo del disponible ({walletAccordionAside}).
-                  </p>
-                ) : null}
-
-                {autoPurchaseFeedback ? (
-                  <div
-                    className={`mt-4 rounded-xl border px-3 py-2.5 text-sm leading-relaxed ${
-                      autoPurchaseFeedback?.ok === false
-                        ? 'border-red-400/40 bg-red-950/40 text-red-100'
-                        : 'border-emerald-400/40 bg-emerald-950/35 text-emerald-50'
-                    }`}
-                  >
-                    <p className="m-0 font-semibold">{String(autoPurchaseFeedback?.message ?? '')}</p>
-                    {autoPurchaseFeedback?.fulfilled && autoPurchaseFeedback?.credentialsMissing ? (
-                      <p className="mt-2 mb-0 rounded-lg border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-xs text-amber-100">
-                        Pantalla asignada, pero faltan credenciales en bodega. Contacta a soporte.
-                      </p>
-                    ) : null}
-                    {Array.isArray(autoPurchaseFeedback?.credentials) &&
-                    autoPurchaseFeedback.credentials.some((c) => c?.hasCredentials) ? (
-                      <ul className="mt-3 mb-0 pl-0 list-none space-y-2 text-sm">
-                        {autoPurchaseFeedback.credentials.map((c, idx) =>
-                          c?.hasCredentials ? (
-                            <li
-                              key={`cred-${c?.screen_stock_id ?? idx}`}
-                              className="rounded-xl border border-slate-600/50 bg-slate-950/80 px-4 py-3 shadow-inner"
-                            >
-                              {autoPurchaseFeedback.credentials.length > 1 ? (
-                                <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                                  Pantalla {idx + 1}
-                                </p>
-                              ) : null}
-                              <div className="space-y-1.5 font-mono text-[13px]">
-                                <div>
-                                  <span className="text-slate-400">Usuario: </span>
-                                  <strong className="font-bold text-white">{c.username}</strong>
-                                </div>
-                                <div>
-                                  <span className="text-slate-400">Contraseña: </span>
-                                  <strong className="font-bold text-white">{c.password}</strong>
-                                </div>
-                              </div>
-                            </li>
-                          ) : null,
-                        )}
-                      </ul>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            ) : (
-              <p className="m-0 text-sm leading-relaxed text-slate-400/90">
-                Esta sección aplica cuando tienes billetera BaaS, recargas o pantallas Flujo activas.
-              </p>
-            )
-          ) : null}
-        </PortalNeoAccordion>
-
-        <PortalNeoAccordion
-          sectionId="portal-acc-active-screens"
-          title="MIS PANTALLAS ACTIVAS"
-          subtitle="Credenciales de tus compras ya activadas"
-          headerAside={
-            activeScreens.length > 0 ? (
-              <span
-                className="inline-flex min-h-[1.75rem] min-w-[1.75rem] items-center justify-center rounded-full border border-cyan-300/45 bg-cyan-500/20 px-2 text-xs font-extrabold tabular-nums text-cyan-50 shadow-[0_0_12px_rgba(34,211,238,0.25)]"
-                title={`${activeScreens.length} pantalla${activeScreens.length === 1 ? '' : 's'} activa${activeScreens.length === 1 ? '' : 's'}`}
-              >
-                {activeScreens.length}
-              </span>
-            ) : (
-              '0'
-            )
-          }
-          accent="sapphire"
-          expanded={isActiveScreensOpen}
-          onToggle={() => {
-            setIsActiveScreensOpen((o) => {
-              const next = !o
-              if (next) void loadPortal({ silent: true })
-              return next
-            })
-          }}
-        >
-          {isActiveScreensOpen ? (
-            <div className="space-y-3">
-              {activeScreens.length === 0 ? (
-                <p className="m-0 text-sm text-slate-400/80">Aún no tienes pantallas activas.</p>
-              ) : (
-                <>
-                  <ul className="m-0 list-none space-y-3 p-0">
-                    {paginatedActiveScreens.map((scr) => {
-                      const sid = Number(scr?.screen_stock_id)
-                      const saleId = Number(scr?.sale_id)
-                      const pkg = String(scr?.package_name ?? 'Pantalla').trim() || 'Pantalla'
-                      const user = String(scr?.username ?? '').trim()
-                      const pass = String(scr?.password ?? '').trim()
-                      const assignedLabel = formatPortalAssignedAt(scr?.assigned_at)
-                      const expLabel = formatPortalScreenExpiry(scr?.expiration_date)
-                      const userKey = `user-${sid}`
-                      const passKey = `pass-${sid}`
-                      return (
-                        <li
-                          key={`active-scr-${sid}-${saleId}`}
-                          className="rounded-xl border border-slate-600/45 bg-slate-950/75 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1">
-                              <p className="m-0 text-sm font-bold text-slate-50">{pkg}</p>
-                              {assignedLabel ? (
-                                <p className="mt-1 mb-0 text-xs text-cyan-200/80">
-                                  Asignada: <span className="font-medium text-cyan-50">{assignedLabel}</span>
-                                </p>
-                              ) : null}
-                              {expLabel ? (
-                                <p className="mt-1 mb-0 text-xs text-slate-400">
-                                  Vence: <span className="text-slate-200">{expLabel}</span>
-                                </p>
-                              ) : null}
-                            </div>
-                            <span className="shrink-0 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                              FAC-{String(saleId).padStart(4, '0')}
-                            </span>
-                          </div>
-                          <div className="mt-3 space-y-2">
-                            <PortalScreenCredentialRow
-                              label="Usuario"
-                              value={user}
-                              flashKey={userKey}
-                              copyFlashKey={copyFlashKey}
-                              onCopy={handleCopyScreenField}
-                            />
-                            <PortalScreenCredentialRow
-                              label="Contraseña"
-                              value={pass}
-                              flashKey={passKey}
-                              copyFlashKey={copyFlashKey}
-                              onCopy={handleCopyScreenField}
-                            />
-                          </div>
-                          {!user && !pass ? (
-                            <p className="mt-2 mb-0 text-xs text-amber-200/85">
-                              Pantalla activa sin credenciales en bodega. Contacta a soporte.
-                            </p>
-                          ) : null}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                  {totalActivePages > 1 ? (
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 pt-4">
-                      <button
-                        type="button"
-                        disabled={activeScreensPage <= 1}
-                        onClick={() => setActiveScreensPage((p) => Math.max(1, p - 1))}
-                        className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Anterior
-                      </button>
-                      <span className="text-xs font-medium text-slate-300 tabular-nums">
-                        Página {activeScreensPage} de {totalActivePages}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={activeScreensPage >= totalActivePages}
-                        onClick={() =>
-                          setActiveScreensPage((p) => Math.min(totalActivePages, p + 1))
-                        }
-                        className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        Siguiente
-                      </button>
-                    </div>
-                  ) : null}
-                </>
-              )}
-            </div>
-          ) : null}
-        </PortalNeoAccordion>
-
-        <PortalNeoAccordion
-          sectionId="portal-acc-tracked-purchases"
-          title="MIS COMPRAS"
-          subtitle="Seguimiento de clientes finales y vencimiento de pantallas"
-          headerAside={
-            trackedPurchases.length > 0 ? (
-              <span
-                className="inline-flex min-h-[1.75rem] min-w-[1.75rem] items-center justify-center rounded-full border border-emerald-300/45 bg-emerald-500/20 px-2 text-xs font-extrabold tabular-nums text-emerald-50 shadow-[0_0_12px_rgba(52,211,153,0.25)]"
-                title={`${trackedPurchases.length} compra${trackedPurchases.length === 1 ? '' : 's'} con seguimiento`}
-              >
-                {trackedPurchases.length}
-              </span>
-            ) : (
-              '0'
-            )
-          }
-          accent="emerald"
-          expanded={isTrackedPurchasesOpen}
-          onToggle={() => {
-            setIsTrackedPurchasesOpen((o) => {
-              const next = !o
-              if (next) void loadTrackedPurchases()
-              return next
-            })
-          }}
-        >
-          {isTrackedPurchasesOpen ? (
-            <div className="space-y-3">
-              {trackedPurchasesLoading ? (
-                <p className="m-0 flex items-center gap-2 text-sm text-slate-300">
-                  <Loader2 size={16} className="animate-spin" />
-                  Cargando compras…
-                </p>
-              ) : trackedPurchasesErr ? (
-                <p className="m-0 text-sm text-red-200">{trackedPurchasesErr}</p>
-              ) : trackedPurchases.length === 0 ? (
-                <p className="m-0 text-sm text-slate-400/85">
-                  Aún no tienes compras con seguimiento de cliente. Al confirmar una compra, elige
-                  «Comprar con seguimiento al cliente» para registrar nombre y teléfono.
-                </p>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-600/35 pb-3">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('todos')}
-                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                        activeTab === 'todos'
-                          ? 'border border-emerald-400/50 bg-emerald-500/25 text-emerald-50'
-                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
-                      }`}
-                    >
-                      Todos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('seguimiento')}
-                      className={`inline-flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                        activeTab === 'seguimiento'
-                          ? 'border border-amber-400/50 bg-amber-500/20 text-amber-50'
-                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
-                      }`}
-                    >
-                      Seguimiento
-                      {trackedPurchasesSeguimientoCount > 0 ? (
-                        <span className="inline-flex min-w-[1.125rem] items-center justify-center rounded-full bg-amber-400/25 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-amber-100">
-                          {trackedPurchasesSeguimientoCount}
-                        </span>
-                      ) : null}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('caducados')}
-                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                        activeTab === 'caducados'
-                          ? 'border border-red-400/50 bg-red-500/20 text-red-50'
-                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
-                      }`}
-                    >
-                      Caducados
-                      {trackedPurchasesCaducadosCount > 0 ? (
-                        <span className="ml-1.5 tabular-nums text-[10px] opacity-90">
-                          ({trackedPurchasesCaducadosCount})
-                        </span>
-                      ) : null}
-                    </button>
-                  </div>
-                  {filteredTrackedPurchases.length === 0 ? (
-                    <p className="m-0 py-6 text-center text-sm text-slate-400/80">
-                      {activeTab === 'seguimiento'
-                        ? 'No hay clientes con vencimiento próximo a 5 días.'
-                        : activeTab === 'caducados'
-                          ? 'No hay compras caducadas en este momento.'
-                          : 'No hay compras para mostrar.'}
-                    </p>
-                  ) : (
-                <>
-                <ul className="m-0 list-none space-y-3 p-0">
-                  {paginatedMisCompras.map((item) => {
-                    const key = trackedPurchaseCardKey(item)
-                    return (
-                      <TrackedPurchaseCard
-                        key={key}
-                        item={item}
-                        expanded={expandedMisComprasKey === key}
-                        onToggle={() =>
-                          setExpandedMisComprasKey((prev) => (prev === key ? null : key))
-                        }
-                      />
-                    )
-                  })}
-                </ul>
-                {totalMisComprasPages > 1 ? (
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 pt-4">
-                    <button
-                      type="button"
-                      disabled={misComprasPage <= 1}
-                      onClick={() => setMisComprasPage((p) => Math.max(1, p - 1))}
-                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Anterior
-                    </button>
-                    <span className="text-xs font-medium text-slate-300 tabular-nums">
-                      Página {misComprasPage} de {totalMisComprasPages}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={misComprasPage >= totalMisComprasPages}
-                      onClick={() =>
-                        setMisComprasPage((p) => Math.min(totalMisComprasPages, p + 1))
-                      }
-                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Siguiente
-                    </button>
-                  </div>
-                ) : null}
-                </>
-                  )}
-                </>
-              )}
-            </div>
-          ) : null}
-        </PortalNeoAccordion>
-
-        <PortalNeoAccordion
-          sectionId="portal-acc-reseller-network"
-          title="MI RED DE DISTRIBUIDORES"
-          subtitle="Crea sub-clientes, transfiere saldo BaaS y asigna precios"
-          headerAside={resellerNetworkAside}
-          accent="violet"
-          expanded={isResellerNetworkOpen}
-          onToggle={() => setIsResellerNetworkOpen((o) => !o)}
-        >
-          {isResellerNetworkOpen ? (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void openCreateSubClientModal()}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-violet-400/40 bg-violet-500/20 px-4 py-2.5 text-sm font-bold text-violet-50 transition hover:bg-violet-500/30"
-                >
-                  <Plus size={16} aria-hidden />
-                  Crear Sub-cliente
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void loadSubClients()}
-                  disabled={subClientsLoading}
-                  className="rounded-lg border border-slate-500/40 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800/50 disabled:opacity-45"
-                >
-                  Actualizar lista
-                </button>
-                <button
-                  type="button"
-                  onClick={openContactModal}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-950/30 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-900/40"
-                >
-                  <Phone size={14} aria-hidden />
-                  Contacto
-                </button>
-              </div>
-
-              {subClientsLoading ? (
-                <p className="m-0 flex items-center gap-2 text-sm text-slate-300">
-                  <Loader2 size={16} className="animate-spin" />
-                  Cargando red…
-                </p>
-              ) : subClientsErr ? (
-                <p className="m-0 text-sm text-red-200">{subClientsErr}</p>
-              ) : subClients.length === 0 ? (
-                <p className="m-0 text-sm text-slate-400/85">
-                  Aún no tienes sub-clientes. Crea el primero para revender pantallas con tu propia red.
-                </p>
-              ) : (
-                <div className="rounded-xl border border-slate-600/40">
-                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-600/35 px-3 py-3">
-                    <button
-                      type="button"
-                      onClick={() => setActiveFilter('all')}
-                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                        activeFilter === 'all'
-                          ? 'border border-violet-400/50 bg-violet-500/25 text-violet-50'
-                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
-                      }`}
-                    >
-                      Todos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveFilter('zeros')}
-                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-                        activeFilter === 'zeros'
-                          ? 'border border-amber-400/50 bg-amber-500/20 text-amber-50'
-                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
-                      }`}
-                    >
-                      Seguimiento clientes
-                      {zeroBalanceSubClientCount > 0 ? (
-                        <span className="ml-1.5 tabular-nums text-[10px] opacity-90">
-                          ({zeroBalanceSubClientCount})
-                        </span>
-                      ) : null}
-                    </button>
-                  </div>
-                  <div className="relative mb-4 px-3 pt-3">
-                    <Search
-                      size={16}
-                      className="pointer-events-none absolute left-6 top-1/2 -translate-y-1/2 text-indigo-400"
-                      aria-hidden
-                    />
-                    <input
-                      type="search"
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      placeholder="Buscar por nombre o usuario…"
-                      className="w-full rounded-lg border border-indigo-800/50 bg-indigo-950/30 py-2 pl-10 pr-4 text-sm text-indigo-100 placeholder-indigo-400 transition-colors focus:border-indigo-500 focus:outline-none"
-                    />
-                  </div>
-                  {filteredClients.length === 0 ? (
-                    <p className="m-0 px-3 pb-4 text-sm text-slate-400/85">
-                      {searchTerm.trim()
-                        ? 'No se encontraron clientes que coincidan con la búsqueda.'
-                        : 'No hay sub-clientes con saldo BaaS en cero en este momento.'}
-                    </p>
-                  ) : (
-                    <>
-                  <div className="w-full">
-                    <table className="w-full table-fixed text-[11px] md:text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-600/40 bg-slate-950/60 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400 md:text-[11px]">
-                          <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Cliente</th>
-                          <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Usuario</th>
-                          <th className="w-1/3 px-1 py-1.5 text-left md:w-2/4 md:px-4 md:py-2">Saldo</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-700/40">
-                        {currentSubClients.map((sc) => {
-                          const sid = Number(sc?.id)
-                          const label = String(sc?.name ?? sc?.username ?? '—').trim() || '—'
-                          const user = String(sc?.username ?? '—').trim() || '—'
-                          const bal = Number(sc?.wallet_balance) || 0
-                          const scCur = String(sc?.currency ?? clientBaseCurrency)
-                            .trim()
-                            .toUpperCase()
-                            .slice(0, 10)
-                          const portalUrl = clientPortalPublicUrl(sc?.portal_token)
-                          const isExpanded = expandedClientId === sid
-                          const toggleExpanded = () =>
-                            setExpandedClientId((prev) => (prev === sid ? null : sid))
-                          return (
-                            <Fragment key={`sc-${sid}`}>
-                              <tr
-                                role="button"
-                                tabIndex={0}
-                                aria-expanded={isExpanded}
-                                onClick={toggleExpanded}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault()
-                                    toggleExpanded()
-                                  }
-                                }}
-                                className="cursor-pointer bg-slate-950/35 transition-colors hover:bg-white/5"
-                              >
-                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
-                                  <span className="block break-words font-semibold leading-snug text-slate-50" title={label}>
-                                    {label}
-                                  </span>
-                                </td>
-                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
-                                  <span
-                                    className="block break-all font-mono text-[10px] leading-snug text-cyan-100/90 md:text-xs"
-                                    title={user}
-                                  >
-                                    {user}
-                                  </span>
-                                </td>
-                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-2/4 md:px-4 md:py-2">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span
-                                      className="inline-flex rounded-md border border-green-700 bg-green-900/30 px-2 py-1 text-[10px] font-bold tabular-nums text-green-400 md:border-0 md:bg-transparent md:p-0 md:text-sm md:font-semibold md:text-fuchsia-100"
-                                    >
-                                      {formatMoney(bal, scCur)}
-                                    </span>
-                                    <ChevronDown
-                                      aria-hidden
-                                      size={18}
-                                      strokeWidth={2.25}
-                                      className={`shrink-0 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                                    />
-                                  </div>
-                                </td>
-                              </tr>
-                              {isExpanded ? (
-                                <tr className="bg-slate-950/25">
-                                  <td colSpan={3} className="px-2 pb-3 pt-0 md:px-4">
-                                    <div className="md:hidden">
-                                      <SubClientMobileActionCards
-                                        subclient={sc}
-                                        portalUrl={portalUrl}
-                                        copiedClientId={copiedClientId}
-                                        onCopyLink={handleCopySubClientPortalLink}
-                                        onTransfer={openTransferModal}
-                                        onPrices={openPricesModal}
-                                        onEdit={openEditSubClientModal}
-                                        onDelete={openDeleteSubClientModal}
-                                        deleting={deletingSubClientId === sid}
-                                      />
-                                    </div>
-                                    <div className="hidden border-t border-slate-700/40 pt-3 md:block">
-                                      <SubClientActionsCell
-                                        subclient={sc}
-                                        portalUrl={portalUrl}
-                                        copiedClientId={copiedClientId}
-                                        onCopyLink={handleCopySubClientPortalLink}
-                                        onTransfer={openTransferModal}
-                                        onPrices={openPricesModal}
-                                        onEdit={openEditSubClientModal}
-                                        onDelete={openDeleteSubClientModal}
-                                        deleting={deletingSubClientId === sid}
-                                      />
-                                    </div>
-                                  </td>
-                                </tr>
-                              ) : null}
-                            </Fragment>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 px-3 py-3">
-                    <button
-                      type="button"
-                      disabled={currentPage === 1}
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Anterior
-                    </button>
-                    <span className="text-xs font-medium text-slate-300 tabular-nums">
-                      Página {currentPage} de {Math.ceil(sortedSubClients.length / itemsPerPage) || 1}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={currentPage >= totalSubClientPages}
-                      onClick={() => setCurrentPage((p) => Math.min(totalSubClientPages, p + 1))}
-                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Siguiente
-                    </button>
-                  </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : null}
-        </PortalNeoAccordion>
-
-        {showSaldoAFavorCard ? (
-        <section
-          aria-label="Saldo a favor"
-          className={`${PORTAL_SECTION_SHELL_CLASS} relative mb-4 overflow-hidden rounded-[20px] border-2 border-emerald-400/45 shadow-[inset_0_1px_0_rgba(167,243,208,0.12),0_22px_48px_rgba(0,0,0,0.38)] transition-all duration-300 md:mb-6 md:rounded-[22px]`}
-          style={{
-            background: 'linear-gradient(145deg, rgba(6,78,59,0.52), rgba(16,185,129,0.22), rgba(14,21,41,0.72))',
-          }}
-        >
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 rounded-[inherit] bg-gradient-to-br from-emerald-400/30 via-transparent to-teal-400/18 opacity-95"
-          />
-          <div className="relative z-[1] flex min-h-[48px] touch-manipulation flex-wrap items-center justify-between gap-x-4 gap-y-3 px-3 py-3.5 md:px-[18px] md:py-4">
-            <div className="min-w-0 flex-1 pr-2">
-              <p className="m-0 text-[11px] font-extrabold uppercase leading-tight tracking-[0.16em] text-emerald-100 sm:text-xs">
-                SALDO A FAVOR
-              </p>
-              <p className="m-1.5 mb-0 text-[13px] font-medium leading-snug text-slate-200/88">
-                Anticipos y sobrepagos disponibles para pagar pedidos o deudas
-              </p>
-            </div>
-            <span
-              className="max-w-[12rem] shrink-0 whitespace-normal text-right text-lg font-extrabold leading-tight tracking-tight text-emerald-50 tabular-nums sm:max-w-[16rem] sm:text-[22px]"
-              title={totalCreditLabel}
-            >
-              {totalCreditLabel}
-            </span>
-          </div>
-        </section>
-        ) : null}
-
-        {showSaldoPendienteSection ? (
-        <PortalNeoAccordion
-          sectionId="portal-acc-debt"
-          title="SALDO PENDIENTE"
-          subtitle="Facturas, recargas BaaS y abonos"
-          headerAside={totalDebtLabel || '—'}
-          accent="emerald"
-          expanded={accordionDebtOpen}
-          onToggle={() => setAccordionDebtOpen((o) => !o)}
-        >
-        <div
-          className="rounded-2xl border border-emerald-500/35 p-5 transition-all duration-300"
-          style={{
-            background: 'rgba(16,185,129,0.12)',
-            boxShadow: '0 14px 40px rgba(0,0,0,0.28)',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              justifyContent: 'space-between',
-              alignItems: 'flex-start',
-              gap: 16,
-            }}
-          >
-            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
-              <p style={{ margin: '0 0 6px', fontSize: 12, opacity: 0.65, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                Saldo pendiente por pagar
-              </p>
-              <p style={{ margin: 0, fontSize: 30, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{totalDebtLabel}</p>
-              {creditRowsDisplay.length > 0 ? (
-                <p
-                  style={{
-                    margin: '10px 0 0',
-                    padding: '10px 12px',
-                    borderRadius: 12,
-                    background: 'rgba(16,185,129,0.22)',
-                    border: '1px solid rgba(52,211,153,0.45)',
-                    fontSize: 14,
-                    fontWeight: 600,
-                    lineHeight: 1.45,
-                    color: '#a7f3d0',
-                  }}
-                >
-                  Saldo a favor disponible:{' '}
-                  <span style={{ fontVariantNumeric: 'tabular-nums', color: '#ecfdf5' }}>
-                    {totalCreditLabel}
-                  </span>
-                  {' '}(Aplicable a futuras compras)
-                </p>
-              ) : null}
-              {creditRowsDisplay.length > 1 ? (
-                <ul style={{ margin: '10px 0 0', padding: 0, listStyle: 'none', fontSize: 14, opacity: 0.88 }}>
-                  {creditRowsDisplay.map((r) => (
-                    <li key={`credit-${String(r.currency)}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                      <span>{String(r.currency)} a favor</span>
-                      <span style={{ fontWeight: 600 }}>{formatMoney(r.amount, String(r.currency))}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {debtRowsDisplay.length > 1 ? (
-                <ul style={{ margin: '12px 0 0', padding: 0, listStyle: 'none', fontSize: 14, opacity: 0.88 }}>
-                  {debtRowsDisplay.map((r) => (
-                    <li key={String(r.currency)} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                      <span>{String(r.currency)}</span>
-                      <span style={{ fontWeight: 600 }}>{formatMoney(r.amount, String(r.currency))}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          </div>
-          <p style={{ margin: '14px 0 0', fontSize: 12, opacity: 0.55, lineHeight: 1.45 }}>
-            Incluye facturas/pedidos con saldo pendiente y recargas BaaS con importe pendiente por cubrir.{' '}
-            {hasHistoricalDebt && !hasNewOrders
-              ? 'Los abonos de facturas y los comprobantes de recarga se revisan antes de aplicarse.'
-              : hasNewOrders && !hasHistoricalDebt
-                ? 'Los pedidos nuevos se pagan desde «NUEVOS PEDIDOS PARA PAGO». Las recargas con saldo pendiente pueden abonarse aquí mediante «Abono a deuda pendiente».'
-                : '«NUEVOS PEDIDOS PARA PAGO» muestra pedidos y recargas con saldo pendiente, incluidos abonos parciales. Aquí tienes tu estado de cuenta, deuda histórica y el formulario «Abono a deuda pendiente».'}
-          </p>
-          {walletRechargesErr ?
-            <p style={{ margin: '12px 0 0', fontSize: 13, lineHeight: 1.45, color: '#fecaca' }}>{walletRechargesErr}</p>
-          : null}
-
-          {showAccountLedgerSection ?
-            <>
-              {pendingLedgerObligations.length > 1 ?
-                <div className="mt-4 flex flex-col gap-1">
-                  <label htmlFor="portal-ledger-obligation-select" className="text-[11px] uppercase tracking-wide text-emerald-200/55">
-                    Ver estado y movimientos de
-                  </label>
-                  <select
-                    id="portal-ledger-obligation-select"
-                    className={`${PORTAL_TOUCH_INPUT_CLASS} mt-2`}
-                    value={effectiveLedgerFocusKey}
-                    onChange={(e) => setLedgerFocusKey(e.target.value)}
-                    className="w-full rounded-xl border border-emerald-500/25 bg-slate-950/60 px-3 py-2.5 text-[13px] font-medium text-emerald-50 outline-none ring-0 focus:border-emerald-400/50"
-                  >
-                    {pendingLedgerObligations.map((o) => (
-                      <option key={o.key} value={o.key}>
-                        {o.summaryLabel} — {formatMoney(o.pendingAmount, o.currency)} pendiente
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              : null}
-              <button
-                type="button"
-                aria-expanded={ledgerOpen}
-                onClick={() => setLedgerOpen((o) => !o)}
-                className={`${PORTAL_TOUCH_BUTTON_CLASS} mt-4 border border-emerald-500/30 bg-emerald-950/20 text-[13px] font-medium text-emerald-50/95 hover:bg-emerald-950/35`}
-              >
-                <span className="text-base leading-none" aria-hidden>
-                  ⬇️
-                </span>
-                <span>
-                  Ver estado y movimientos —{' '}
-                  <span className="tabular-nums">
-                    {(pendingLedgerObligations.find((o) => o.key === effectiveLedgerFocusKey) ?? pendingLedgerObligations[0])
-                      ?.summaryLabel ?? '—'}
-                  </span>
-                </span>
-                <ChevronDown
-                  className={`h-4 w-4 shrink-0 opacity-80 transition-transform duration-300 ${ledgerOpen ? 'rotate-180' : ''}`}
-                  aria-hidden
-                />
-              </button>
-
-              <div
-                className={`grid overflow-hidden transition-all duration-300 ease-out ${ledgerOpen ? 'mt-4 grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
-              >
-                <div className="min-h-0">
-                  {!ledgerOpen ? null : portalLedgerDisplay.length === 0 ?
-                    <p className="m-0 rounded-xl border border-white/10 bg-black/25 px-4 py-8 text-center text-[13px] text-slate-400">
-                      No hay movimientos públicos para esta consulta todavía (cuando registres pagos o abonos aparecerán aquí).
-                    </p>
-                  : (
-                    <div className="max-h-[min(28rem,calc(100vh-220px))] overflow-y-auto rounded-xl border border-white/10 bg-black/22 px-3 py-3 sm:px-4">
-                      <ul className="m-0 list-none space-y-0 pl-3">
-                        {portalLedgerDisplay.map((row, idx) => {
-                          const isPayment = row.type === 'payment'
-                          const amt = parseMoneyNum(row.amount)
-                          const cur = row.currency ? String(row.currency).trim().toUpperCase().slice(0, 10) : 'USD'
-                          const looksLikeRecarga = /^REC-/i.test(String(row.reference ?? ''))
-                          const label =
-                            row.type === 'invoice' ? looksLikeRecarga ? 'Recarga BaaS' : 'Factura / venta' : 'Abono / pago'
-                          const dt = row.date ? formatDateTimeEcuador(row.date) : '—'
-                          const amountLine = isPayment
-                            ? (
-                                <span className="text-[15px] font-bold tabular-nums text-emerald-400">
-                                  + {formatMoney(amt, cur)}
-                                </span>
-                              )
-                            : (
-                                <span className="text-[15px] font-semibold tabular-nums text-rose-200/90">
-                                  {formatMoney(amt, cur)}
-                                </span>
-                              )
-                          return (
-                            <li
-                              key={`${row.reference}-${row.date}-${idx}`}
-                              className="relative border-l border-white/15 py-3 pl-4 pr-1 first:pt-0 last:pb-1"
-                            >
-                              <div className="absolute left-0 top-[1.35rem] h-2 w-2 -translate-x-[5px] rounded-full bg-emerald-400/80" />
-                              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                                <div className="min-w-0 flex-1">
-                                  <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-                                  <p className="m-0 mt-0.5 text-[14px] font-bold text-sky-100">{row.reference}</p>
-                                  <p className="m-0 mt-1 text-[12px] leading-snug text-slate-300/90">{row.description}</p>
-                                  <p className="m-0 mt-1 text-[11px] text-slate-500">{dt}</p>
-                                </div>
-                                <div className="shrink-0 text-right">{amountLine}</div>
-                              </div>
-                              <p className="m-0 mt-1.5 text-[11px] text-slate-500">{row.status}</p>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </>
-          : null}
-
-          {showUnifiedAbonoPayShell ?
-            <div className="mt-6 border-t border-emerald-500/25 pt-5">
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-100/85">
-                Abono a deuda pendiente
-              </p>
-              <p className="mb-4 text-[13px] leading-relaxed text-slate-300/92">
-                Sube aquí tu comprobante para la opción marcada más arriba (factura o recarga). Un operador lo aplicará en
-                el ERP usando la referencia que enviamos junto al archivo.
-              </p>
-              <div className="portal-order-summary-glow-wrap mb-0">
-                <section className="portal-order-summary-card">
-                  <div className="portal-order-summary-inner px-4 pb-4 pt-4 sm:px-5">{debtFormCard()}</div>
-                </section>
-              </div>
-            </div>
-          : null}
-
-          {Array.isArray(data?.pending_debt_payments) && data.pending_debt_payments.filter((dp) => dp?.status === 'pending_review').length > 0 ? (
-          <section
-            className="mt-5 transition-all duration-300"
-            style={{
-              padding: '16px 18px',
-              borderRadius: 22,
-              background: 'rgba(251,191,36,0.08)',
-              border: '1px solid rgba(251,191,36,0.25)',
-            }}
-          >
-            <p style={{ margin: '0 0 10px', fontSize: 12, opacity: 0.65, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-              Abonos en revisión
-            </p>
-            {(data?.pending_debt_payments ?? []).filter((dp) => dp?.status === 'pending_review').map((dp, idx) => (
-              <div
-                key={dp?.id ?? `pending-dp-${idx}`}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '10px 0',
-                  borderBottom: '1px solid rgba(255,255,255,0.06)',
-                  fontSize: 14,
-                }}
-              >
-                <span>{dp.created_at ? new Date(dp.created_at).toLocaleDateString('es-ES') : '—'}</span>
-                <span style={{ fontWeight: 700 }}>{formatMoney(parseMoneyNum(dp.amount), String(dp.currency || 'USD'))}</span>
-                <span style={{ fontSize: 12, color: '#fcd34d', padding: '4px 10px', borderRadius: 999, background: 'rgba(251,191,36,0.15)' }}>
-                  En revisión
-                </span>
-              </div>
-            ))}
-          </section>
-          ) : null}
-        </div>
-        </PortalNeoAccordion>
-        ) : null}
-
         {isDirectLineClient ? (
         <PortalNeoAccordion
           sectionId="portal-acc-orders"
@@ -7585,6 +6513,1070 @@ function ClientPortalPageInner() {
           </p>
         ) : null}
 
+        </div>
+        </PortalNeoAccordion>
+        ) : null}
+        <PortalNeoAccordion
+          sectionId="portal-acc-baas"
+          title="MI BILLETERA"
+          headerAside={walletAccordionAside || '—'}
+          accent="violet"
+          expanded={isBaasOpen}
+          onToggle={() => setIsBaasOpen((o) => !o)}
+        >
+          {isBaasOpen ? (
+            portalShowsBaasSection ? (
+            <div className="space-y-5">
+              <p className="m-0 text-[13px] font-medium leading-snug text-slate-200/88">
+                Tu saldo actual
+                {walletRowsDisplay.length > 1 ? (
+                  <span className="block mt-1 text-[12px] text-violet-100/90 tabular-nums">
+                    {walletRowsDisplay.map((r) => formatMoney(r.amount, r.currency)).join(' · ')}
+                  </span>
+                ) : (
+                  <span className="block mt-1 text-lg font-bold tabular-nums text-violet-50">
+                    {formatMoney(clientWalletBalanceNum, portalWalletCurrencyLabel)}
+                  </span>
+                )}
+              </p>
+
+              {latestActiveScreen ? (
+                <div
+                  className="rounded-2xl border border-cyan-400/35 p-5 transition-all duration-300"
+                  style={{
+                    background: 'rgba(34,211,238,0.08)',
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
+                  }}
+                  aria-label="Última pantalla asignada"
+                >
+                  <p className="m-0 text-[11px] font-extrabold uppercase leading-tight tracking-[0.14em] text-cyan-100/95 sm:text-xs">
+                    Última pantalla asignada
+                  </p>
+                  <p className="mt-2 mb-0 text-sm font-bold text-slate-50">
+                    {String(latestActiveScreen?.package_name ?? 'Pantalla').trim() || 'Pantalla'}
+                  </p>
+                  {formatPortalAssignedAt(latestActiveScreen?.assigned_at) ? (
+                    <p className="mt-1 mb-0 text-xs text-slate-400">
+                      Asignada:{' '}
+                      <span className="font-medium text-cyan-100/90">
+                        {formatPortalAssignedAt(latestActiveScreen.assigned_at)}
+                      </span>
+                    </p>
+                  ) : null}
+                  <div className="mt-3 space-y-2">
+                    <PortalScreenCredentialRow
+                      label="Usuario"
+                      value={latestActiveScreen?.username}
+                      flashKey={`latest-user-${latestActiveScreen?.screen_stock_id}`}
+                      copyFlashKey={copyFlashKey}
+                      onCopy={handleCopyScreenField}
+                    />
+                    <PortalScreenCredentialRow
+                      label="Contraseña"
+                      value={latestActiveScreen?.password}
+                      flashKey={`latest-pass-${latestActiveScreen?.screen_stock_id}`}
+                      copyFlashKey={copyFlashKey}
+                      onCopy={handleCopyScreenField}
+                    />
+                  </div>
+                  {!String(latestActiveScreen?.username ?? '').trim() &&
+                  !String(latestActiveScreen?.password ?? '').trim() ? (
+                    <p className="mt-2 mb-0 text-xs text-amber-200/85">
+                      Pantalla activa sin credenciales en bodega. Contacta a soporte.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div
+                className="rounded-2xl border border-violet-500/35 p-5 transition-all duration-300"
+                style={{
+                  background: 'rgba(139,92,246,0.12)',
+                  boxShadow: '0 14px 40px rgba(0,0,0,0.28)',
+                }}
+                aria-label="Comprar pantallas"
+              >
+                <div className="mb-4">
+                  <p className="m-0 text-[11px] font-extrabold uppercase leading-tight tracking-[0.14em] text-cyan-100/95 sm:text-xs">
+                    Comprar pantallas
+                  </p>
+                  <p className="m-1.5 mb-0 text-[12px] font-medium leading-snug text-slate-200/75">
+                    Catálogo Flujo completo — los productos sin precio requieren asignación por tu distribuidor
+                  </p>
+                </div>
+
+                {autoPurchaseLoading ? (
+                  <p className="m-0 text-sm text-violet-100/75 flex items-center gap-2">
+                    <Loader2 size={16} className="animate-spin" />
+                    Cargando catálogo…
+                  </p>
+                ) : autoPurchaseErr ? (
+                  <p className="m-0 text-sm text-red-200">{autoPurchaseErr}</p>
+                ) : autoPurchaseProducts.length === 0 ? (
+                  <p className="m-0 text-sm text-slate-300/65">
+                    No hay productos Flujo activos en el catálogo en este momento.
+                  </p>
+                ) : (
+                  <ul className="m-0 p-0 list-none space-y-3">
+                    {autoPurchaseProducts.map((p) => {
+                      const pkgId = Number(p?.package_catalog_id)
+                      const cur = portalProductCurrency(p, clientBaseCurrency)
+                      const unitPrice = portalSaleUnitPrice(p, assignedPricesMap, clientBaseCurrency)
+                      const hasAssignedPrice = Number.isFinite(unitPrice) && unitPrice > 0
+                      const stock = Number(p?.free_stock ?? 0)
+                      const isOutOfStock = stock <= 0
+                      const qty = Math.max(
+                        1,
+                        Math.min(200, parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1),
+                      )
+                      const lineTotal = hasAssignedPrice ? unitPrice * qty : NaN
+                      const canAfford =
+                        hasAssignedPrice &&
+                        Number.isFinite(lineTotal) &&
+                        getClientWalletBalance(cur) + 1e-9 >= lineTotal
+                      const busy = autoPurchaseBusyId === pkgId
+                      const purchaseLocked = busy || confirmingPurchase != null || autoPurchaseBusyId != null
+                      return (
+                        <li
+                          key={`ap-${pkgId}`}
+                          className="flex flex-col rounded-xl border border-violet-300/25 bg-slate-950/30 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                        >
+                          <p className="mb-4 w-full text-center text-lg font-bold leading-snug text-violet-50">
+                            {String(p?.name ?? '—')}
+                          </p>
+
+                          {hasAssignedPrice ? (
+                            <div className="flex w-full flex-row items-center justify-between gap-2">
+                              <div className="flex min-w-0 flex-col gap-1">
+                                <p className="m-0 text-xs leading-snug text-slate-300/80">
+                                  Stock:{' '}
+                                  <span
+                                    className={`text-xl font-bold tabular-nums ${
+                                      isOutOfStock ? 'text-red-500' : 'text-green-500'
+                                    }`}
+                                  >
+                                    {stock}
+                                  </span>
+                                </p>
+                                <p className="m-0 text-xs leading-snug text-slate-300/80">
+                                  Precio:{' '}
+                                  <span className="font-medium tabular-nums text-fuchsia-100">
+                                    {formatMoney(unitPrice, cur)}
+                                  </span>
+                                </p>
+                              </div>
+
+                              <div className="flex shrink-0 flex-row items-center gap-2">
+                                <label className="flex flex-col items-center gap-0.5 text-[11px] text-slate-300">
+                                  Cant.
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={200}
+                                    value={qty}
+                                    disabled={isOutOfStock || purchaseLocked}
+                                    onChange={(e) => {
+                                      const v = e.target.value
+                                      setAutoPurchaseQtyByPackageId((prev) => ({
+                                        ...prev,
+                                        [String(pkgId)]: v,
+                                      }))
+                                    }}
+                                    className="min-h-[40px] w-14 rounded-lg border border-violet-400/35 bg-slate-900/70 px-1.5 py-1.5 text-sm text-violet-50 tabular-nums touch-manipulation"
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  disabled={isOutOfStock || !canAfford || purchaseLocked}
+                                  onClick={() =>
+                                    setConfirmingPurchase({
+                                      packageCatalogId: pkgId,
+                                      packageName: String(p?.name ?? '—'),
+                                      quantity: qty,
+                                      unitPrice,
+                                      totalPrice: lineTotal,
+                                      currency: cur,
+                                      step: 'choose',
+                                      endCustomerName: '',
+                                      endCustomerDialCode: '+593',
+                                      endCustomerLocalNumber: '',
+                                      trackingErr: null,
+                                    })
+                                  }
+                                  className={
+                                    isOutOfStock
+                                      ? `${PORTAL_TOUCH_BUTTON_CLASS} !w-auto shrink-0 bg-gray-500 px-3 text-xs font-bold opacity-60 cursor-not-allowed sm:px-4 sm:text-sm`
+                                      : `${PORTAL_TOUCH_BUTTON_PRIMARY_CLASS} !w-auto shrink-0 px-3 text-xs font-bold sm:px-4 sm:text-sm`
+                                  }
+                                >
+                                  {busy ? 'Procesando…' : isOutOfStock ? 'Agotado' : 'Comprar'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex w-full flex-row items-center justify-between gap-2">
+                              <div className="flex min-w-0 flex-col gap-1">
+                                <p className="m-0 text-xs leading-snug text-slate-300/80">
+                                  Stock:{' '}
+                                  <span
+                                    className={`text-xl font-bold tabular-nums ${
+                                      isOutOfStock ? 'text-red-500' : 'text-green-500'
+                                    }`}
+                                  >
+                                    {stock}
+                                  </span>
+                                </p>
+                              </div>
+                              <p className="m-0 max-w-[10rem] shrink-0 text-right text-[11px] leading-snug text-amber-200/90">
+                                Contacta a tu distribuidor para habilitar y asignar precios a este producto.
+                              </p>
+                            </div>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+
+                {autoPurchaseProducts.some((p) => {
+                  const pkgId = Number(p?.package_catalog_id)
+                  const pCur = portalProductCurrency(p, clientBaseCurrency)
+                  const unitPrice = portalSaleUnitPrice(p, assignedPricesMap, clientBaseCurrency)
+                  if (!Number.isFinite(unitPrice) || unitPrice <= 0) return false
+                  const qty = Math.max(
+                    1,
+                    Math.min(200, parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1),
+                  )
+                  const total = unitPrice * qty
+                  return Number.isFinite(total) && getClientWalletBalance(pCur) + 1e-9 < total
+                }) ? (
+                  <p className="mt-4 mb-0 text-xs text-amber-200/90">
+                    Algunos paquetes requieren más saldo del disponible ({walletAccordionAside}).
+                  </p>
+                ) : null}
+
+                {autoPurchaseFeedback ? (
+                  <div
+                    className={`mt-4 rounded-xl border px-3 py-2.5 text-sm leading-relaxed ${
+                      autoPurchaseFeedback?.ok === false
+                        ? 'border-red-400/40 bg-red-950/40 text-red-100'
+                        : 'border-emerald-400/40 bg-emerald-950/35 text-emerald-50'
+                    }`}
+                  >
+                    <p className="m-0 font-semibold">{String(autoPurchaseFeedback?.message ?? '')}</p>
+                    {autoPurchaseFeedback?.fulfilled && autoPurchaseFeedback?.credentialsMissing ? (
+                      <p className="mt-2 mb-0 rounded-lg border border-amber-400/35 bg-amber-950/40 px-3 py-2 text-xs text-amber-100">
+                        Pantalla asignada, pero faltan credenciales en bodega. Contacta a soporte.
+                      </p>
+                    ) : null}
+                    {Array.isArray(autoPurchaseFeedback?.credentials) &&
+                    autoPurchaseFeedback.credentials.some((c) => c?.hasCredentials) ? (
+                      <ul className="mt-3 mb-0 pl-0 list-none space-y-2 text-sm">
+                        {autoPurchaseFeedback.credentials.map((c, idx) =>
+                          c?.hasCredentials ? (
+                            <li
+                              key={`cred-${c?.screen_stock_id ?? idx}`}
+                              className="rounded-xl border border-slate-600/50 bg-slate-950/80 px-4 py-3 shadow-inner"
+                            >
+                              {autoPurchaseFeedback.credentials.length > 1 ? (
+                                <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                                  Pantalla {idx + 1}
+                                </p>
+                              ) : null}
+                              <div className="space-y-1.5 font-mono text-[13px]">
+                                <div>
+                                  <span className="text-slate-400">Usuario: </span>
+                                  <strong className="font-bold text-white">{c.username}</strong>
+                                </div>
+                                <div>
+                                  <span className="text-slate-400">Contraseña: </span>
+                                  <strong className="font-bold text-white">{c.password}</strong>
+                                </div>
+                              </div>
+                            </li>
+                          ) : null,
+                        )}
+                      </ul>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            ) : (
+              <p className="m-0 text-sm leading-relaxed text-slate-400/90">
+                Esta sección aplica cuando tienes billetera BaaS, recargas o pantallas Flujo activas.
+              </p>
+            )
+          ) : null}
+        </PortalNeoAccordion>
+        <PortalNeoAccordion
+          sectionId="portal-acc-tracked-purchases"
+          title="MIS COMPRAS"
+          subtitle="Seguimiento de clientes finales y vencimiento de pantallas"
+          headerAside={
+            trackedPurchases.length > 0 ? (
+              <span
+                className="inline-flex min-h-[1.75rem] min-w-[1.75rem] items-center justify-center rounded-full border border-emerald-300/45 bg-emerald-500/20 px-2 text-xs font-extrabold tabular-nums text-emerald-50 shadow-[0_0_12px_rgba(52,211,153,0.25)]"
+                title={`${trackedPurchases.length} compra${trackedPurchases.length === 1 ? '' : 's'} con seguimiento`}
+              >
+                {trackedPurchases.length}
+              </span>
+            ) : (
+              '0'
+            )
+          }
+          accent="emerald"
+          expanded={isTrackedPurchasesOpen}
+          onToggle={() => {
+            setIsTrackedPurchasesOpen((o) => {
+              const next = !o
+              if (next) void loadTrackedPurchases()
+              return next
+            })
+          }}
+        >
+          {isTrackedPurchasesOpen ? (
+            <div className="space-y-3">
+              {trackedPurchasesLoading ? (
+                <p className="m-0 flex items-center gap-2 text-sm text-slate-300">
+                  <Loader2 size={16} className="animate-spin" />
+                  Cargando compras…
+                </p>
+              ) : trackedPurchasesErr ? (
+                <p className="m-0 text-sm text-red-200">{trackedPurchasesErr}</p>
+              ) : trackedPurchases.length === 0 ? (
+                <p className="m-0 text-sm text-slate-400/85">
+                  Aún no tienes compras con seguimiento de cliente. Al confirmar una compra, elige
+                  «Comprar con seguimiento al cliente» para registrar nombre y teléfono.
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-600/35 pb-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('todos')}
+                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeTab === 'todos'
+                          ? 'border border-emerald-400/50 bg-emerald-500/25 text-emerald-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('seguimiento')}
+                      className={`inline-flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeTab === 'seguimiento'
+                          ? 'border border-amber-400/50 bg-amber-500/20 text-amber-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Seguimiento
+                      {trackedPurchasesSeguimientoCount > 0 ? (
+                        <span className="inline-flex min-w-[1.125rem] items-center justify-center rounded-full bg-amber-400/25 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-amber-100">
+                          {trackedPurchasesSeguimientoCount}
+                        </span>
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('caducados')}
+                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeTab === 'caducados'
+                          ? 'border border-red-400/50 bg-red-500/20 text-red-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Caducados
+                      {trackedPurchasesCaducadosCount > 0 ? (
+                        <span className="ml-1.5 tabular-nums text-[10px] opacity-90">
+                          ({trackedPurchasesCaducadosCount})
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
+                  {filteredTrackedPurchases.length === 0 ? (
+                    <p className="m-0 py-6 text-center text-sm text-slate-400/80">
+                      {activeTab === 'seguimiento'
+                        ? 'No hay clientes con vencimiento próximo a 5 días.'
+                        : activeTab === 'caducados'
+                          ? 'No hay compras caducadas en este momento.'
+                          : 'No hay compras para mostrar.'}
+                    </p>
+                  ) : (
+                <>
+                <ul className="m-0 list-none space-y-3 p-0">
+                  {paginatedMisCompras.map((item) => {
+                    const key = trackedPurchaseCardKey(item)
+                    return (
+                      <TrackedPurchaseCard
+                        key={key}
+                        item={item}
+                        expanded={expandedMisComprasKey === key}
+                        onToggle={() =>
+                          setExpandedMisComprasKey((prev) => (prev === key ? null : key))
+                        }
+                      />
+                    )
+                  })}
+                </ul>
+                {totalMisComprasPages > 1 ? (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 pt-4">
+                    <button
+                      type="button"
+                      disabled={misComprasPage <= 1}
+                      onClick={() => setMisComprasPage((p) => Math.max(1, p - 1))}
+                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Anterior
+                    </button>
+                    <span className="text-xs font-medium text-slate-300 tabular-nums">
+                      Página {misComprasPage} de {totalMisComprasPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={misComprasPage >= totalMisComprasPages}
+                      onClick={() =>
+                        setMisComprasPage((p) => Math.min(totalMisComprasPages, p + 1))
+                      }
+                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                ) : null}
+                </>
+                  )}
+                </>
+              )}
+            </div>
+          ) : null}
+        </PortalNeoAccordion>
+        <PortalNeoAccordion
+          sectionId="portal-acc-reseller-network"
+          title="MI RED DE DISTRIBUIDORES"
+          subtitle="Crea sub-clientes, transfiere saldo BaaS y asigna precios"
+          headerAside={resellerNetworkAside}
+          accent="violet"
+          expanded={isResellerNetworkOpen}
+          onToggle={() => setIsResellerNetworkOpen((o) => !o)}
+        >
+          {isResellerNetworkOpen ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void openCreateSubClientModal()}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-violet-400/40 bg-violet-500/20 px-4 py-2.5 text-sm font-bold text-violet-50 transition hover:bg-violet-500/30"
+                >
+                  <Plus size={16} aria-hidden />
+                  Crear Sub-cliente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void loadSubClients()}
+                  disabled={subClientsLoading}
+                  className="rounded-lg border border-slate-500/40 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800/50 disabled:opacity-45"
+                >
+                  Actualizar lista
+                </button>
+                <button
+                  type="button"
+                  onClick={openContactModal}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-950/30 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-900/40"
+                >
+                  <Phone size={14} aria-hidden />
+                  Contacto
+                </button>
+              </div>
+
+              {subClientsLoading ? (
+                <p className="m-0 flex items-center gap-2 text-sm text-slate-300">
+                  <Loader2 size={16} className="animate-spin" />
+                  Cargando red…
+                </p>
+              ) : subClientsErr ? (
+                <p className="m-0 text-sm text-red-200">{subClientsErr}</p>
+              ) : subClients.length === 0 ? (
+                <p className="m-0 text-sm text-slate-400/85">
+                  Aún no tienes sub-clientes. Crea el primero para revender pantallas con tu propia red.
+                </p>
+              ) : (
+                <div className="rounded-xl border border-slate-600/40">
+                  <div className="flex flex-wrap items-center gap-2 border-b border-slate-600/35 px-3 py-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveFilter('all')}
+                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeFilter === 'all'
+                          ? 'border border-violet-400/50 bg-violet-500/25 text-violet-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveFilter('zeros')}
+                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeFilter === 'zeros'
+                          ? 'border border-amber-400/50 bg-amber-500/20 text-amber-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Seguimiento clientes
+                      {zeroBalanceSubClientCount > 0 ? (
+                        <span className="ml-1.5 tabular-nums text-[10px] opacity-90">
+                          ({zeroBalanceSubClientCount})
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
+                  <div className="relative mb-4 px-3 pt-3">
+                    <Search
+                      size={16}
+                      className="pointer-events-none absolute left-6 top-1/2 -translate-y-1/2 text-indigo-400"
+                      aria-hidden
+                    />
+                    <input
+                      type="search"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      placeholder="Buscar por nombre o usuario…"
+                      className="w-full rounded-lg border border-indigo-800/50 bg-indigo-950/30 py-2 pl-10 pr-4 text-sm text-indigo-100 placeholder-indigo-400 transition-colors focus:border-indigo-500 focus:outline-none"
+                    />
+                  </div>
+                  {filteredClients.length === 0 ? (
+                    <p className="m-0 px-3 pb-4 text-sm text-slate-400/85">
+                      {searchTerm.trim()
+                        ? 'No se encontraron clientes que coincidan con la búsqueda.'
+                        : 'No hay sub-clientes con saldo BaaS en cero en este momento.'}
+                    </p>
+                  ) : (
+                    <>
+                  <div className="w-full">
+                    <table className="w-full table-fixed text-[11px] md:text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-600/40 bg-slate-950/60 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400 md:text-[11px]">
+                          <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Cliente</th>
+                          <th className="w-1/3 px-1 py-1.5 text-left md:w-1/4 md:px-4 md:py-2">Usuario</th>
+                          <th className="w-1/3 px-1 py-1.5 text-left md:w-2/4 md:px-4 md:py-2">Saldo</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/40">
+                        {currentSubClients.map((sc) => {
+                          const sid = Number(sc?.id)
+                          const label = String(sc?.name ?? sc?.username ?? '—').trim() || '—'
+                          const user = String(sc?.username ?? '—').trim() || '—'
+                          const bal = Number(sc?.wallet_balance) || 0
+                          const scCur = String(sc?.currency ?? clientBaseCurrency)
+                            .trim()
+                            .toUpperCase()
+                            .slice(0, 10)
+                          const portalUrl = clientPortalPublicUrl(sc?.portal_token)
+                          const isExpanded = expandedClientId === sid
+                          const toggleExpanded = () =>
+                            setExpandedClientId((prev) => (prev === sid ? null : sid))
+                          return (
+                            <Fragment key={`sc-${sid}`}>
+                              <tr
+                                role="button"
+                                tabIndex={0}
+                                aria-expanded={isExpanded}
+                                onClick={toggleExpanded}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault()
+                                    toggleExpanded()
+                                  }
+                                }}
+                                className="cursor-pointer bg-slate-950/35 transition-colors hover:bg-white/5"
+                              >
+                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
+                                  <span className="block break-words font-semibold leading-snug text-slate-50" title={label}>
+                                    {label}
+                                  </span>
+                                </td>
+                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-1/4 md:px-4 md:py-2">
+                                  <span
+                                    className="block break-all font-mono text-[10px] leading-snug text-cyan-100/90 md:text-xs"
+                                    title={user}
+                                  >
+                                    {user}
+                                  </span>
+                                </td>
+                                <td className="w-1/3 px-1 py-1.5 text-left align-top md:w-2/4 md:px-4 md:py-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span
+                                      className="inline-flex rounded-md border border-green-700 bg-green-900/30 px-2 py-1 text-[10px] font-bold tabular-nums text-green-400 md:border-0 md:bg-transparent md:p-0 md:text-sm md:font-semibold md:text-fuchsia-100"
+                                    >
+                                      {formatMoney(bal, scCur)}
+                                    </span>
+                                    <ChevronDown
+                                      aria-hidden
+                                      size={18}
+                                      strokeWidth={2.25}
+                                      className={`shrink-0 text-slate-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                                    />
+                                  </div>
+                                </td>
+                              </tr>
+                              {isExpanded ? (
+                                <tr className="bg-slate-950/25">
+                                  <td colSpan={3} className="px-2 pb-3 pt-0 md:px-4">
+                                    <div className="md:hidden">
+                                      <SubClientMobileActionCards
+                                        subclient={sc}
+                                        portalUrl={portalUrl}
+                                        copiedClientId={copiedClientId}
+                                        onCopyLink={handleCopySubClientPortalLink}
+                                        onTransfer={openTransferModal}
+                                        onPrices={openPricesModal}
+                                        onEdit={openEditSubClientModal}
+                                        onDelete={openDeleteSubClientModal}
+                                        deleting={deletingSubClientId === sid}
+                                      />
+                                    </div>
+                                    <div className="hidden border-t border-slate-700/40 pt-3 md:block">
+                                      <SubClientActionsCell
+                                        subclient={sc}
+                                        portalUrl={portalUrl}
+                                        copiedClientId={copiedClientId}
+                                        onCopyLink={handleCopySubClientPortalLink}
+                                        onTransfer={openTransferModal}
+                                        onPrices={openPricesModal}
+                                        onEdit={openEditSubClientModal}
+                                        onDelete={openDeleteSubClientModal}
+                                        deleting={deletingSubClientId === sid}
+                                      />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 px-3 py-3">
+                    <button
+                      type="button"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Anterior
+                    </button>
+                    <span className="text-xs font-medium text-slate-300 tabular-nums">
+                      Página {currentPage} de {Math.ceil(sortedSubClients.length / itemsPerPage) || 1}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={currentPage >= totalSubClientPages}
+                      onClick={() => setCurrentPage((p) => Math.min(totalSubClientPages, p + 1))}
+                      className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </PortalNeoAccordion>
+        <PortalNeoAccordion
+          sectionId="portal-acc-active-screens"
+          title="MIS PANTALLAS ACTIVAS"
+          subtitle="Credenciales de tus compras ya activadas"
+          headerAside={
+            activeScreens.length > 0 ? (
+              <span
+                className="inline-flex min-h-[1.75rem] min-w-[1.75rem] items-center justify-center rounded-full border border-cyan-300/45 bg-cyan-500/20 px-2 text-xs font-extrabold tabular-nums text-cyan-50 shadow-[0_0_12px_rgba(34,211,238,0.25)]"
+                title={`${activeScreens.length} pantalla${activeScreens.length === 1 ? '' : 's'} activa${activeScreens.length === 1 ? '' : 's'}`}
+              >
+                {activeScreens.length}
+              </span>
+            ) : (
+              '0'
+            )
+          }
+          accent="sapphire"
+          expanded={isActiveScreensOpen}
+          onToggle={() => {
+            setIsActiveScreensOpen((o) => {
+              const next = !o
+              if (next) void loadPortal({ silent: true })
+              return next
+            })
+          }}
+        >
+          {isActiveScreensOpen ? (
+            <div className="space-y-3">
+              {activeScreens.length === 0 ? (
+                <p className="m-0 text-sm text-slate-400/80">Aún no tienes pantallas activas.</p>
+              ) : (
+                <>
+                  <ul className="m-0 list-none space-y-3 p-0">
+                    {paginatedActiveScreens.map((scr) => {
+                      const sid = Number(scr?.screen_stock_id)
+                      const saleId = Number(scr?.sale_id)
+                      const pkg = String(scr?.package_name ?? 'Pantalla').trim() || 'Pantalla'
+                      const user = String(scr?.username ?? '').trim()
+                      const pass = String(scr?.password ?? '').trim()
+                      const assignedLabel = formatPortalAssignedAt(scr?.assigned_at)
+                      const expLabel = formatPortalScreenExpiry(scr?.expiration_date)
+                      const userKey = `user-${sid}`
+                      const passKey = `pass-${sid}`
+                      return (
+                        <li
+                          key={`active-scr-${sid}-${saleId}`}
+                          className="rounded-xl border border-slate-600/45 bg-slate-950/75 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="m-0 text-sm font-bold text-slate-50">{pkg}</p>
+                              {assignedLabel ? (
+                                <p className="mt-1 mb-0 text-xs text-cyan-200/80">
+                                  Asignada: <span className="font-medium text-cyan-50">{assignedLabel}</span>
+                                </p>
+                              ) : null}
+                              {expLabel ? (
+                                <p className="mt-1 mb-0 text-xs text-slate-400">
+                                  Vence: <span className="text-slate-200">{expLabel}</span>
+                                </p>
+                              ) : null}
+                            </div>
+                            <span className="shrink-0 rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                              FAC-{String(saleId).padStart(4, '0')}
+                            </span>
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            <PortalScreenCredentialRow
+                              label="Usuario"
+                              value={user}
+                              flashKey={userKey}
+                              copyFlashKey={copyFlashKey}
+                              onCopy={handleCopyScreenField}
+                            />
+                            <PortalScreenCredentialRow
+                              label="Contraseña"
+                              value={pass}
+                              flashKey={passKey}
+                              copyFlashKey={copyFlashKey}
+                              onCopy={handleCopyScreenField}
+                            />
+                          </div>
+                          {!user && !pass ? (
+                            <p className="mt-2 mb-0 text-xs text-amber-200/85">
+                              Pantalla activa sin credenciales en bodega. Contacta a soporte.
+                            </p>
+                          ) : null}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  {totalActivePages > 1 ? (
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-600/35 pt-4">
+                      <button
+                        type="button"
+                        disabled={activeScreensPage <= 1}
+                        onClick={() => setActiveScreensPage((p) => Math.max(1, p - 1))}
+                        className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Anterior
+                      </button>
+                      <span className="text-xs font-medium text-slate-300 tabular-nums">
+                        Página {activeScreensPage} de {totalActivePages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={activeScreensPage >= totalActivePages}
+                        onClick={() =>
+                          setActiveScreensPage((p) => Math.min(totalActivePages, p + 1))
+                        }
+                        className="rounded-lg border border-slate-500/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Siguiente
+                      </button>
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ) : null}
+        </PortalNeoAccordion>
+        {showSaldoAFavorCard ? (
+        <section
+          aria-label="Saldo a favor"
+          className={`${PORTAL_SECTION_SHELL_CLASS} relative mb-4 overflow-hidden rounded-[20px] border-2 border-emerald-400/45 shadow-[inset_0_1px_0_rgba(167,243,208,0.12),0_22px_48px_rgba(0,0,0,0.38)] transition-all duration-300 md:mb-6 md:rounded-[22px]`}
+          style={{
+            background: 'linear-gradient(145deg, rgba(6,78,59,0.52), rgba(16,185,129,0.22), rgba(14,21,41,0.72))',
+          }}
+        >
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-[inherit] bg-gradient-to-br from-emerald-400/30 via-transparent to-teal-400/18 opacity-95"
+          />
+          <div className="relative z-[1] flex min-h-[48px] touch-manipulation flex-wrap items-center justify-between gap-x-4 gap-y-3 px-3 py-3.5 md:px-[18px] md:py-4">
+            <div className="min-w-0 flex-1 pr-2">
+              <p className="m-0 text-[11px] font-extrabold uppercase leading-tight tracking-[0.16em] text-emerald-100 sm:text-xs">
+                SALDO A FAVOR
+              </p>
+              <p className="m-1.5 mb-0 text-[13px] font-medium leading-snug text-slate-200/88">
+                Anticipos y sobrepagos disponibles para pagar pedidos o deudas
+              </p>
+            </div>
+            <span
+              className="max-w-[12rem] shrink-0 whitespace-normal text-right text-lg font-extrabold leading-tight tracking-tight text-emerald-50 tabular-nums sm:max-w-[16rem] sm:text-[22px]"
+              title={totalCreditLabel}
+            >
+              {totalCreditLabel}
+            </span>
+          </div>
+        </section>
+        ) : null}
+        {showSaldoPendienteSection ? (
+        <PortalNeoAccordion
+          sectionId="portal-acc-debt"
+          title="SALDO PENDIENTE"
+          subtitle="Facturas, recargas BaaS y abonos"
+          headerAside={totalDebtLabel || '—'}
+          accent="emerald"
+          expanded={accordionDebtOpen}
+          onToggle={() => setAccordionDebtOpen((o) => !o)}
+        >
+        <div
+          className="rounded-2xl border border-emerald-500/35 p-5 transition-all duration-300"
+          style={{
+            background: 'rgba(16,185,129,0.12)',
+            boxShadow: '0 14px 40px rgba(0,0,0,0.28)',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+              gap: 16,
+            }}
+          >
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <p style={{ margin: '0 0 6px', fontSize: 12, opacity: 0.65, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                Saldo pendiente por pagar
+              </p>
+              <p style={{ margin: 0, fontSize: 30, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{totalDebtLabel}</p>
+              {creditRowsDisplay.length > 0 ? (
+                <p
+                  style={{
+                    margin: '10px 0 0',
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: 'rgba(16,185,129,0.22)',
+                    border: '1px solid rgba(52,211,153,0.45)',
+                    fontSize: 14,
+                    fontWeight: 600,
+                    lineHeight: 1.45,
+                    color: '#a7f3d0',
+                  }}
+                >
+                  Saldo a favor disponible:{' '}
+                  <span style={{ fontVariantNumeric: 'tabular-nums', color: '#ecfdf5' }}>
+                    {totalCreditLabel}
+                  </span>
+                  {' '}(Aplicable a futuras compras)
+                </p>
+              ) : null}
+              {creditRowsDisplay.length > 1 ? (
+                <ul style={{ margin: '10px 0 0', padding: 0, listStyle: 'none', fontSize: 14, opacity: 0.88 }}>
+                  {creditRowsDisplay.map((r) => (
+                    <li key={`credit-${String(r.currency)}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                      <span>{String(r.currency)} a favor</span>
+                      <span style={{ fontWeight: 600 }}>{formatMoney(r.amount, String(r.currency))}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {debtRowsDisplay.length > 1 ? (
+                <ul style={{ margin: '12px 0 0', padding: 0, listStyle: 'none', fontSize: 14, opacity: 0.88 }}>
+                  {debtRowsDisplay.map((r) => (
+                    <li key={String(r.currency)} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                      <span>{String(r.currency)}</span>
+                      <span style={{ fontWeight: 600 }}>{formatMoney(r.amount, String(r.currency))}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </div>
+          <p style={{ margin: '14px 0 0', fontSize: 12, opacity: 0.55, lineHeight: 1.45 }}>
+            Incluye facturas/pedidos con saldo pendiente y recargas BaaS con importe pendiente por cubrir.{' '}
+            {hasHistoricalDebt && !hasNewOrders
+              ? 'Los abonos de facturas y los comprobantes de recarga se revisan antes de aplicarse.'
+              : hasNewOrders && !hasHistoricalDebt
+                ? 'Los pedidos nuevos se pagan desde «NUEVOS PEDIDOS PARA PAGO». Las recargas con saldo pendiente pueden abonarse aquí mediante «Abono a deuda pendiente».'
+                : '«NUEVOS PEDIDOS PARA PAGO» muestra pedidos y recargas con saldo pendiente, incluidos abonos parciales. Aquí tienes tu estado de cuenta, deuda histórica y el formulario «Abono a deuda pendiente».'}
+          </p>
+          {walletRechargesErr ?
+            <p style={{ margin: '12px 0 0', fontSize: 13, lineHeight: 1.45, color: '#fecaca' }}>{walletRechargesErr}</p>
+          : null}
+
+          {showAccountLedgerSection ?
+            <>
+              {pendingLedgerObligations.length > 1 ?
+                <div className="mt-4 flex flex-col gap-1">
+                  <label htmlFor="portal-ledger-obligation-select" className="text-[11px] uppercase tracking-wide text-emerald-200/55">
+                    Ver estado y movimientos de
+                  </label>
+                  <select
+                    id="portal-ledger-obligation-select"
+                    className={`${PORTAL_TOUCH_INPUT_CLASS} mt-2`}
+                    value={effectiveLedgerFocusKey}
+                    onChange={(e) => setLedgerFocusKey(e.target.value)}
+                    className="w-full rounded-xl border border-emerald-500/25 bg-slate-950/60 px-3 py-2.5 text-[13px] font-medium text-emerald-50 outline-none ring-0 focus:border-emerald-400/50"
+                  >
+                    {pendingLedgerObligations.map((o) => (
+                      <option key={o.key} value={o.key}>
+                        {o.summaryLabel} — {formatMoney(o.pendingAmount, o.currency)} pendiente
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              : null}
+              <button
+                type="button"
+                aria-expanded={ledgerOpen}
+                onClick={() => setLedgerOpen((o) => !o)}
+                className={`${PORTAL_TOUCH_BUTTON_CLASS} mt-4 border border-emerald-500/30 bg-emerald-950/20 text-[13px] font-medium text-emerald-50/95 hover:bg-emerald-950/35`}
+              >
+                <span className="text-base leading-none" aria-hidden>
+                  ⬇️
+                </span>
+                <span>
+                  Ver estado y movimientos —{' '}
+                  <span className="tabular-nums">
+                    {(pendingLedgerObligations.find((o) => o.key === effectiveLedgerFocusKey) ?? pendingLedgerObligations[0])
+                      ?.summaryLabel ?? '—'}
+                  </span>
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 opacity-80 transition-transform duration-300 ${ledgerOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                />
+              </button>
+
+              <div
+                className={`grid overflow-hidden transition-all duration-300 ease-out ${ledgerOpen ? 'mt-4 grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
+              >
+                <div className="min-h-0">
+                  {!ledgerOpen ? null : portalLedgerDisplay.length === 0 ?
+                    <p className="m-0 rounded-xl border border-white/10 bg-black/25 px-4 py-8 text-center text-[13px] text-slate-400">
+                      No hay movimientos públicos para esta consulta todavía (cuando registres pagos o abonos aparecerán aquí).
+                    </p>
+                  : (
+                    <div className="max-h-[min(28rem,calc(100vh-220px))] overflow-y-auto rounded-xl border border-white/10 bg-black/22 px-3 py-3 sm:px-4">
+                      <ul className="m-0 list-none space-y-0 pl-3">
+                        {portalLedgerDisplay.map((row, idx) => {
+                          const isPayment = row.type === 'payment'
+                          const amt = parseMoneyNum(row.amount)
+                          const cur = row.currency ? String(row.currency).trim().toUpperCase().slice(0, 10) : 'USD'
+                          const looksLikeRecarga = /^REC-/i.test(String(row.reference ?? ''))
+                          const label =
+                            row.type === 'invoice' ? looksLikeRecarga ? 'Recarga BaaS' : 'Factura / venta' : 'Abono / pago'
+                          const dt = row.date ? formatDateTimeEcuador(row.date) : '—'
+                          const amountLine = isPayment
+                            ? (
+                                <span className="text-[15px] font-bold tabular-nums text-emerald-400">
+                                  + {formatMoney(amt, cur)}
+                                </span>
+                              )
+                            : (
+                                <span className="text-[15px] font-semibold tabular-nums text-rose-200/90">
+                                  {formatMoney(amt, cur)}
+                                </span>
+                              )
+                          return (
+                            <li
+                              key={`${row.reference}-${row.date}-${idx}`}
+                              className="relative border-l border-white/15 py-3 pl-4 pr-1 first:pt-0 last:pb-1"
+                            >
+                              <div className="absolute left-0 top-[1.35rem] h-2 w-2 -translate-x-[5px] rounded-full bg-emerald-400/80" />
+                              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+                                  <p className="m-0 mt-0.5 text-[14px] font-bold text-sky-100">{row.reference}</p>
+                                  <p className="m-0 mt-1 text-[12px] leading-snug text-slate-300/90">{row.description}</p>
+                                  <p className="m-0 mt-1 text-[11px] text-slate-500">{dt}</p>
+                                </div>
+                                <div className="shrink-0 text-right">{amountLine}</div>
+                              </div>
+                              <p className="m-0 mt-1.5 text-[11px] text-slate-500">{row.status}</p>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          : null}
+
+          {showUnifiedAbonoPayShell ?
+            <div className="mt-6 border-t border-emerald-500/25 pt-5">
+              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-100/85">
+                Abono a deuda pendiente
+              </p>
+              <p className="mb-4 text-[13px] leading-relaxed text-slate-300/92">
+                Sube aquí tu comprobante para la opción marcada más arriba (factura o recarga). Un operador lo aplicará en
+                el ERP usando la referencia que enviamos junto al archivo.
+              </p>
+              <div className="portal-order-summary-glow-wrap mb-0">
+                <section className="portal-order-summary-card">
+                  <div className="portal-order-summary-inner px-4 pb-4 pt-4 sm:px-5">{debtFormCard()}</div>
+                </section>
+              </div>
+            </div>
+          : null}
+
+          {Array.isArray(data?.pending_debt_payments) && data.pending_debt_payments.filter((dp) => dp?.status === 'pending_review').length > 0 ? (
+          <section
+            className="mt-5 transition-all duration-300"
+            style={{
+              padding: '16px 18px',
+              borderRadius: 22,
+              background: 'rgba(251,191,36,0.08)',
+              border: '1px solid rgba(251,191,36,0.25)',
+            }}
+          >
+            <p style={{ margin: '0 0 10px', fontSize: 12, opacity: 0.65, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+              Abonos en revisión
+            </p>
+            {(data?.pending_debt_payments ?? []).filter((dp) => dp?.status === 'pending_review').map((dp, idx) => (
+              <div
+                key={dp?.id ?? `pending-dp-${idx}`}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '10px 0',
+                  borderBottom: '1px solid rgba(255,255,255,0.06)',
+                  fontSize: 14,
+                }}
+              >
+                <span>{dp.created_at ? new Date(dp.created_at).toLocaleDateString('es-ES') : '—'}</span>
+                <span style={{ fontWeight: 700 }}>{formatMoney(parseMoneyNum(dp.amount), String(dp.currency || 'USD'))}</span>
+                <span style={{ fontSize: 12, color: '#fcd34d', padding: '4px 10px', borderRadius: 999, background: 'rgba(251,191,36,0.15)' }}>
+                  En revisión
+                </span>
+              </div>
+            ))}
+          </section>
+          ) : null}
         </div>
         </PortalNeoAccordion>
         ) : null}
