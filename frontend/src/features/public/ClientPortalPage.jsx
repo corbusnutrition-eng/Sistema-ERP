@@ -345,65 +345,9 @@ function TrackedPurchaseCard({ item, expanded, onToggle }) {
               FAC-{String(item?.sale_id ?? '').padStart(4, '0')}
             </span>
           </div>
-          <div className="mt-3 rounded-lg border border-slate-600/35 bg-slate-950/60 px-3 py-2">
-            <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Vencimiento
-            </p>
-            <TrackedPurchaseExpiryBlock item={item} />
-          </div>
         </div>
       ) : null}
     </li>
-  )
-}
-
-/** Vencimiento en tarjeta «Mis compras» — misma lógica que Inventario IPTV. */
-function TrackedPurchaseExpiryBlock({ item }) {
-  const now = usePortalNowTicker(60000)
-  const stats = useMemo(() => {
-    const days = resolveTrackedPurchaseDaysRemaining(item, now)
-    if (days == null) return null
-    const calc = calculateExpirationStats(
-      item?.inventory_created_at,
-      item?.inventory_package_raw || item?.package_name,
-      now,
-    )
-    const dateLabel = formatPortalScreenExpiry(
-      item?.expiration_date ||
-        (calc?.fechaExpiracionEfectiva instanceof Date
-          ? calc.fechaExpiracionEfectiva.toISOString().slice(0, 10)
-          : null),
-    )
-    return { days, dateLabel }
-  }, [item, now])
-
-  if (!stats) {
-    return <p className="mt-0.5 mb-0 text-sm text-slate-400">Sin vencimiento en inventario</p>
-  }
-
-  const { days, dateLabel } = stats
-  if (days <= 0) {
-    return (
-      <>
-        <p className="mt-0.5 mb-0 text-sm font-bold text-red-500">
-          <span className="mr-1 inline-block h-2 w-2 rounded-full bg-red-500 align-middle" aria-hidden />
-          Expirado
-        </p>
-        {dateLabel ? <p className="mt-1 mb-0 text-xs text-slate-400">Venció: {dateLabel}</p> : null}
-      </>
-    )
-  }
-
-  const colorClass = days > 3 ? 'text-green-500' : 'text-orange-500'
-  const dotClass = days > 3 ? 'bg-green-500' : 'bg-orange-500'
-  return (
-    <>
-      <p className={`mt-0.5 mb-0 text-sm font-bold tabular-nums ${colorClass}`}>
-        <span className={`mr-1.5 inline-block h-2 w-2 rounded-full align-middle ${dotClass}`} aria-hidden />
-        Faltan: {days} días
-      </p>
-      {dateLabel ? <p className="mt-1 mb-0 text-xs text-slate-400">Vence: {dateLabel}</p> : null}
-    </>
   )
 }
 
