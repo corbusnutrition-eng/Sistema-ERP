@@ -4828,6 +4828,7 @@ function ClientPortalPageInner() {
                       const unitPrice = portalSaleUnitPrice(p, assignedPricesMap, clientBaseCurrency)
                       const hasAssignedPrice = Number.isFinite(unitPrice) && unitPrice > 0
                       const stock = Number(p?.free_stock ?? 0)
+                      const isOutOfStock = stock <= 0
                       const qty = Math.max(
                         1,
                         Math.min(200, parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1),
@@ -4853,7 +4854,13 @@ function ClientPortalPageInner() {
                               <div className="flex min-w-0 flex-col gap-1">
                                 <p className="m-0 text-xs leading-snug text-slate-300/80">
                                   Stock:{' '}
-                                  <span className="text-xl font-bold tabular-nums text-green-500">{stock}</span>
+                                  <span
+                                    className={`text-xl font-bold tabular-nums ${
+                                      isOutOfStock ? 'text-red-500' : 'text-green-500'
+                                    }`}
+                                  >
+                                    {stock}
+                                  </span>
                                 </p>
                                 <p className="m-0 text-xs leading-snug text-slate-300/80">
                                   Precio:{' '}
@@ -4871,7 +4878,7 @@ function ClientPortalPageInner() {
                                     min={1}
                                     max={200}
                                     value={qty}
-                                    disabled={purchaseLocked}
+                                    disabled={isOutOfStock || purchaseLocked}
                                     onChange={(e) => {
                                       const v = e.target.value
                                       setAutoPurchaseQtyByPackageId((prev) => ({
@@ -4884,7 +4891,7 @@ function ClientPortalPageInner() {
                                 </label>
                                 <button
                                   type="button"
-                                  disabled={!canAfford || purchaseLocked}
+                                  disabled={isOutOfStock || !canAfford || purchaseLocked}
                                   onClick={() =>
                                     setConfirmingPurchase({
                                       packageCatalogId: pkgId,
@@ -4895,9 +4902,13 @@ function ClientPortalPageInner() {
                                       currency: cur,
                                     })
                                   }
-                                  className={`${PORTAL_TOUCH_BUTTON_PRIMARY_CLASS} !w-auto shrink-0 px-3 text-xs font-bold sm:px-4 sm:text-sm`}
+                                  className={
+                                    isOutOfStock
+                                      ? `${PORTAL_TOUCH_BUTTON_CLASS} !w-auto shrink-0 bg-gray-500 px-3 text-xs font-bold opacity-60 cursor-not-allowed sm:px-4 sm:text-sm`
+                                      : `${PORTAL_TOUCH_BUTTON_PRIMARY_CLASS} !w-auto shrink-0 px-3 text-xs font-bold sm:px-4 sm:text-sm`
+                                  }
                                 >
-                                  {busy ? 'Procesando…' : 'Comprar'}
+                                  {busy ? 'Procesando…' : isOutOfStock ? 'Agotado' : 'Comprar'}
                                 </button>
                               </div>
                             </div>
@@ -4906,7 +4917,13 @@ function ClientPortalPageInner() {
                               <div className="flex min-w-0 flex-col gap-1">
                                 <p className="m-0 text-xs leading-snug text-slate-300/80">
                                   Stock:{' '}
-                                  <span className="text-xl font-bold tabular-nums text-green-500">{stock}</span>
+                                  <span
+                                    className={`text-xl font-bold tabular-nums ${
+                                      isOutOfStock ? 'text-red-500' : 'text-green-500'
+                                    }`}
+                                  >
+                                    {stock}
+                                  </span>
                                 </p>
                               </div>
                               <p className="m-0 max-w-[10rem] shrink-0 text-right text-[11px] leading-snug text-amber-200/90">
