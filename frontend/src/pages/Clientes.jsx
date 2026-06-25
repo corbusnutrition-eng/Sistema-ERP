@@ -10,6 +10,8 @@ import { fetchClientsList, fetchClientFollowUp } from '../api/clients'
 import ClientTimeline from '../features/clients/components/ClientTimeline'
 import ClientPaymentMethodsModal from '../features/clients/ClientPaymentMethodsModal'
 import { useModal } from '../context/ModalContext'
+import usePermissions from '../hooks/usePermissions'
+import { PERMS } from '../lib/permissions'
 import SearchableSelect from '../components/ui/SearchableSelect'
 import { formatRelativeTimeEcuador, formatShortDateEcuador } from '../utils/datetime'
 
@@ -216,7 +218,7 @@ function normalizeLifecycleStatus(status) {
 }
 
 /** Select con aspecto de badge; actualiza estado vía API sin disparar navegación de fila. */
-function StatusInlineSelect({ clientId, status, onCommit }) {
+function StatusInlineSelect({ clientId, status, onCommit, readOnly = false }) {
   const normalized = normalizeLifecycleStatus(status)
   const [optimistic, setOptimistic] = useState(normalized)
   const [pending, setPending] = useState(false)
@@ -241,6 +243,15 @@ function StatusInlineSelect({ clientId, status, onCommit }) {
   }
 
   const cfg = STATUS_CONFIG[optimistic]
+
+  if (readOnly) {
+    return (
+      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ring-1 ${cfg.bg} ${cfg.text} ${cfg.ring}`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} aria-hidden />
+        {optimistic}
+      </span>
+    )
+  }
 
   return (
     <span
@@ -411,7 +422,7 @@ function NotesCell({ value }) {
 
 // ─── InlineEdit ──────────────────────────────────────────────────────────────
 
-function InlineEdit({ value, onSave, type = 'text', emptyLabel = '—', required = false, compact = false, listId = null }) {
+function InlineEdit({ value, onSave, type = 'text', emptyLabel = '—', required = false, compact = false, listId = null, readOnly = false }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft]     = useState(value ?? '')
   const [saving, setSaving]   = useState(false)
@@ -427,13 +438,14 @@ function InlineEdit({ value, onSave, type = 'text', emptyLabel = '—', required
   }, [editing])
 
   function start(e) {
+    if (readOnly) return
     e.stopPropagation()
     setDraft(value ?? '')
     setEditing(true)
   }
 
   async function commit() {
-    if (!editing) return
+    if (!editing || readOnly) return
     const trimmed = draft.trim()
     if (required && !trimmed) { cancel(); return }
     setEditing(false)
@@ -488,18 +500,20 @@ function InlineEdit({ value, onSave, type = 'text', emptyLabel = '—', required
   return (
     <div
       data-no-row-nav
-      className="group/ie inline-flex items-center gap-1 cursor-pointer"
+      className={`group/ie inline-flex items-center gap-1 ${readOnly ? '' : 'cursor-pointer'}`}
       onClick={start}
-      title="Clic para editar"
+      title={readOnly ? undefined : 'Clic para editar'}
     >
       {value
         ? <span className={`${compact ? 'text-xs text-gray-400' : 'text-sm text-gray-700'} leading-snug`}>{value}</span>
         : <span className={`${compact ? 'text-xs' : 'text-sm'} text-gray-300 italic`}>{emptyLabel}</span>
       }
-      <Pencil
-        size={compact ? 9 : 10}
-        className="shrink-0 text-gray-300 opacity-0 group-hover/ie:opacity-100 transition-opacity"
-      />
+      {!readOnly && (
+        <Pencil
+          size={compact ? 9 : 10}
+          className="shrink-0 text-gray-300 opacity-0 group-hover/ie:opacity-100 transition-opacity"
+        />
+      )}
     </div>
   )
 }
@@ -1432,6 +1446,10 @@ function ClientTable({
 export default function Clientes() {
   const navigate = useNavigate()
   const { openNewClient } = useModal()
+  const { hasPermission } = usePermissions()
+  const canCreate = hasPermission(PERMS.CLIENTS_CREATE)
+  const canEdit = hasPermission(PERMS.CLIENTS_EDIT)
+  const canDelete = hasPermission(PERMS.CLIENTS_DELETE)
   const [clientes, setClientes]             = useState([])
   const [loading, setLoading]               = useState(true)
   const [fetchError, setFetchError]         = useState(null)
@@ -1780,18 +1798,20 @@ export default function Clientes() {
     header: 'Acciones',
     render: (c) => (
       <div className="flex items-center justify-end gap-0.5">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            setSelectedClient(c)
-            setIsEditModalOpen(true)
-          }}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          title="Editar cliente"
-        >
-          <Pencil size={14} />
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setSelectedClient(c)
+              setIsEditModalOpen(true)
+            }}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            title="Editar cliente"
+          >
+            <Pencil size={14} />
+          </button>
+        )}
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setTimelineClient(c) }}
@@ -1811,17 +1831,19 @@ export default function Clientes() {
         >
           <CreditCard size={14} />
         </button>
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setDeleteTarget(c) }}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-          title="Eliminar cliente"
-        >
-          <Trash2 size={14} />
-        </button>
+        {canDelete && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setDeleteTarget(c) }}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            title="Eliminar cliente"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
     ),
-  }), [])
+  }), [canEdit, canDelete])
 
   const mainColumns = useMemo(() => [
     {
@@ -1832,6 +1854,7 @@ export default function Clientes() {
           value={c.username}
           required
           emptyLabel="—"
+          readOnly={!canEdit}
           onSave={(v) => handleUpdateCliente(c.id, { username: v })}
         />
       ),
@@ -1844,6 +1867,7 @@ export default function Clientes() {
           <InlineEdit
             value={c.name}
             emptyLabel="Sin nombre"
+            readOnly={!canEdit}
             onSave={(v) => handleUpdateCliente(c.id, { name: v })}
           />
           <div className="flex items-center gap-1 text-gray-400 mt-0.5">
@@ -1891,6 +1915,7 @@ export default function Clientes() {
             value={c.phone}
             type="tel"
             emptyLabel="—"
+            readOnly={!canEdit}
             onSave={(v) => handleUpdateCliente(c.id, { phone: v })}
           />
         </div>
@@ -1906,6 +1931,7 @@ export default function Clientes() {
             value={c.country}
             listId={CLIENT_TABLE_COUNTRY_LIST_ID}
             emptyLabel="—"
+            readOnly={!canEdit}
             onSave={(v) => handleUpdateCliente(c.id, { country: v })}
           />
         </div>
@@ -1918,13 +1944,14 @@ export default function Clientes() {
         <StatusInlineSelect
           clientId={c.id}
           status={c.status}
+          readOnly={!canEdit}
           onCommit={handleInlineStatusChange}
         />
       ),
     },
     actionsCol,
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [actionsCol, handleUpdateCliente, handleInlineStatusChange])
+  ], [actionsCol, handleUpdateCliente, handleInlineStatusChange, canEdit])
 
   const followUpColumns = useMemo(() => [
     {
@@ -1996,24 +2023,26 @@ export default function Clientes() {
         const c = resolveClientForActions(row)
         return (
           <div className="flex items-center justify-end gap-0.5">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                setFollowUpTagTarget(row)
-              }}
-              className="p-1.5 rounded-lg text-gray-400 hover:text-violet-700 hover:bg-violet-50 transition-colors"
-              title="Asignar etiquetas"
-              aria-label={`Etiquetas de ${row.username || 'cliente'}`}
-            >
-              <Tag size={14} />
-            </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setFollowUpTagTarget(row)
+                }}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-violet-700 hover:bg-violet-50 transition-colors"
+                title="Asignar etiquetas"
+                aria-label={`Etiquetas de ${row.username || 'cliente'}`}
+              >
+                <Tag size={14} />
+              </button>
+            )}
             {actionsCol.render(c)}
           </div>
         )
       },
     },
-  ], [actionsCol, resolveClientForActions, globalTags])
+  ], [actionsCol, resolveClientForActions, globalTags, canEdit])
 
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2030,7 +2059,7 @@ export default function Clientes() {
       )}
 
       {/* ── Edit cliente ── */}
-      {isEditModalOpen && selectedClient && (
+      {canEdit && isEditModalOpen && selectedClient && (
         <EditClientModal
           client={selectedClient}
           onClose={() => {
@@ -2168,14 +2197,16 @@ export default function Clientes() {
               {exportLoading ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
               Exportar CSV
             </button>
-            <button
-              onClick={() => fileInputRef.current?.click()} disabled={importLoading}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors shadow-sm"
-            >
-              {importLoading ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
-              Importar
-            </button>
-            {activeTab === 'register' && (
+            {canCreate && (
+              <button
+                onClick={() => fileInputRef.current?.click()} disabled={importLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                {importLoading ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
+                Importar
+              </button>
+            )}
+            {activeTab === 'register' && canCreate && (
               <button
                 onClick={handleOpenNewClient}
                 className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-medium rounded-lg shadow-sm transition-colors"

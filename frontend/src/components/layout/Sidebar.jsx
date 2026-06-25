@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useModal } from '../../context/ModalContext'
 import { useAuth } from '../../context/AuthContext'
+import { PERMS, isNavItemVisible } from '../../lib/permissions'
 import {
   LayoutDashboard,
   Users,
@@ -33,7 +34,7 @@ const CREATE_GROUPS = [
   {
     heading: 'CRM',
     items: [
-      { icon: UserPlus,        label: 'Nuevo cliente',        action: 'newClient'     },
+      { icon: UserPlus,        label: 'Nuevo cliente',        action: 'newClient', permission: PERMS.CLIENTS_CREATE },
     ],
   },
   {
@@ -67,7 +68,7 @@ const CREATE_GROUPS = [
   },
 ]
 
-function CreateMenu({ collapsed }) {
+function CreateMenu({ collapsed, hasPermission }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const navigate = useNavigate()
@@ -142,7 +143,9 @@ function CreateMenu({ collapsed }) {
               <p className="px-4 pt-1.5 pb-1 text-[10px] font-bold uppercase tracking-widest text-gray-400">
                 {group.heading}
               </p>
-              {group.items.map(({ icon: Icon, label, action }) => (
+              {group.items
+                .filter((item) => !item.permission || hasPermission(item.permission))
+                .map(({ icon: Icon, label, action }) => (
                 <button
                   key={label}
                   onClick={() => handleAction(action)}
@@ -265,48 +268,53 @@ function AccountingDropdown({ item, collapsed }) {
 // ── Definición de navegación con control de acceso ───────────────────────────
 
 const NAV_ITEMS = [
-  { label: 'Dashboard',          icon: LayoutDashboard, to: '/dashboard',     adminOnly: true  },
-  { label: 'Clientes',           icon: Users,           to: '/clientes',      adminOnly: false },
-  { label: 'Inventario IPTV',    icon: Package,         to: '/inventario',    adminOnly: true  },
-  { label: 'Ventas',             icon: ShoppingCart,    to: '/ventas',        adminOnly: false },
-  { label: 'Suscripciones IPTV', icon: Tv2,             to: '/suscripciones', adminOnly: false },
+  { label: 'Dashboard',          icon: LayoutDashboard, to: '/dashboard',     permission: PERMS.DASHBOARD_VIEW },
+  { label: 'Clientes',           icon: Users,           to: '/clientes',      permission: PERMS.CLIENTS_VIEW },
+  { label: 'Inventario IPTV',    icon: Package,         to: '/inventario',    permission: PERMS.INVENTORY_VIEW },
+  { label: 'Ventas',             icon: ShoppingCart,    to: '/ventas',        permissionAny: 'sales' },
+  { label: 'Suscripciones IPTV', icon: Tv2,             to: '/suscripciones', permission: PERMS.SALES_SUBSCRIPTIONS_VIEW },
   {
     label: 'Contabilidad',
     icon: BookOpen,
-    adminOnly: true,
+    permissionAny: 'accounting',
     submenu: [
-      { label: 'Plan de cuentas', to: '/contabilidad/plan-de-cuentas' },
-      { label: 'Cuentas por cobrar', to: '/contabilidad/cuentas-por-cobrar' },
-      { label: 'Gastos',          to: '/contabilidad/gastos' },
-      { label: 'Proveedores',     to: '/contabilidad/proveedores' },
-      { label: 'Conciliar',       to: '/contabilidad/conciliar' },
+      { label: 'Plan de cuentas', to: '/contabilidad/plan-de-cuentas', permission: PERMS.ACCOUNTING_CHART_VIEW },
+      { label: 'Cuentas por cobrar', to: '/contabilidad/cuentas-por-cobrar', permission: PERMS.ACCOUNTING_RECEIVABLES_VIEW },
+      { label: 'Gastos',          to: '/contabilidad/gastos', permission: PERMS.ACCOUNTING_EXPENSES_VIEW },
+      { label: 'Proveedores',     to: '/contabilidad/proveedores', permission: PERMS.ACCOUNTING_VENDORS_VIEW },
+      { label: 'Conciliar',       to: '/contabilidad/conciliar', permission: PERMS.ACCOUNTING_RECONCILE_VIEW },
     ],
   },
-  { label: 'Informes', icon: BarChart3, to: '/informes', adminOnly: true },
+  { label: 'Informes', icon: BarChart3, to: '/informes', permission: PERMS.REPORTS_FINANCIAL_VIEW },
 ]
 
 const BOTTOM_ITEMS = [
-  { label: 'Equipo', icon: UsersRound, to: '/equipo', adminOnly: true },
+  { label: 'Equipo', icon: UsersRound, to: '/equipo', permission: PERMS.TEAM_USERS_VIEW },
   { label: 'Billeteras BaaS', icon: Wallet, to: '/equipo/distribuidores', baasAccess: true },
 ]
-
-function isBottomItemVisible(item, { isAdmin, hasAnyBaasAccess }) {
-  if (item.adminOnly) return isAdmin
-  if (item.baasAccess) return isAdmin || hasAnyBaasAccess
-  return true
-}
 
 // ── Componente ───────────────────────────────────────────────────────────────
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
-  const { user, isAdmin, hasAnyBaasAccess, clearSession } = useAuth()
+  const { user, isAdmin, hasAnyBaasAccess, hasPermission, permissions, clearSession } = useAuth()
 
-  const visibleNavItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin)
-  const visibleBottomItems = BOTTOM_ITEMS.filter((item) =>
-    isBottomItemVisible(item, { isAdmin, hasAnyBaasAccess }),
-  )
+  const navCtx = { role: user?.role, permissions, isAdmin, hasAnyBaasAccess }
+
+  const visibleNavItems = NAV_ITEMS
+    .filter((item) => isNavItemVisible(item, navCtx))
+    .map((item) =>
+      item.submenu
+        ? {
+            ...item,
+            submenu: item.submenu.filter((s) => isNavItemVisible({ permission: s.permission }, navCtx)),
+          }
+        : item,
+    )
+    .filter((item) => !item.submenu || item.submenu.length > 0)
+
+  const visibleBottomItems = BOTTOM_ITEMS.filter((item) => isNavItemVisible(item, navCtx))
 
   function handleLogout() {
     clearSession()
@@ -334,7 +342,7 @@ export default function Sidebar() {
       </div>
 
       {/* Quick-create menu */}
-      <CreateMenu collapsed={collapsed} />
+      <CreateMenu collapsed={collapsed} hasPermission={hasPermission} />
 
       {/* Navigation */}
       <nav className="flex-1 py-4 overflow-y-auto flex flex-col justify-between">

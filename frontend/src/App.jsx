@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ModalProvider } from './context/ModalContext'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { PERMS, hasAnyPermissionPrefix } from './lib/permissions'
 import { InventoryDataProvider } from './context/InventoryDataContext'
 import MainLayout from './components/layout/MainLayout'
 import Dashboard from './pages/Dashboard'
@@ -55,10 +56,15 @@ function ProtectedRoute({ children }) {
   return children
 }
 
-function AdminRoute({ children }) {
-  const { user } = useAuth()
-  if (!user || user.role !== 'admin') {
-    return <Navigate to="/clientes" replace />
+function PermissionRoute({ permission, permissionAny, children, fallback = '/clientes' }) {
+  const { user, hasPermission, permissions } = useAuth()
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role === 'admin') return children
+  if (permission && !hasPermission(permission)) {
+    return <Navigate to={fallback} replace />
+  }
+  if (permissionAny && !hasAnyPermissionPrefix(user.role, permissions, permissionAny)) {
+    return <Navigate to={fallback} replace />
   }
   return children
 }
@@ -72,11 +78,13 @@ function BaasRoute({ children }) {
 }
 
 function DefaultRedirect() {
-  const { user, hasAnyBaasAccess } = useAuth()
+  const { user, hasAnyBaasAccess, hasPermission } = useAuth()
   if (!user) return <Navigate to="/login" replace />
   if (user.role === 'admin') return <Navigate to="/dashboard" replace />
+  if (hasPermission(PERMS.DASHBOARD_VIEW)) return <Navigate to="/dashboard" replace />
   if (hasAnyBaasAccess) return <Navigate to="/equipo/distribuidores" replace />
-  return <Navigate to="/clientes" replace />
+  if (hasPermission(PERMS.CLIENTS_VIEW)) return <Navigate to="/clientes" replace />
+  return <Navigate to="/login" replace />
 }
 
 function AppRoutes() {
@@ -96,41 +104,41 @@ function AppRoutes() {
               <InventoryDataProvider>
                 <MainLayout>
                   <Routes>
-                    <Route path="/dashboard" element={<AdminRoute><Dashboard /></AdminRoute>} />
-                    <Route path="/inventario" element={<AdminRoute><Inventory /></AdminRoute>} />
-                    <Route path="/contabilidad" element={<AdminRoute><Navigate to="/contabilidad/plan-de-cuentas" replace /></AdminRoute>} />
-                    <Route path="/contabilidad/plan-de-cuentas" element={<AdminRoute><ChartOfAccounts /></AdminRoute>} />
-                    <Route path="/contabilidad/cuenta/:id" element={<AdminRoute><AccountHistoryPage /></AdminRoute>} />
-                    <Route path="/contabilidad/conciliar/:accountId" element={<AdminRoute><Conciliar /></AdminRoute>} />
-                    <Route path="/contabilidad/conciliar" element={<AdminRoute><Conciliar /></AdminRoute>} />
-                    <Route path="/contabilidad/cuentas-por-cobrar" element={<AdminRoute><AccountsReceivable /></AdminRoute>} />
-                    <Route path="/contabilidad/resumen" element={<AdminRoute><Accounting /></AdminRoute>} />
-                    <Route path="/contabilidad/gastos" element={<AdminRoute><ExpensesList /></AdminRoute>} />
-                    <Route path="/contabilidad/proveedores" element={<AdminRoute><VendorsList /></AdminRoute>} />
-                    <Route path="/contabilidad/proveedores/:vendorId" element={<AdminRoute><VendorDetail /></AdminRoute>} />
-                    <Route path="/informes" element={<AdminRoute><ReportsDashboard /></AdminRoute>} />
+                    <Route path="/dashboard" element={<PermissionRoute permission={PERMS.DASHBOARD_VIEW}><Dashboard /></PermissionRoute>} />
+                    <Route path="/inventario" element={<PermissionRoute permission={PERMS.INVENTORY_VIEW}><Inventory /></PermissionRoute>} />
+                    <Route path="/contabilidad" element={<PermissionRoute permissionAny="accounting"><Navigate to="/contabilidad/plan-de-cuentas" replace /></PermissionRoute>} />
+                    <Route path="/contabilidad/plan-de-cuentas" element={<PermissionRoute permission={PERMS.ACCOUNTING_CHART_VIEW}><ChartOfAccounts /></PermissionRoute>} />
+                    <Route path="/contabilidad/cuenta/:id" element={<PermissionRoute permission={PERMS.ACCOUNTING_CHART_VIEW}><AccountHistoryPage /></PermissionRoute>} />
+                    <Route path="/contabilidad/conciliar/:accountId" element={<PermissionRoute permission={PERMS.ACCOUNTING_RECONCILE_VIEW}><Conciliar /></PermissionRoute>} />
+                    <Route path="/contabilidad/conciliar" element={<PermissionRoute permission={PERMS.ACCOUNTING_RECONCILE_VIEW}><Conciliar /></PermissionRoute>} />
+                    <Route path="/contabilidad/cuentas-por-cobrar" element={<PermissionRoute permission={PERMS.ACCOUNTING_RECEIVABLES_VIEW}><AccountsReceivable /></PermissionRoute>} />
+                    <Route path="/contabilidad/resumen" element={<PermissionRoute permissionAny="accounting"><Accounting /></PermissionRoute>} />
+                    <Route path="/contabilidad/gastos" element={<PermissionRoute permission={PERMS.ACCOUNTING_EXPENSES_VIEW}><ExpensesList /></PermissionRoute>} />
+                    <Route path="/contabilidad/proveedores" element={<PermissionRoute permission={PERMS.ACCOUNTING_VENDORS_VIEW}><VendorsList /></PermissionRoute>} />
+                    <Route path="/contabilidad/proveedores/:vendorId" element={<PermissionRoute permission={PERMS.ACCOUNTING_VENDORS_VIEW}><VendorDetail /></PermissionRoute>} />
+                    <Route path="/informes" element={<PermissionRoute permission={PERMS.REPORTS_FINANCIAL_VIEW}><ReportsDashboard /></PermissionRoute>} />
                     <Route
                       path="/informes/standard/:sectionId/:reportId"
-                      element={<AdminRoute><ReportStandardPlaceholder /></AdminRoute>}
+                      element={<PermissionRoute permission={PERMS.REPORTS_FINANCIAL_VIEW}><ReportStandardPlaceholder /></PermissionRoute>}
                     />
-                    <Route path="/informes/clases" element={<AdminRoute><ClassList /></AdminRoute>} />
-                    <Route path="/listas" element={<AdminRoute><ListsDashboard /></AdminRoute>} />
-                    <Route path="/listas/metodos-pago" element={<AdminRoute><PaymentMethodsList /></AdminRoute>} />
-                    <Route path="/listas/monedas" element={<AdminRoute><CurrenciesList /></AdminRoute>} />
-                    <Route path="/listas/etiquetas" element={<AdminRoute><TagsList /></AdminRoute>} />
-                    <Route path="/equipo" element={<AdminRoute><UsersPage /></AdminRoute>} />
-                    <Route path="/equipo/nuevo" element={<AdminRoute><UserFormPage /></AdminRoute>} />
-                    <Route path="/equipo/:userId/editar" element={<AdminRoute><UserFormPage /></AdminRoute>} />
+                    <Route path="/informes/clases" element={<PermissionRoute permission={PERMS.REPORTS_CLASSES_VIEW}><ClassList /></PermissionRoute>} />
+                    <Route path="/listas" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><ListsDashboard /></PermissionRoute>} />
+                    <Route path="/listas/metodos-pago" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><PaymentMethodsList /></PermissionRoute>} />
+                    <Route path="/listas/monedas" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><CurrenciesList /></PermissionRoute>} />
+                    <Route path="/listas/etiquetas" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><TagsList /></PermissionRoute>} />
+                    <Route path="/equipo" element={<PermissionRoute permission={PERMS.TEAM_USERS_VIEW}><UsersPage /></PermissionRoute>} />
+                    <Route path="/equipo/nuevo" element={<PermissionRoute permission={PERMS.TEAM_USERS_VIEW}><UserFormPage /></PermissionRoute>} />
+                    <Route path="/equipo/:userId/editar" element={<PermissionRoute permission={PERMS.TEAM_USERS_VIEW}><UserFormPage /></PermissionRoute>} />
                     <Route path="/equipo/distribuidores" element={<BaasRoute><DistributorsBaaSPage /></BaasRoute>} />
                     <Route
                       path="/equipo/distribuidores/:uuid/arbol"
                       element={<BaasRoute><DistributorTreeMap /></BaasRoute>}
                     />
 
-                    <Route path="/clientes/:clientId" element={<ClientDetail />} />
-                    <Route path="/clientes" element={<Clientes />} />
-                    <Route path="/ventas" element={<Sales />} />
-                    <Route path="/suscripciones" element={<Subscriptions />} />
+                    <Route path="/clientes/:clientId" element={<PermissionRoute permission={PERMS.CLIENTS_VIEW}><ClientDetail /></PermissionRoute>} />
+                    <Route path="/clientes" element={<PermissionRoute permission={PERMS.CLIENTS_VIEW}><Clientes /></PermissionRoute>} />
+                    <Route path="/ventas" element={<PermissionRoute permissionAny="sales"><Sales /></PermissionRoute>} />
+                    <Route path="/suscripciones" element={<PermissionRoute permission={PERMS.SALES_SUBSCRIPTIONS_VIEW}><Subscriptions /></PermissionRoute>} />
 
                     <Route path="/" element={<DefaultRedirect />} />
                     <Route path="*" element={<DefaultRedirect />} />

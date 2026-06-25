@@ -38,9 +38,21 @@ from app.services.client_payment_service import (
 )
 from app.services.catalog_vip_sync import notify_catalog_vip_new_manual_customer
 
+from app.api.v1.dependencies import require_permission
+from app.permissions import (
+    CLIENTS_CREATE,
+    CLIENTS_DELETE,
+    CLIENTS_EDIT,
+    CLIENTS_VIEW,
+)
+
 router = APIRouter(prefix="/clients", tags=["clients"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+ClientsViewDep = Annotated[dict, Depends(require_permission(CLIENTS_VIEW))]
+ClientsCreateDep = Annotated[dict, Depends(require_permission(CLIENTS_CREATE))]
+ClientsEditDep = Annotated[dict, Depends(require_permission(CLIENTS_EDIT))]
+ClientsDeleteDep = Annotated[dict, Depends(require_permission(CLIENTS_DELETE))]
 
 # Columnas que se reconocen al importar (en minúsculas sin espacios)
 _CSV_FIELD_MAP: dict[str, str] = {
@@ -154,6 +166,7 @@ def _client_response_dict(db: Session, client: Client, *, credit_sync: bool = Tr
 @router.get("/", response_model=list[ClientResponse])
 def list_clients(
     db: DbDep,
+    _: ClientsViewDep,
     skip: int = 0,
     limit: int = Query(default=500, ge=1, le=10000),
     search: Optional[str] = Query(
@@ -206,7 +219,7 @@ router.add_api_route(
     response_class=StreamingResponse,
     tags=["clients"],
 )
-def export_clients_csv(db: DbDep) -> StreamingResponse:
+def export_clients_csv(db: DbDep, _: ClientsViewDep) -> StreamingResponse:
     """Descarga todos los clientes como un archivo CSV (UTF-8 con BOM para compatibilidad Excel)."""
     clients: list[Client] = db.query(Client).order_by(Client.id).all()
 
@@ -234,6 +247,7 @@ def export_clients_csv(db: DbDep) -> StreamingResponse:
 )
 def list_clients_follow_up(
     db: DbDep,
+    _: ClientsViewDep,
     search: Optional[str] = Query(
         default=None,
         description="Filtra por usuario, nombre, email o teléfono.",
@@ -326,7 +340,7 @@ def get_client_public(payment_link_id: uuid.UUID, db: DbDep) -> ClientPublicResp
 
 
 @router.post("/", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
-def create_client(payload: ClientCreate, db: DbDep) -> Client:
+def create_client(payload: ClientCreate, db: DbDep, _: ClientsCreateDep) -> Client:
     """
     Crea un nuevo cliente.
     El campo payment_token es generado automáticamente (uuid4).
@@ -372,7 +386,7 @@ def create_client(payload: ClientCreate, db: DbDep) -> Client:
 
 
 @router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_client(client_id: int, db: DbDep) -> None:
+def delete_client(client_id: int, db: DbDep, _: ClientsDeleteDep) -> None:
     """Elimina un cliente y sus datos asociados de forma permanente."""
     client: Optional[Client] = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
@@ -382,7 +396,7 @@ def delete_client(client_id: int, db: DbDep) -> None:
 
 
 @router.patch("/{client_id}", response_model=ClientResponse)
-def update_client(client_id: int, payload: ClientUpdate, db: DbDep) -> Client:
+def update_client(client_id: int, payload: ClientUpdate, db: DbDep, _: ClientsEditDep) -> Client:
     """Actualiza parcialmente un cliente existente."""
     client: Optional[Client] = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
@@ -409,7 +423,7 @@ def update_client(client_id: int, payload: ClientUpdate, db: DbDep) -> Client:
     summary="Sincronización retroactiva: actualiza clientes con ventas existentes",
     tags=["clients"],
 )
-def sync_clients_from_sales(db: DbDep) -> dict:
+def sync_clients_from_sales(db: DbDep, _: ClientsEditDep) -> dict:
     """
     Recorre todos los clientes que tienen al menos una venta aprobada y actualiza:
       - status       → 'Activo'
@@ -461,6 +475,7 @@ def sync_clients_from_sales(db: DbDep) -> dict:
 )
 def import_clients_csv(
     db: DbDep,
+    _: ClientsCreateDep,
     file: UploadFile = File(..., description="Archivo CSV o XLSX con columnas: nombre/name, correo/email, telefono/phone, usuario/username, pais/country, estado/status"),
 ) -> dict[str, Any]:
     """
@@ -544,7 +559,7 @@ def import_clients_csv(
 
 
 @router.get("/{client_id}/unpaid-invoices", response_model=list[UnpaidInvoiceOut])
-def get_client_unpaid_invoices(client_id: int, db: DbDep) -> list[UnpaidInvoiceOut]:
+def get_client_unpaid_invoices(client_id: int, db: DbDep, _: ClientsViewDep) -> list[UnpaidInvoiceOut]:
     """Facturas con saldo pendiente (aprobada / parcial) para conciliación QB."""
     client = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
@@ -554,7 +569,7 @@ def get_client_unpaid_invoices(client_id: int, db: DbDep) -> list[UnpaidInvoiceO
 
 
 @router.get("/{client_id}/ledger", response_model=ClientLedgerResponse)
-def get_client_ledger(client_id: int, db: DbDep) -> ClientLedgerResponse:
+def get_client_ledger(client_id: int, db: DbDep, _: ClientsViewDep) -> ClientLedgerResponse:
     """Historial financiero unificado: facturas (Factura), cobros (Pago) y recargas BaaS (RECARGA)."""
     client = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
@@ -611,7 +626,7 @@ def get_client_ledger(client_id: int, db: DbDep) -> ClientLedgerResponse:
 
 
 @router.get("/{client_id}", response_model=ClientResponse)
-def get_client(client_id: int, db: DbDep) -> ClientResponse:
+def get_client(client_id: int, db: DbDep, _: ClientsViewDep) -> ClientResponse:
     """Detalle de un cliente por id (incluye saldo CxC pendiente calculado)."""
     client: Optional[Client] = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
@@ -622,7 +637,7 @@ def get_client(client_id: int, db: DbDep) -> ClientResponse:
 
 
 @router.get("/{client_id}/sub-clients", response_model=list[ClientSubClientBrief])
-def list_client_subclients(client_id: int, db: DbDep) -> list[ClientSubClientBrief]:
+def list_client_subclients(client_id: int, db: DbDep, _: ClientsViewDep) -> list[ClientSubClientBrief]:
     """Sub-clientes directos cuyo ``parent_id`` es el cliente indicado."""
     parent: Optional[Client] = db.query(Client).filter(Client.id == client_id).first()
     if parent is None:

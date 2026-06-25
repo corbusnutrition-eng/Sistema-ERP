@@ -155,7 +155,24 @@ MATRIX_PERMISSIONS: frozenset[str] = _collect_matrix_keys()
 
 ALL_PERMISSIONS: frozenset[str] = MATRIX_PERMISSIONS | _BAAS_LEGACY
 
-# Compatibilidad con catálogo anterior (checkboxes simples)
+# ── Atajos de permisos (matriz) para require_permission y UI ───────────────────
+
+DASHBOARD_OVERVIEW_VIEW = "dashboard:overview:view"
+
+CLIENTS_VIEW = "clients_inventory:clients:view"
+CLIENTS_CREATE = "clients_inventory:clients:create"
+CLIENTS_EDIT = "clients_inventory:clients:edit"
+CLIENTS_DELETE = "clients_inventory:clients:delete"
+
+INVENTORY_VIEW = "clients_inventory:inventory:view"
+PRODUCTS_VIEW = "clients_inventory:products:view"
+
+SALES_INVOICES_VIEW = "sales:invoices:view"
+SALES_SUBSCRIPTIONS_VIEW = "sales:subscriptions:view"
+SALES_RECEIPTS_VIEW = "sales:receipts:view"
+
+TEAM_USERS_VIEW = "team:users:view"
+REPORTS_FINANCIAL_VIEW = "reports:financial:view"
 PERMISSION_GROUPS: list[dict[str, Any]] = [
     {
         "module": "baas",

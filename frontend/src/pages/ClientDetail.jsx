@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import api from '../api/axios'
 import { useModal } from '../context/ModalContext'
+import usePermissions from '../hooks/usePermissions'
+import { PERMS } from '../lib/permissions'
 import NuevaVentaModal from '../features/sales/components/NuevaVentaModal'
 import {
   ClientDetailNotesCell,
@@ -182,6 +184,8 @@ export default function ClientDetail() {
   const { clientId } = useParams()
   const navigate = useNavigate()
   const { openNewSale, openReceivePayment } = useModal()
+  const { hasPermission } = usePermissions()
+  const canEdit = hasPermission(PERMS.CLIENTS_EDIT)
 
   const idNum = Number(clientId)
   const invalidId = !Number.isFinite(idNum) || idNum < 1
@@ -574,14 +578,16 @@ export default function ClientDetail() {
                   <p className="text-xs font-bold uppercase tracking-wide text-gray-500 m-0">
                     Datos de contacto
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setEditHeaderOpen(true)}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-600 transition-colors hover:bg-blue-100"
-                  >
-                    <Pencil size={14} aria-hidden />
-                    Editar
-                  </button>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => setEditHeaderOpen(true)}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-600 transition-colors hover:bg-blue-100"
+                    >
+                      <Pencil size={14} aria-hidden />
+                      Editar
+                    </button>
+                  )}
                 </div>
 
                 <dl className="grid grid-cols-1 sm:[grid-template-columns:minmax(7.5rem,10rem)_1fr] gap-x-4 gap-y-3 text-sm mb-6 pb-6 border-b border-gray-100">
@@ -1082,7 +1088,7 @@ export default function ClientDetail() {
         </div>
       )}
 
-      {editHeaderOpen && client && (
+      {canEdit && editHeaderOpen && client && (
         <EditModal
           client={client}
           onClose={() => setEditHeaderOpen(false)}
