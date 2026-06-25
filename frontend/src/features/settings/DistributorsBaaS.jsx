@@ -68,6 +68,56 @@ const RECHARGE_FILTERS = [
   { id: 'canceled', label: 'Cancelado', apiStatus: 'canceled', badgeClass: 'bg-slate-500' },
 ]
 
+function normalizeRechargeStatus(status) {
+  return String(status ?? '')
+    .trim()
+    .toLowerCase()
+}
+
+/** Filtro estricto por pestaña sobre el estado maestro (sin mezclar estados). */
+function rechargeRequestMatchesTab(row, tabId) {
+  const st = normalizeRechargeStatus(row?.status)
+  switch (tabId) {
+    case 'pending':
+      return st === 'pending'
+    case 'in_review':
+      return st === 'in_review'
+    case 'approved':
+      return st === 'approved' || st === 'partially_paid'
+    case 'rejected':
+      return st === 'rejected'
+    case 'canceled':
+      return st === 'canceled'
+    default:
+      return false
+  }
+}
+
+function dedupeRechargeRequestsById(rows) {
+  const byId = new Map()
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (row?.id == null) continue
+    const id = row.id
+    const prev = byId.get(id)
+    byId.set(id, prev ? { ...prev, ...row } : row)
+  }
+  return Array.from(byId.values()).sort((a, b) => {
+    const ta = new Date(a?.created_at ?? 0).getTime()
+    const tb = new Date(b?.created_at ?? 0).getTime()
+    return tb - ta
+  })
+}
+
+function upsertRechargeRequestInList(prev, updated) {
+  if (updated?.id == null) return dedupeRechargeRequestsById(prev)
+  const id = updated.id
+  const idx = prev.findIndex((r) => r.id === id)
+  if (idx >= 0) {
+    return dedupeRechargeRequestsById(prev.map((r) => (r.id === id ? { ...r, ...updated } : r)))
+  }
+  return dedupeRechargeRequestsById([updated, ...prev])
+}
+
 function rechargeHasOpenCxcBalance(row) {
   const bp = Number(row?.balance_pending ?? 0)
   return Number.isFinite(bp) && bp > 1e-6
@@ -228,8 +278,10 @@ export default function DistributorsBaaSPage() {
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [baasSearch, setBaasSearch] = useState('')
 
+  /** Estado maestro: todas las solicitudes; cada pestaña filtra en derivado. */
   const [rechargeRequests, setRechargeRequests] = useState([])
   const [loadingRequests, setLoadingRequests] = useState(false)
+  const rechargeFetchGenRef = useRef(0)
   /** Coincide con valores canónicos del backend (pending, in_review, …). */
   const [rechargeActiveTab, setRechargeActiveTab] = useState('in_review')
 
@@ -304,24 +356,31 @@ export default function DistributorsBaaSPage() {
 
   const fetchRechargeRequests = useCallback(async (opts = {}) => {
     const silentToast = opts.silentToast === true
-    const statusOverride = typeof opts.status === 'string' ? opts.status : null
+    const gen = ++rechargeFetchGenRef.current
     setLoadingRequests(true)
     try {
-      const filt = RECHARGE_FILTERS.find((f) => f.id === rechargeActiveTab)
-      const apiStatus = statusOverride ?? filt?.apiStatus ?? 'in_review'
       const { data } = await api.get('/api/v1/distributors/recharge-requests', {
-        params: { status: apiStatus },
+        params: { status: 'all' },
       })
-      setRechargeRequests(Array.isArray(data) ? data : [])
+      if (gen !== rechargeFetchGenRef.current) return
+      setRechargeRequests(dedupeRechargeRequestsById(Array.isArray(data) ? data : []))
     } catch {
+      if (gen !== rechargeFetchGenRef.current) return
       setRechargeRequests([])
       if (!silentToast) {
         showToast('No se pudo cargar las solicitudes de recarga.')
       }
     } finally {
-      setLoadingRequests(false)
+      if (gen === rechargeFetchGenRef.current) {
+        setLoadingRequests(false)
+      }
     }
-  }, [rechargeActiveTab])
+  }, [])
+
+  const patchRechargeRequestInState = useCallback((updated) => {
+    if (!updated || updated.id == null) return
+    setRechargeRequests((prev) => upsertRechargeRequestInList(prev, updated))
+  }, [])
 
   const fetchRechargeMetrics = useCallback(async () => {
     try {
@@ -460,7 +519,7 @@ export default function DistributorsBaaSPage() {
       fetchRechargeRequests()
       fetchRechargeMetrics()
     }
-  }, [tab, rechargeActiveTab, fetchRechargeRequests, fetchRechargeMetrics])
+  }, [tab, fetchRechargeRequests, fetchRechargeMetrics])
 
   /** Escucha sincronización global (robot en MainLayout): refresca lista si hay recargas nuevas desde Render. */
   useEffect(() => {
@@ -929,7 +988,7 @@ export default function DistributorsBaaSPage() {
       showToast('Solicitud creada')
       setTab('requests')
       setRechargeActiveTab('pending')
-      fetchRechargeRequests({ silentToast: true, status: 'pending' })
+      fetchRechargeRequests({ silentToast: true })
       fetchUsers()
       fetchRechargeMetrics()
     } catch (err) {
@@ -1033,7 +1092,10 @@ export default function DistributorsBaaSPage() {
         showToast('Recarga activada: deuda CxC de la solicitud liquidada.')
       }
       closeApproveModal()
-      fetchRechargeRequests()
+      if (data?.request) {
+        patchRechargeRequestInState(data.request)
+      }
+      fetchRechargeRequests({ silentToast: true })
       fetchRechargeMetrics()
       fetchUsers()
       notifyAccountsReceivableStale()
@@ -1101,7 +1163,7 @@ export default function DistributorsBaaSPage() {
         note: noteDraft,
       })
       showToast('Nota guardada.')
-      setRechargeRequests((prev) => prev.map((x) => (x.id === data.id ? { ...x, ...data } : x)))
+      patchRechargeRequestInState(data)
       closeNoteModal()
     } catch (err) {
       const msg =
@@ -1242,10 +1304,11 @@ export default function DistributorsBaaSPage() {
         ...(depositUsdNum != null ? { declared_deposit_usd: depositUsdNum } : {}),
         ...(noteTrim.length ? { admin_note: noteTrim } : {}),
       }
-      await api.patch(`/api/v1/distributors/recharge-requests/${rid}`, body)
+      const { data } = await api.patch(`/api/v1/distributors/recharge-requests/${rid}`, body)
       closeLinkModal()
       showToast('Solicitud actualizada.')
-      fetchRechargeRequests()
+      patchRechargeRequestInState(data)
+      fetchRechargeRequests({ silentToast: true })
       fetchRechargeMetrics()
     } catch (err) {
       const msg =
@@ -1302,16 +1365,38 @@ export default function DistributorsBaaSPage() {
     [users],
   )
 
-  const rechargeTabCounts = useMemo(
-    () => ({
-      pending: Number(reqMetrics.pending ?? 0) || 0,
-      in_review: Number(reqMetrics.in_review ?? 0) || 0,
-      approved: Number(reqMetrics.approved ?? 0) || 0,
-      rejected: Number(reqMetrics.rejected ?? 0) || 0,
-      canceled: Number(reqMetrics.canceled ?? 0) || 0,
-    }),
-    [reqMetrics],
+  const visibleRechargeRequests = useMemo(
+    () => rechargeRequests.filter((r) => rechargeRequestMatchesTab(r, rechargeActiveTab)),
+    [rechargeRequests, rechargeActiveTab],
   )
+
+  const rechargeTabCounts = useMemo(() => {
+    const counts = {
+      pending: 0,
+      in_review: 0,
+      approved: 0,
+      rejected: 0,
+      canceled: 0,
+    }
+    for (const r of rechargeRequests) {
+      for (const f of RECHARGE_FILTERS) {
+        if (rechargeRequestMatchesTab(r, f.id)) {
+          counts[f.id] += 1
+          break
+        }
+      }
+    }
+    if (rechargeRequests.length === 0) {
+      return {
+        pending: Number(reqMetrics.pending ?? 0) || 0,
+        in_review: Number(reqMetrics.in_review ?? 0) || 0,
+        approved: Number(reqMetrics.approved ?? 0) || 0,
+        rejected: Number(reqMetrics.rejected ?? 0) || 0,
+        canceled: Number(reqMetrics.canceled ?? 0) || 0,
+      }
+    }
+    return counts
+  }, [rechargeRequests, reqMetrics])
 
   const clientSnapshotForEdit = useMemo(() => {
     if (!editRechargeRow) return null
@@ -1578,7 +1663,7 @@ export default function DistributorsBaaSPage() {
               <h2 className="text-base font-semibold text-gray-800">Solicitudes de recarga</h2>
             </div>
             <span className="text-xs text-gray-400">
-              {loadingRequests ? '…' : `${rechargeRequests.length} solicitudes`}
+              {loadingRequests ? '…' : `${visibleRechargeRequests.length} solicitudes`}
             </span>
           </div>
 
@@ -1607,7 +1692,7 @@ export default function DistributorsBaaSPage() {
                 <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />
               ))}
             </div>
-          ) : rechargeRequests.length === 0 ? (
+          ) : visibleRechargeRequests.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400">
               <ClipboardList size={40} className="mb-3 opacity-25" />
               <p className="text-sm font-medium">
@@ -1639,7 +1724,7 @@ export default function DistributorsBaaSPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {rechargeRequests.map((r) => (
+                  {visibleRechargeRequests.map((r) => (
                     <tr
                       key={r.id}
                       className={`hover:bg-gray-50/60 transition-colors ${
