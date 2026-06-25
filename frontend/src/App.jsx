@@ -23,6 +23,7 @@ import CheckoutPage from './features/public/CheckoutPage'
 import ClientPortalPage from './features/public/ClientPortalPage'
 import RechargePortalPage from './features/public/RechargePortalPage'
 import UsersPage from './features/settings/Users'
+import UserFormPage from './features/settings/UserFormPage'
 import DistributorsBaaSPage from './features/settings/DistributorsBaaS'
 import DistributorTreeMap from './features/settings/DistributorTreeMap'
 import ReportsDashboard from './features/reports/ReportsDashboard'
@@ -118,6 +119,8 @@ function AppRoutes() {
                     <Route path="/listas/monedas" element={<AdminRoute><CurrenciesList /></AdminRoute>} />
                     <Route path="/listas/etiquetas" element={<AdminRoute><TagsList /></AdminRoute>} />
                     <Route path="/equipo" element={<AdminRoute><UsersPage /></AdminRoute>} />
+                    <Route path="/equipo/nuevo" element={<AdminRoute><UserFormPage /></AdminRoute>} />
+                    <Route path="/equipo/:userId/editar" element={<AdminRoute><UserFormPage /></AdminRoute>} />
                     <Route path="/equipo/distribuidores" element={<BaasRoute><DistributorsBaaSPage /></BaasRoute>} />
                     <Route
                       path="/equipo/distribuidores/:uuid/arbol"

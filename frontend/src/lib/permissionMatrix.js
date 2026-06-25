@@ -1,0 +1,113 @@
+/** Utilidades para la matriz de permisos estilo QuickBooks. */
+
+import {
+  BAAS_CREATE_RECHARGE,
+  BAAS_VIEW_NOTIFICATIONS_TAB,
+  BAAS_VIEW_REQUESTS_TAB,
+  BAAS_VIEW_USERS_TAB,
+} from './permissions'
+
+export const ROLE_TEMPLATE_CUSTOM = 'custom'
+export const ROLE_TEMPLATE_FULL_ADMIN = 'full_admin'
+
+export function splitFullName(fullName = '') {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return { firstName: '', lastName: '' }
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' }
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') }
+}
+
+export function joinFullName(firstName, lastName) {
+  return [firstName, lastName].map((s) => String(s || '').trim()).filter(Boolean).join(' ')
+}
+
+export function buildGrantedSet(permissions) {
+  return new Set(Array.isArray(permissions) ? permissions.filter(Boolean) : [])
+}
+
+export function collectMatrixKeys(modules = []) {
+  const keys = []
+  for (const mod of modules) {
+    for (const row of mod?.rows ?? []) {
+      for (const key of Object.values(row?.cells ?? {})) {
+        if (key) keys.push(key)
+      }
+    }
+  }
+  return keys
+}
+
+export function moduleAccessSummary(module, grantedSet) {
+  const rows = module?.rows ?? []
+  const withAccess = []
+  const withoutAccess = []
+
+  for (const row of rows) {
+    const keys = Object.values(row?.cells ?? {}).filter(Boolean)
+    const hasAny = keys.some((k) => grantedSet.has(k))
+    if (hasAny) withAccess.push(row.label)
+    else withoutAccess.push(row.label)
+  }
+
+  if (withAccess.length === 0) {
+    return { level: 'none', label: 'Sin acceso', withAccess, withoutAccess }
+  }
+  if (withoutAccess.length === 0) {
+    return { level: 'full', label: 'Acceso completo', withAccess, withoutAccess }
+  }
+  return { level: 'partial', label: 'Acceso parcial', withAccess, withoutAccess }
+}
+
+export function permissionsFromRoleTemplate(roleTemplate, predefinedRoles = [], allMatrixKeys = []) {
+  const tpl = predefinedRoles.find((r) => r.id === roleTemplate)
+  if (!tpl) return []
+  if (roleTemplate === ROLE_TEMPLATE_FULL_ADMIN) return [...allMatrixKeys]
+  return Array.isArray(tpl.permissions) ? [...tpl.permissions] : []
+}
+
+export function toggleMatrixPermission(grantedSet, permissionKey, enabled) {
+  const next = new Set(grantedSet)
+  if (enabled) next.add(permissionKey)
+  else next.delete(permissionKey)
+  return next
+}
+
+/** Legacy BaaS → celdas de matriz (solo visualización). */
+const LEGACY_TO_MATRIX_DISPLAY = {
+  [BAAS_VIEW_USERS_TAB]: ['baas:distributors:view', 'baas:distributors:edit'],
+  [BAAS_VIEW_REQUESTS_TAB]: [
+    'baas:recharge_requests:view',
+    'baas:recharge_requests:edit',
+    'baas:recharge_requests:approve',
+    'baas:recharge_requests:delete',
+  ],
+  [BAAS_CREATE_RECHARGE]: ['baas:recharge_requests:create'],
+  [BAAS_VIEW_NOTIFICATIONS_TAB]: [
+    'baas:notifications:view',
+    'baas:notifications:create',
+    'baas:notifications:edit',
+    'baas:notifications:delete',
+  ],
+}
+
+export function expandPermissionsForMatrixDisplay(permissions, modules = []) {
+  const matrixKeys = new Set(collectMatrixKeys(modules))
+  const out = new Set()
+  for (const raw of permissions ?? []) {
+    const key = String(raw || '').trim()
+    if (!key) continue
+    if (matrixKeys.has(key)) out.add(key)
+    if (LEGACY_TO_MATRIX_DISPLAY[key]) {
+      for (const mk of LEGACY_TO_MATRIX_DISPLAY[key]) {
+        if (matrixKeys.has(mk)) out.add(mk)
+      }
+    }
+  }
+  return [...out]
+}
+
+export function matrixPermissionsOnly(grantedSet, modules) {
+  const valid = new Set(collectMatrixKeys(modules))
+  const source = grantedSet instanceof Set ? grantedSet : new Set(grantedSet)
+  return [...source].filter((k) => valid.has(k))
+}

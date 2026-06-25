@@ -33,6 +33,7 @@ class User(Base):
         default=list,
         server_default=text("'[]'"),
     )
+    role_template: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Multinivel / BaaS — jerarquía de distribuidores y saldo virtual
     parent_id: Mapped[Optional[int]] = mapped_column(

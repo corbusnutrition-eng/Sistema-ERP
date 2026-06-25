@@ -12,7 +12,15 @@ from sqlalchemy.orm import Session
 from app.api.v1.dependencies import AdminDep
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.permissions import normalize_permissions
+from app.permissions import (
+    ROLE_TEMPLATE_CUSTOM,
+    ROLE_TEMPLATE_FULL_ADMIN,
+    expand_permissions_with_legacy,
+    infer_role_template,
+    normalize_permissions,
+    permissions_for_role_template,
+    role_template_label,
+)
 from app.services.catalog_client_picker_rows import local_clients_catalog_picker_rows
 from app.services.render_sync import (
     emails_from_listar_clientes_rows,
@@ -46,11 +54,28 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6)
     role: UserRole = UserRole.worker
+    role_template: str = Field(default=ROLE_TEMPLATE_CUSTOM, max_length=64)
     permissions: list[str] = Field(default_factory=list)
 
     @field_validator("permissions")
     @classmethod
     def validate_permissions(cls, v: list[str]) -> list[str]:
+        return normalize_permissions(v)
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    email: Optional[EmailStr] = None
+    password: Optional[str] = Field(default=None, min_length=6)
+    role_template: Optional[str] = Field(default=None, max_length=64)
+    permissions: Optional[list[str]] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return None
         return normalize_permissions(v)
 
 
@@ -64,6 +89,8 @@ class UserResponse(BaseModel):
     wallet_balance: float = 0.0
     referral_code: Optional[str] = None
     permissions: list[str] = Field(default_factory=list)
+    role_template: Optional[str] = None
+    role_template_label: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -71,6 +98,39 @@ class UserResponse(BaseModel):
     @classmethod
     def normalize_permissions_response(cls, v: object) -> list[str]:
         return normalize_permissions(v)
+
+
+def _user_to_response(user: User) -> UserResponse:
+    tpl = user.role_template or infer_role_template(role=user.role.value, permissions=user.permissions)
+    return UserResponse(
+        id=user.id,
+        name=user.name,
+        email=str(user.email),
+        role=user.role,
+        is_active=user.is_active,
+        parent_id=user.parent_id,
+        wallet_balance=float(user.wallet_balance or 0.0),
+        referral_code=user.referral_code,
+        permissions=normalize_permissions(user.permissions),
+        role_template=tpl,
+        role_template_label=role_template_label(tpl if user.role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN),
+    )
+
+
+def _apply_role_template_payload(
+    *,
+    role_template: str,
+    permissions: list[str],
+) -> tuple[UserRole, list[str], str]:
+    tpl_id = str(role_template or ROLE_TEMPLATE_CUSTOM).strip() or ROLE_TEMPLATE_CUSTOM
+    if tpl_id == ROLE_TEMPLATE_CUSTOM:
+        perms = expand_permissions_with_legacy(normalize_permissions(permissions))
+        return UserRole.worker, perms, ROLE_TEMPLATE_CUSTOM
+    system_role, tpl_perms = permissions_for_role_template(tpl_id)
+    db_role = UserRole.admin if system_role == "admin" else UserRole.worker
+    if tpl_id == ROLE_TEMPLATE_FULL_ADMIN:
+        return db_role, [], ROLE_TEMPLATE_FULL_ADMIN
+    return db_role, tpl_perms, tpl_id
 
 
 class UserPickerRow(BaseModel):
@@ -103,20 +163,21 @@ def _unique_referral_code(db: Session) -> str:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def create_user(payload: UserCreate, db: DbDep, _: AdminDep) -> User:
+def create_user(payload: UserCreate, db: DbDep, _: AdminDep) -> UserResponse:
     """Registra un nuevo trabajador/administrador con contraseña hasheada."""
+    db_role, perms, tpl = _apply_role_template_payload(
+        role_template=payload.role_template,
+        permissions=payload.permissions,
+    )
     user = User(
-        name=payload.name,
+        name=payload.name.strip(),
         email=payload.email,
         hashed_password=_hash_password(payload.password),
-        role=payload.role,
+        role=db_role,
         is_active=True,
         referral_code=_unique_referral_code(db),
-        permissions=(
-            normalize_permissions(payload.permissions)
-            if payload.role == UserRole.worker
-            else []
-        ),
+        permissions=perms if db_role == UserRole.worker else [],
+        role_template=tpl if db_role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN,
     )
     db.add(user)
     try:
@@ -128,7 +189,21 @@ def create_user(payload: UserCreate, db: DbDep, _: AdminDep) -> User:
             detail=f"Ya existe un usuario con el email '{payload.email}'.",
         )
     db.refresh(user)
-    return user
+    return _user_to_response(user)
+
+
+@router.get("/team", response_model=list[UserResponse])
+def list_team_users(db: DbDep, _: AdminDep) -> list[UserResponse]:
+    """Lista miembros del equipo ERP con permisos y plantilla de rol."""
+    rows = db.query(User).order_by(User.name.asc()).all()
+    for u in rows:
+        if not u.referral_code:
+            u.referral_code = _unique_referral_code(db)
+    if rows:
+        db.commit()
+        for u in rows:
+            db.refresh(u)
+    return [_user_to_response(u) for u in rows]
 
 
 @router.get("", response_model=list[UserPickerRow])
@@ -232,8 +307,58 @@ def list_users(
     ]
 
 
+@router.get("/{user_id}", response_model=UserResponse)
+def get_user(user_id: int, db: DbDep, _: AdminDep) -> UserResponse:
+    user: Optional[User] = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
+    return _user_to_response(user)
+
+
+@router.patch("/{user_id}", response_model=UserResponse)
+def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: AdminDep) -> UserResponse:
+    user: Optional[User] = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
+
+    if payload.name is not None:
+        user.name = payload.name.strip()
+    if payload.email is not None:
+        user.email = payload.email
+    if payload.password:
+        user.hashed_password = _hash_password(payload.password)
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+
+    if payload.role_template is not None or payload.permissions is not None:
+        tpl = payload.role_template or user.role_template or ROLE_TEMPLATE_CUSTOM
+        perms = (
+            payload.permissions
+            if payload.permissions is not None
+            else normalize_permissions(user.permissions)
+        )
+        db_role, expanded, resolved_tpl = _apply_role_template_payload(
+            role_template=tpl,
+            permissions=perms,
+        )
+        user.role = db_role
+        user.role_template = resolved_tpl if db_role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN
+        user.permissions = expanded if db_role == UserRole.worker else []
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe un usuario con ese correo electrónico.",
+        )
+    db.refresh(user)
+    return _user_to_response(user)
+
+
 @router.patch("/{user_id}/toggle-active", response_model=UserResponse)
-def toggle_active(user_id: int, db: DbDep, _: AdminDep) -> User:
+def toggle_active(user_id: int, db: DbDep, _: AdminDep) -> UserResponse:
     """Activa o desactiva un usuario."""
     user: Optional[User] = db.get(User, user_id)
     if user is None:
@@ -241,4 +366,4 @@ def toggle_active(user_id: int, db: DbDep, _: AdminDep) -> User:
     user.is_active = not user.is_active
     db.commit()
     db.refresh(user)
-    return user
+    return _user_to_response(user)

@@ -38,8 +38,8 @@ export async function fetchAuthMe() {
   return data
 }
 
-/** GET ``/api/v1/permissions/catalog`` — catálogo agrupado (solo admin). */
-export async function fetchPermissionsCatalog() {
-  const { data } = await api.get('/api/v1/permissions/catalog')
+/** GET ``/api/v1/permissions/matrix`` — matriz QBO + roles predefinidos (solo admin). */
+export async function fetchPermissionsMatrix() {
+  const { data } = await api.get('/api/v1/permissions/matrix')
   return data
 }
