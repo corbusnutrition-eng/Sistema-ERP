@@ -16,7 +16,12 @@ function parseEnvBool(raw, defaultValue = false) {
 
 /** Base del socio (``VITE_CODIGOS_RETIRO_BASE_URL`` en build de producción). */
 export function resolveCodigosRetiroBaseUrl() {
-  return (import.meta.env.VITE_CODIGOS_RETIRO_BASE_URL || DEFAULT_CODIGOS_RETIRO_BASE).replace(/\/$/, '')
+  const raw = String(import.meta.env.VITE_CODIGOS_RETIRO_BASE_URL ?? '').trim()
+  const base =
+    raw && raw !== 'undefined' && raw !== 'null' && /^https?:\/\//i.test(raw)
+      ? raw
+      : DEFAULT_CODIGOS_RETIRO_BASE
+  return base.replace(/\/$/, '')
 }
 
 /** Origen permitido para ``postMessage`` del iframe (mismo host que la base). */
@@ -102,12 +107,24 @@ export function formatWalletRechargeReferenciaExterna(rechargeId) {
 export function resolveReferenciaExternaForWalletRecharge(referenciaExterna) {
   if (referenciaExterna == null) return ''
   const raw = String(referenciaExterna).trim()
-  if (!raw) return ''
+  if (!raw || raw === 'undefined' || raw === 'null' || raw === '[object Object]') return ''
   if (/^REC-\d+$/i.test(raw)) return raw.toUpperCase()
   const n = Number(raw)
   if (Number.isFinite(n) && n > 0) return formatWalletRechargeReferenciaExterna(n)
-  if (/^\d+$/.test(raw)) return formatWalletRechargeReferenciaExterna(parseInt(raw, 10))
-  return raw
+  return ''
+}
+
+function normalizeReferenciaExternaInput(referenciaExterna) {
+  if (referenciaExterna == null) return null
+  if (typeof referenciaExterna === 'number') {
+    return Number.isFinite(referenciaExterna) && referenciaExterna > 0 ? referenciaExterna : null
+  }
+  const raw = String(referenciaExterna).trim()
+  if (!raw || raw === 'undefined' || raw === 'null' || raw === '[object Object]') return null
+  const n = Number(raw)
+  if (Number.isFinite(n) && n > 0) return n
+  if (/^(?:FAC|REF|MOV|REC)-\d+$/i.test(raw)) return raw
+  return null
 }
 
 /**
@@ -116,18 +133,28 @@ export function resolveReferenciaExternaForWalletRecharge(referenciaExterna) {
  */
 export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
   const label = String(clientLabel ?? '').trim() || 'Cliente'
-  const referenciaExterna = options.referenciaExterna
   const referenciaKind = options.referenciaKind === 'recharge' ? 'recharge' : 'sale'
   const esPrueba = options.esPrueba ?? CODIGOS_RETIRO_ES_PRUEBA
-  const url = new URL(resolveCodigosRetiroWidgetUrl())
+  const refInput = normalizeReferenciaExternaInput(options.referenciaExterna)
+
+  let url
+  try {
+    url = new URL(resolveCodigosRetiroWidgetUrl())
+  } catch {
+    url = new URL(`${DEFAULT_CODIGOS_RETIRO_BASE}${CODIGOS_RETIRO_WIDGET_PATH}`)
+  }
+
   url.searchParams.set('cliente', label)
   url.searchParams.set('socio', CODIGOS_RETIRO_SOCIO)
-  if (referenciaExterna != null && String(referenciaExterna).trim() !== '') {
+
+  if (refInput != null) {
     const ref =
       referenciaKind === 'recharge'
-        ? resolveReferenciaExternaForWalletRecharge(referenciaExterna)
-        : resolveReferenciaExternaForSale(referenciaExterna)
-    url.searchParams.set('referencia_externa', ref)
+        ? resolveReferenciaExternaForWalletRecharge(refInput)
+        : resolveReferenciaExternaForSale(refInput)
+    if (ref) {
+      url.searchParams.set('referencia_externa', ref)
+    }
   }
   if (esPrueba) {
     url.searchParams.set('es_prueba', '1')

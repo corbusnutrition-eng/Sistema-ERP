@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import {
   buildCodigosRetiroWidgetUrl,
@@ -108,11 +108,18 @@ export default function CodigosRetiroWidget({
   onRetiroError = null,
 }) {
   const label = String(clientName ?? '').trim() || 'Cliente'
-  const iframeSrc = buildCodigosRetiroWidgetUrl(label, {
-    referenciaExterna,
-    referenciaKind,
-    esPrueba,
-  })
+  const iframeSrc = useMemo(() => {
+    try {
+      return buildCodigosRetiroWidgetUrl(label, {
+        referenciaExterna,
+        referenciaKind,
+        esPrueba,
+      })
+    } catch (err) {
+      console.error('[CodigosRetiroWidget] No se pudo construir la URL del iframe:', err)
+      return buildCodigosRetiroWidgetUrl(label, { esPrueba })
+    }
+  }, [clientName, esPrueba, label, referenciaExterna, referenciaKind])
   const iframeRef = useRef(null)
   const iframeLoadCountRef = useRef(0)
   const userInteractedRef = useRef(false)
@@ -127,6 +134,18 @@ export default function CodigosRetiroWidget({
   const [showPendingNotice, setShowPendingNotice] = useState(false)
   const [showRejectedNotice, setShowRejectedNotice] = useState(false)
   const [rejectedMessage, setRejectedMessage] = useState(RETIRO_REJECTED_DEFAULT_MESSAGE)
+
+  useEffect(() => {
+    setIframeLoaded(false)
+    setIsAwaitingResult(false)
+    setShowPendingNotice(false)
+    setShowRejectedNotice(false)
+    setRejectedMessage(RETIRO_REJECTED_DEFAULT_MESSAGE)
+    completedRef.current = false
+    rejectedRef.current = false
+    userInteractedRef.current = false
+    iframeLoadCountRef.current = 0
+  }, [iframeSrc])
 
   const clearProcessingTimeout = useCallback(() => {
     if (processingTimeoutRef.current != null) {
@@ -311,10 +330,11 @@ export default function CodigosRetiroWidget({
               </div>
             ) : null}
             <iframe
+              key={iframeSrc}
               ref={iframeRef}
               src={iframeSrc}
               title="Códigos de Retiro"
-              className={`portal-codigos-retiro-iframe block h-auto w-full min-h-0 max-w-full border-0 bg-transparent p-0 outline-none ${iframeLoaded ? '' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}`}
+              className={`portal-codigos-retiro-iframe block h-auto w-full min-h-0 max-w-full border-0 bg-slate-950 p-0 outline-none ${iframeLoaded ? '' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}`}
               style={{
                 height: iframeHeight,
                 minHeight: iframeLoaded ? CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX : 0,

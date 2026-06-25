@@ -37,7 +37,9 @@ from app.timezone_utils import isoformat_z, now_ecuador
 from app.wallet_recharge_helpers import (
     OPEN_PORTAL_STATUSES,
     REQ_STATUS_APPROVED,
+    REQ_STATUS_IN_REVIEW,
     REQ_STATUS_PARTIALLY_PAID,
+    REQ_STATUS_PENDING,
     REQ_STATUS_REJECTED,
 )
 
