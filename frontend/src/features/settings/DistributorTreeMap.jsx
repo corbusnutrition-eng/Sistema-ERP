@@ -3,6 +3,9 @@ import { Link, useParams } from 'react-router-dom'
 import Tree from 'react-d3-tree'
 import { ArrowLeft, GitBranch, Loader2, ZoomIn, ZoomOut, Move, X } from 'lucide-react'
 import api from '../../api/axios'
+import { getApiErrorMessage } from '../../lib/apiErrors'
+import usePermissions from '../../hooks/usePermissions'
+import { PERMS } from '../../lib/permissions'
 
 const TREE_LINK_CLASS = 'baas-tree-link'
 const MASTER_PIN = '301985'
@@ -77,7 +80,7 @@ function nodeFromDatum(nodeDatum) {
   }
 }
 
-function BaasTreeNodeCard({ nodeDatum, toggleNode, onOpenAction }) {
+function BaasTreeNodeCard({ nodeDatum, toggleNode, onOpenAction, canEditTree }) {
   const attrs = nodeDatum?.attributes || {}
   const hasChildren = Array.isArray(nodeDatum?.children) && nodeDatum.children.length > 0
   const isExpanded = !nodeDatum?.__rd3t?.collapsed
@@ -92,10 +95,10 @@ function BaasTreeNodeCard({ nodeDatum, toggleNode, onOpenAction }) {
 
   return (
     <g>
-      <foreignObject width={300} height={168} x={-150} y={-84} requiredExtensions="http://www.w3.org/1999/xhtml">
+      <foreignObject width={300} height={canEditTree ? 168 : 132} x={-150} y={canEditTree ? -84 : -66} requiredExtensions="http://www.w3.org/1999/xhtml">
         <div
           xmlns="http://www.w3.org/1999/xhtml"
-          className={`h-[160px] rounded-xl border px-3 py-2.5 text-left text-slate-100 shadow-lg shadow-black/40 ${
+          className={`${canEditTree ? 'h-[160px]' : 'h-[124px]'} rounded-xl border px-3 py-2.5 text-left text-slate-100 shadow-lg shadow-black/40 ${
             blocked
               ? 'border-red-500/60 bg-slate-950/95'
               : 'border-slate-600 bg-slate-900/95'
@@ -142,22 +145,24 @@ function BaasTreeNodeCard({ nodeDatum, toggleNode, onOpenAction }) {
               {formatBaasMoney(attrs.walletBalance, attrs.currency)}
             </span>
           </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={(e) => handleAction('block', e)}
-              className="rounded-md border border-red-500/40 bg-red-950/50 px-2 py-0.5 text-[10px] font-semibold text-red-200 hover:bg-red-900/60"
-            >
-              {blocked ? '🔓 Desbloquear' : '🚫 Bloquear'}
-            </button>
-            <button
-              type="button"
-              onClick={(e) => handleAction('balance', e)}
-              className="rounded-md border border-amber-500/40 bg-amber-950/40 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-900/50"
-            >
-              💰 Ajustar Saldo
-            </button>
-          </div>
+          {canEditTree ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={(e) => handleAction('block', e)}
+                className="rounded-md border border-red-500/40 bg-red-950/50 px-2 py-0.5 text-[10px] font-semibold text-red-200 hover:bg-red-900/60"
+              >
+                {blocked ? '🔓 Desbloquear' : '🚫 Bloquear'}
+              </button>
+              <button
+                type="button"
+                onClick={(e) => handleAction('balance', e)}
+                className="rounded-md border border-amber-500/40 bg-amber-950/40 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-900/50"
+              >
+                💰 Ajustar Saldo
+              </button>
+            </div>
+          ) : null}
         </div>
       </foreignObject>
     </g>
@@ -346,6 +351,8 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
 
 export default function DistributorTreeMap() {
   const { uuid } = useParams()
+  const { hasPermission } = usePermissions()
+  const canEditTree = hasPermission(PERMS.BAAS_TREE_EDIT)
   const containerRef = useRef(null)
   const [treeApi, setTreeApi] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -374,8 +381,7 @@ export default function DistributorTreeMap() {
       setTreeKey((k) => k + 1)
       return true
     } catch (err) {
-      const d = err?.response?.data?.detail
-      setError(typeof d === 'string' ? d : 'No se pudo cargar el árbol genealógico.')
+      setError(getApiErrorMessage(err, { fallback: 'No se pudo cargar el árbol genealógico.' }))
       setTreeApi(null)
       return false
     } finally {
@@ -410,8 +416,10 @@ export default function DistributorTreeMap() {
   }, [])
 
   const renderCustomNode = useCallback(
-    (rd3tProps) => <BaasTreeNodeCard {...rd3tProps} onOpenAction={handleOpenAction} />,
-    [handleOpenAction],
+    (rd3tProps) => (
+      <BaasTreeNodeCard {...rd3tProps} onOpenAction={handleOpenAction} canEditTree={canEditTree} />
+    ),
+    [handleOpenAction, canEditTree],
   )
 
   const translate = useMemo(
@@ -522,7 +530,7 @@ export default function DistributorTreeMap() {
         )}
       </div>
 
-      {actionModal && (
+      {canEditTree && actionModal && (
         <TreeNodeActionModal
           modal={actionModal}
           onClose={() => setActionModal(null)}

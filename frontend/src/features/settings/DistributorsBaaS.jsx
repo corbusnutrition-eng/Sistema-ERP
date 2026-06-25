@@ -220,6 +220,7 @@ export default function DistributorsBaaSPage() {
   const canCreateRecharge = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_CREATE)
   const canEditRecharge = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_EDIT)
   const canApproveRecharge = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_APPROVE)
+  const canViewTree = hasPermission(PERMS.BAAS_TREE_VIEW)
 
   const [tab, setTab] = useState(() => allowedTabs[0] ?? 'users')
 
@@ -1499,9 +1500,10 @@ export default function DistributorsBaaSPage() {
                   {filteredUsers.map((u) => {
                     const displayName = u.name?.trim?.() ? u.name.trim() : u.email
                     const treeUuid = u.payment_token ?? u.portal_token
-                    const treeHref = treeUuid
-                      ? `/equipo/distribuidores/${treeUuid}/arbol`
-                      : null
+                    const treeHref =
+                      canViewTree && treeUuid
+                        ? `/equipo/distribuidores/${treeUuid}/arbol`
+                        : null
                     return (
                     <tr key={u.id} className="hover:bg-gray-50/80">
                       <td className="px-6 py-3">

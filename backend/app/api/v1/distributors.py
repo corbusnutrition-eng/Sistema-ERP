@@ -25,6 +25,7 @@ from app.permissions import (
     BAAS_RECHARGE_REQUESTS_CREATE,
     BAAS_RECHARGE_REQUESTS_EDIT,
     BAAS_RECHARGE_REQUESTS_VIEW,
+    BAAS_TREE_VIEW,
 )
 from app.api.v1.sales import _persist_receipt_upload
 from app.database import get_db
@@ -106,6 +107,7 @@ BaasRechargeViewDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_R
 BaasRechargeCreateDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_REQUESTS_CREATE))]
 BaasRechargeEditDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_REQUESTS_EDIT))]
 BaasRechargeApproveDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_REQUESTS_APPROVE))]
+BaasTreeViewDep = Annotated[dict, Depends(require_permission(BAAS_TREE_VIEW))]
 
 logger = logging.getLogger(__name__)
 
@@ -573,7 +575,7 @@ def list_distributor_users(db: DbDep, _: BaasDistributorsViewDep) -> list[Distri
 def get_distributor_tree_data(
     client_uuid: uuid_module.UUID,
     db: DbDep,
-    _: BaasDistributorsViewDep,
+    _: BaasTreeViewDep,
 ) -> DistributorTreeNode:
     """
     Árbol genealógico BaaS del cliente identificado por ``payment_token`` (UUID).

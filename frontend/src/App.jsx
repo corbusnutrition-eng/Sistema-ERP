@@ -132,7 +132,11 @@ function AppRoutes() {
                     <Route path="/equipo/distribuidores" element={<BaasRoute><DistributorsBaaSPage /></BaasRoute>} />
                     <Route
                       path="/equipo/distribuidores/:uuid/arbol"
-                      element={<BaasRoute><DistributorTreeMap /></BaasRoute>}
+                      element={
+                        <PermissionRoute permission={PERMS.BAAS_TREE_VIEW}>
+                          <DistributorTreeMap />
+                        </PermissionRoute>
+                      }
                     />
 
                     <Route path="/clientes/:clientId" element={<PermissionRoute permission={PERMS.CLIENTS_VIEW}><ClientDetail /></PermissionRoute>} />

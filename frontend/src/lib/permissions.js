@@ -56,6 +56,9 @@ export const PERMS = Object.freeze({
   BAAS_NOTIFICATIONS_EDIT: 'baas:notifications:edit',
   BAAS_NOTIFICATIONS_DELETE: 'baas:notifications:delete',
 
+  BAAS_TREE_VIEW: 'baas:tree:view',
+  BAAS_TREE_EDIT: 'baas:tree:edit',
+
   TEAM_USERS_VIEW: 'team:users:view',
   TEAM_USERS_CREATE: 'team:users:create',
   TEAM_USERS_EDIT: 'team:users:edit',

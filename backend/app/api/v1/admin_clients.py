@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import AdminDep, require_permission
+from app.permissions import BAAS_TREE_EDIT
 from app.database import get_db
 from app.models.client import CLIENT_STATUSES, Client
 from app.models.wallet_transaction import WalletTransaction
@@ -44,6 +45,7 @@ from app.services.client_reseller_service import get_client_by_payment_token
 router = APIRouter(prefix="/admin/clients", tags=["admin"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+BaasTreeEditDep = Annotated[dict, Depends(require_permission(BAAS_TREE_EDIT))]
 
 MASTER_ADMIN_PIN = (os.getenv("MASTER_ADMIN_PIN") or "301985").strip()
 TX_ADMIN_ADJUST = "admin_adjust"
@@ -91,7 +93,7 @@ def admin_toggle_client_status(
     client_uuid: uuid_module.UUID,
     payload: AdminPinBody,
     db: DbDep,
-    _: AdminDep,
+    _: BaasTreeEditDep,
 ) -> AdminToggleStatusResponse:
     """Invierte Activo ↔ Inactivo del cliente identificado por ``payment_token``."""
     _require_master_pin(payload.pin)
@@ -118,7 +120,7 @@ def admin_adjust_client_balance(
     client_uuid: uuid_module.UUID,
     payload: AdminAdjustBalanceBody,
     db: DbDep,
-    _: AdminDep,
+    _: BaasTreeEditDep,
 ) -> AdminAdjustBalanceResponse:
     """Ajusta saldo BaaS del cliente (sumar o restar) con movimiento en ledger."""
     _require_master_pin(payload.pin)
