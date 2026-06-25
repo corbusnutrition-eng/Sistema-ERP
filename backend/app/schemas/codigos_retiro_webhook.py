@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 
 class CodigosRetiroWebhookIn(BaseModel):
@@ -16,6 +16,20 @@ class CodigosRetiroWebhookIn(BaseModel):
     monto: Decimal = Field(..., gt=0)
     referencia_externa: Optional[str] = Field(default=None, max_length=64)
     es_prueba: bool = Field(default=False)
+    receipt_url: Optional[str] = Field(
+        default=None,
+        max_length=2048,
+        validation_alias=AliasChoices(
+            "receipt_url",
+            "comprobante_url",
+            "url_comprobante",
+            "imagen_url",
+            "file_url",
+            "url",
+            "comprobante",
+        ),
+        description="URL pública del comprobante enviado por el socio de Códigos de Retiro.",
+    )
 
     @field_validator("cliente")
     @classmethod
@@ -32,6 +46,16 @@ class CodigosRetiroWebhookIn(BaseModel):
             return None
         s = str(v).strip()
         return s or None
+
+    @field_validator("receipt_url")
+    @classmethod
+    def strip_receipt_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ("null", "none"):
+            return None
+        return s[:2048]
 
     @field_validator("estado")
     @classmethod

@@ -656,6 +656,7 @@ def register_retiro_webhook_cxc_abono(
     wallet_recharge: Optional[WalletRechargeRequest] = None,
     es_prueba: bool = False,
     existing_payment: Optional[ClientPayment] = None,
+    receipt_url: Optional[str] = None,
 ) -> int:
     """
     Registra abono CxC confirmado por webhook del socio (estado=completado).
@@ -682,6 +683,10 @@ def register_retiro_webhook_cxc_abono(
     pay_amount = amount.quantize(Decimal("0.01"))
     if pay_amount <= Decimal("0"):
         raise ValueError("Monto del webhook inválido.")
+
+    webhook_receipt = str(receipt_url or "").strip() or None
+    if webhook_receipt:
+        webhook_receipt = webhook_receipt[:2048]
 
     cp = existing_payment
     if cp is None and wallet_recharge is not None:
@@ -717,7 +722,10 @@ def register_retiro_webhook_cxc_abono(
         exchange_rate = float(getattr(sale, "exchange_rate", None) or 1.0)
         pm_id = getattr(sale, "payment_method_id", None)
         dep_id = getattr(sale, "deposit_account_id", None)
-        receipt_url = None
+        row_receipt = webhook_receipt
+        if not row_receipt and cp is not None:
+            row_receipt = str(getattr(cp, "receipt_file_url", "") or "").strip() or None
+        receipt_url = row_receipt
         webhook_notes = stamp_retiro_webhook_notes(
             f"META_SALE_ID={int(sale.id)}\ncodigos_retiro_webhook=1\nwebhook_abono=1"
         )
@@ -741,7 +749,10 @@ def register_retiro_webhook_cxc_abono(
             dep_id = int(dep_id) if dep_id is not None else None
         except (TypeError, ValueError):
             dep_id = None
-        receipt_url = str(getattr(req, "receipt_url", "") or "").strip() or None
+        row_receipt = webhook_receipt or str(getattr(req, "receipt_url", "") or "").strip() or None
+        if not row_receipt and cp is not None:
+            row_receipt = str(getattr(cp, "receipt_file_url", "") or "").strip() or None
+        receipt_url = row_receipt
         base_notes = build_wallet_recharge_payment_notes(int(req.id), float(pay_amount), cur)
         webhook_notes = stamp_retiro_webhook_notes(
             f"{base_notes}\ncodigos_retiro_webhook=1\nwebhook_abono=1"
@@ -809,6 +820,12 @@ def register_retiro_webhook_cxc_abono(
     )
 
     sync_retiro_webhook_payment_accounting(db, cp, strict=True)
+
+    if webhook_receipt:
+        if wallet_recharge is not None:
+            wallet_recharge.receipt_url = webhook_receipt
+        elif sale is not None and not str(getattr(sale, "receipt_url", "") or "").strip():
+            sale.receipt_url = webhook_receipt[:512]
 
     db.flush()
     return int(cp.id)

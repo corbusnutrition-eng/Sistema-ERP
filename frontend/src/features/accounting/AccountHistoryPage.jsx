@@ -149,7 +149,9 @@ function csvDateTimeCell(iso) {
 
 function receiptAbsoluteUrl(path) {
   if (path == null || path === '') return null
-  const p = String(path)
+  const p = String(path).trim()
+  if (!p) return null
+  if (p.startsWith('http://') || p.startsWith('https://')) return p
   return `${API_ORIGIN}${p.startsWith('/') ? p : `/${p}`}`
 }
 

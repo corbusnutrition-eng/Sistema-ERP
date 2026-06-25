@@ -48,6 +48,37 @@ logger = logging.getLogger(__name__)
 _AMOUNT_EPS = Decimal("0.01")
 _WR_EPS = 1e-6
 _RETIRO_PM_HINTS = ("retiro", "codigo", "código")
+
+_RETIRO_WEBHOOK_RECEIPT_KEYS = (
+    "receipt_url",
+    "comprobante_url",
+    "url_comprobante",
+    "imagen_url",
+    "file_url",
+    "url",
+    "comprobante",
+)
+
+
+def normalize_retiro_webhook_receipt_url(raw: object) -> Optional[str]:
+    """Normaliza URL de comprobante del payload del socio (externa o relativa al ERP)."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or s.lower() in ("null", "none"):
+        return None
+    return s[:2048]
+
+
+def extract_receipt_url_from_webhook_payload(payload: dict[str, object]) -> Optional[str]:
+    """Lee la URL del comprobante desde cualquier alias conocido del webhook."""
+    for key in _RETIRO_WEBHOOK_RECEIPT_KEYS:
+        if key not in payload:
+            continue
+        url = normalize_retiro_webhook_receipt_url(payload.get(key))
+        if url:
+            return url
+    return None
 _META_EFECTIVO_RE = re.compile(r"PARTE_EFECTIVO=([\d.]+)", re.IGNORECASE)
 _META_RETIRO_WEBHOOK = "META_RETIRO_WEBHOOK=1"
 
@@ -766,9 +797,11 @@ def process_codigos_retiro_webhook(
     monto: Decimal,
     referencia_externa: Optional[str] = None,
     es_prueba: bool = False,
+    receipt_url: Optional[str] = None,
 ) -> dict[str, object]:
     """Ejecuta la lógica de negocio del webhook (sin validar API key)."""
     amount = monto.quantize(Decimal("0.01"))
+    receipt_url = normalize_retiro_webhook_receipt_url(receipt_url)
     match: Optional[MatchedRetiroTransaction] = None
 
     ref = str(referencia_externa or "").strip()
@@ -815,7 +848,7 @@ def process_codigos_retiro_webhook(
             }
 
     if estado == "completado":
-        return _process_completado(db, match, es_prueba=es_prueba)
+        return _process_completado(db, match, es_prueba=es_prueba, receipt_url=receipt_url)
     return _process_fallido(db, match, es_prueba=es_prueba)
 
 
@@ -850,6 +883,7 @@ def _process_completado(
     ctx: MatchedRetiroTransaction,
     *,
     es_prueba: bool = False,
+    receipt_url: Optional[str] = None,
 ) -> dict[str, object]:
     try:
         if not es_prueba:
@@ -912,6 +946,7 @@ def _process_completado(
                 wallet_recharge=req,
                 es_prueba=es_prueba,
                 existing_payment=ctx.client_payment,
+                receipt_url=receipt_url,
             )
             db.commit()
             msg = (
@@ -1053,12 +1088,13 @@ def run_codigos_retiro_webhook_background(payload: dict[str, object]) -> None:
     db = SessionLocal()
     try:
         logger.info(
-            "Webhook códigos retiro encolado: estado=%s es_prueba=%s cliente=%r monto=%s ref=%r",
+            "Webhook códigos retiro encolado: estado=%s es_prueba=%s cliente=%r monto=%s ref=%r receipt=%s",
             estado_raw,
             es_prueba,
             payload.get("cliente"),
             payload.get("monto"),
             payload.get("referencia_externa"),
+            "yes" if extract_receipt_url_from_webhook_payload(payload) else "no",
         )
         result = process_codigos_retiro_webhook(
             db,
@@ -1071,6 +1107,7 @@ def run_codigos_retiro_webhook_background(payload: dict[str, object]) -> None:
                 else None
             ),
             es_prueba=es_prueba,
+            receipt_url=extract_receipt_url_from_webhook_payload(payload),
         )
         logger.info("Webhook códigos retiro procesado: %s", result)
     except Exception:

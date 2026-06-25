@@ -15,6 +15,7 @@ from app.database import get_db
 from app.account_constants import is_liquid_deposit_account
 from app.account_structure import validate_linked_payment_method_name
 from app.models.account import Account
+from app.models.client_payment import ClientPayment
 from app.models.journal_entry import JournalEntry, JournalEntryLine, JournalReferenceType
 from app.models.sale import Sale
 from app.services.accounting_engine import TRANSFER_REFERENCE_TYPE, post_account_transfer
@@ -210,6 +211,7 @@ def _history_line_from_journal_line(
     *,
     peer: Optional[Account],
     sale: Optional[Sale],
+    client_payment: Optional[ClientPayment] = None,
     cur_code: str,
     running_balance: Decimal,
 ) -> AccountHistoryEntry:
@@ -303,6 +305,48 @@ def _history_line_from_journal_line(
             transaction_reason=line_kind,
         )
 
+    if ref_type == JournalReferenceType.client_payment.value and entry.reference_id is not None:
+        cp_receipt = (
+            str(client_payment.receipt_file_url or "").strip()
+            if client_payment is not None and client_payment.receipt_file_url
+            else None
+        )
+        memo = desc_raw[:500] if desc_raw else None
+        label = desc_raw[:120] if desc_raw else (peer_name or line_kind)
+        cid = int(client_payment.client_id) if client_payment is not None else None
+        return AccountHistoryEntry(
+            sale_id=None,
+            ledger_transaction_id=line.id,
+            occurred_at=datetime_at_ecuador_midnight(entry.date),
+            reference_number=ref,
+            reference=ref,
+            client_id=cid,
+            client_name=label,
+            notes=memo,
+            balance_effect=signed,
+            charge_amount=charge,
+            payment_amount=pay_mag,
+            line_kind=line_kind,
+            deposit=charge,
+            payment=pay_mag,
+            deposit_account_id=line.account_id,
+            amount_paid=float(client_payment.amount) if client_payment is not None else None,
+            amount_currency=cur_up,
+            transaction_currency=(
+                str(client_payment.currency or cur_up).strip().upper()[:10]
+                if client_payment is not None
+                else cur_up
+            ),
+            exchange_rate=float(client_payment.exchange_rate or 1.0) if client_payment is not None else float(line.exchange_rate or 1),
+            local_amount=mo,
+            amount_usd=mo if cur_up == "USD" else Decimal("0"),
+            status="posted",
+            running_balance=running_balance,
+            iptv_username=None,
+            receipt_url=cp_receipt,
+            transaction_reason=line_kind,
+        )
+
     memo = desc_raw[:500] if desc_raw else None
     label = desc_raw[:120] if desc_raw else (peer_name or line_kind)
     return AccountHistoryEntry(
@@ -393,6 +437,16 @@ def _build_account_journal_ledger(
         )
         sales_by_id = {int(s.id): s for s in rows}
 
+    payment_ids = {
+        int(e.reference_id)
+        for e in entries.values()
+        if e.reference_type == JournalReferenceType.client_payment.value and e.reference_id is not None
+    }
+    payments_by_id: dict[int, ClientPayment] = {}
+    if payment_ids:
+        for prow in db.query(ClientPayment).filter(ClientPayment.id.in_(payment_ids)).all():
+            payments_by_id[int(prow.id)] = prow
+
     account_ids_needed = {l.account_id for l in line_rows}
     for entry_lines in lines_by_entry.values():
         for el in entry_lines:
@@ -423,6 +477,11 @@ def _build_account_journal_ledger(
             if entry.reference_type == JournalReferenceType.venta.value and entry.reference_id is not None
             else None
         )
+        client_payment = (
+            payments_by_id.get(int(entry.reference_id))
+            if entry.reference_type == JournalReferenceType.client_payment.value and entry.reference_id is not None
+            else None
+        )
         dr = Decimal(str(line.debit)).quantize(Decimal("0.0001"))
         cr = Decimal(str(line.credit)).quantize(Decimal("0.0001"))
         running += dr - cr
@@ -433,6 +492,7 @@ def _build_account_journal_ledger(
                 line_acc,
                 peer=peer,
                 sale=sale,
+                client_payment=client_payment,
                 cur_code=cur_code,
                 running_balance=running,
             ),

@@ -39,6 +39,8 @@ def webhook_codigos_retiro(
 
     ``referencia_externa``: ``FAC-0001`` (venta) o ``REC-00001`` (recarga BaaS).
 
+    ``receipt_url`` (o alias ``comprobante_url``, ``url_comprobante``, etc.): URL del comprobante.
+
     Responde de inmediato con HTTP 200; el procesamiento ocurre en segundo plano.
     """
     verify_codigos_retiro_webhook_api_key(x_api_key)
