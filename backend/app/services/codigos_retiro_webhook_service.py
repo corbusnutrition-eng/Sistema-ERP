@@ -243,14 +243,15 @@ def _build_matched_retiro_wallet_recharge(
     amount: Decimal,
     require_amount_match: bool = True,
 ) -> Optional[MatchedRetiroTransaction]:
-    """Resuelve ``WalletRechargeRequest`` + cobro pendiente para el webhook retiro."""
+    """Espejo de ``find_retiro_transaction_by_referencia_externa`` para recargas BaaS."""
+    from app.services.codigos_retiro_instant_service import WEBHOOK_WR_STATUSES as WR_STATUSES
     from app.wallet_recharge_helpers import wallet_recharge_awaiting_codigos_retiro_webhook
 
     req = db.get(WalletRechargeRequest, int(wr_id))
     if req is None:
         return None
     st = str(getattr(req, "status", "") or "")
-    if st not in WEBHOOK_WR_STATUSES:
+    if st not in WR_STATUSES:
         return None
 
     pending = float(getattr(req, "balance_pending", 0) or 0)
@@ -263,7 +264,22 @@ def _build_matched_retiro_wallet_recharge(
         return None
 
     target = amount.quantize(Decimal("0.01"))
-    cp = find_pending_client_payment_for_wallet_recharge(db, req)
+    cp: Optional[ClientPayment] = None
+    pending_for_client = (
+        db.query(ClientPayment)
+        .filter(
+            ClientPayment.client_id == int(client.id),
+            ClientPayment.status == ClientPaymentStatus.pending_review,
+        )
+        .order_by(ClientPayment.created_at.desc(), ClientPayment.id.desc())
+        .all()
+    )
+    for candidate in pending_for_client:
+        if parse_notes_meta_wallet_recharge_id(candidate.notes) == int(req.id):
+            cp = candidate
+            break
+    if cp is None:
+        cp = find_pending_client_payment_for_wallet_recharge(db, req)
 
     if require_amount_match:
         amount_ok = any(_amount_matches(target, cand) for cand in _wallet_amount_candidates(req))
@@ -829,46 +845,6 @@ def _wallet_recharge_retiro_failed_preserves_cxc(db: Session, req: WalletRecharg
     return False
 
 
-def _ensure_wallet_recharge_ready_for_retiro_webhook(
-    db: Session,
-    client: Client,
-    req: WalletRechargeRequest,
-) -> None:
-    """
-    Activa recarga BaaS y acredita billetera si el webhook llega antes de la activación portal
-    o si la solicitud aún no entregó el producto virtual.
-    """
-    from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
-    from app.services.client_payment_service import credit_wallet_recharge_product_if_pending
-    from app.wallet_recharge_helpers import (
-        REQ_STATUS_APPROVED,
-        REQ_STATUS_IN_REVIEW,
-        REQ_STATUS_PENDING,
-        stamp_wallet_recharge_retiro_instant_cxc,
-        wallet_recharge_is_retiro_instant_cxc,
-        wallet_recharge_virtual_product_already_delivered,
-    )
-
-    if wallet_recharge_is_retiro_instant_cxc(req):
-        return
-
-    st = str(getattr(req, "status", "") or "")
-    wr_cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
-
-    if not wallet_recharge_virtual_product_already_delivered(db, req):
-        credit_wallet_recharge_product_if_pending(db, req, client, wr_cur)
-
-    if st in (REQ_STATUS_PENDING, REQ_STATUS_IN_REVIEW):
-        product_total = float(getattr(req, "amount_requested", 0) or 0)
-        if float(getattr(req, "balance_pending", 0) or 0) <= _WR_EPS and product_total > _WR_EPS:
-            req.balance_pending = round(product_total, 2)
-        req.status = REQ_STATUS_APPROVED
-        stamp_wallet_recharge_retiro_instant_cxc(req)
-        ensure_wallet_recharge_accrual_journal(db, req, strict=False)
-
-    db.flush()
-
-
 def _process_completado(
     db: Session,
     ctx: MatchedRetiroTransaction,
@@ -890,7 +866,23 @@ def _process_completado(
         req = ctx.wallet_recharge
 
         if req is not None:
-            _ensure_wallet_recharge_ready_for_retiro_webhook(db, ctx.client, req)
+            st = str(getattr(req, "status", "") or "")
+            if st in (REQ_STATUS_PENDING, REQ_STATUS_IN_REVIEW):
+                try:
+                    from app.services.codigos_retiro_instant_service import (
+                        format_wallet_recharge_referencia_externa,
+                        instant_activation_cxc_wallet_recharge,
+                    )
+
+                    instant_activation_cxc_wallet_recharge(
+                        db,
+                        client_id=int(ctx.client.id),
+                        referencia_externa=format_wallet_recharge_referencia_externa(int(req.id)),
+                        skip_retiro_method_guard=True,
+                    )
+                except HTTPException as exc:
+                    if exc.status_code != status.HTTP_409_CONFLICT:
+                        raise
             db.refresh(req)
 
         if sale is not None:

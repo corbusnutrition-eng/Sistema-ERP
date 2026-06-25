@@ -92,15 +92,12 @@ export function RetiroPendingProcessingPanel({ message = CODIGOS_RETIRO_PENDING_
 
 /**
  * Widget embebido del socio externo (OCR de comprobantes de retiro físico).
- * La respuesta llega vía ``window.postMessage`` (escuchada en el padre).
- *
- * El contenedor replica el shell visual del uploader «Comprobante» del portal
- * (glow verde, vidrio oscuro, borde punteado) para integrarse al checkout.
+ * Ventas y recargas BaaS comparten la misma tubería; ``entity`` solo cambia el prefijo FAC/REC.
  */
 export default function CodigosRetiroWidget({
   clientName = 'Cliente',
   referenciaExterna = null,
-  referenciaKind = 'sale',
+  entity = 'sale',
   esPrueba = CODIGOS_RETIRO_ES_PRUEBA,
   className = '',
   style = {},
@@ -108,18 +105,21 @@ export default function CodigosRetiroWidget({
   onRetiroError = null,
 }) {
   const label = String(clientName ?? '').trim() || 'Cliente'
+  const widgetEntity = entity === 'recharge' ? 'recharge' : 'sale'
+
   const iframeSrc = useMemo(() => {
     try {
       return buildCodigosRetiroWidgetUrl(label, {
         referenciaExterna,
-        referenciaKind,
+        entity: widgetEntity,
         esPrueba,
       })
     } catch (err) {
       console.error('[CodigosRetiroWidget] No se pudo construir la URL del iframe:', err)
       return buildCodigosRetiroWidgetUrl(label, { esPrueba })
     }
-  }, [clientName, esPrueba, label, referenciaExterna, referenciaKind])
+  }, [esPrueba, label, referenciaExterna, widgetEntity])
+
   const iframeRef = useRef(null)
   const iframeLoadCountRef = useRef(0)
   const userInteractedRef = useRef(false)
@@ -138,12 +138,8 @@ export default function CodigosRetiroWidget({
   useEffect(() => {
     setIframeLoaded(false)
     setIsAwaitingResult(false)
-    setShowPendingNotice(false)
-    setShowRejectedNotice(false)
-    setRejectedMessage(RETIRO_REJECTED_DEFAULT_MESSAGE)
     completedRef.current = false
     rejectedRef.current = false
-    userInteractedRef.current = false
     iframeLoadCountRef.current = 0
   }, [iframeSrc])
 
@@ -316,12 +312,27 @@ export default function CodigosRetiroWidget({
             Sube tu comprobante y confirma los datos detectados en el formulario de verificación.
           </p>
           <div
-            className="portal-codigos-retiro-iframe-shell relative h-fit w-full overflow-visible"
+            className="portal-codigos-retiro-iframe-shell relative min-h-[720px] w-full overflow-visible"
             onPointerDown={handleIframeShellPointerDown}
           >
+            <iframe
+              key={iframeSrc}
+              ref={iframeRef}
+              src={iframeSrc}
+              title="Códigos de Retiro"
+              className="portal-codigos-retiro-iframe block w-full min-h-[720px] border-0 bg-slate-950 p-0 outline-none"
+              style={{
+                height: iframeHeight,
+                minHeight: CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX,
+              }}
+              scrolling="no"
+              allow="camera; clipboard-write"
+              allowTransparency="true"
+              onLoad={handleIframeLoad}
+            />
             {!iframeLoaded ? (
               <div
-                className="flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-xl border border-emerald-500/25 bg-slate-950/70 px-4 py-10 text-center"
+                className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl border border-emerald-500/25 bg-slate-950/95 px-4 py-10 text-center"
                 role="status"
                 aria-live="polite"
               >
@@ -329,21 +340,6 @@ export default function CodigosRetiroWidget({
                 <p className="m-0 text-sm font-medium text-emerald-100/90">Cargando formulario de retiro…</p>
               </div>
             ) : null}
-            <iframe
-              key={iframeSrc}
-              ref={iframeRef}
-              src={iframeSrc}
-              title="Códigos de Retiro"
-              className={`portal-codigos-retiro-iframe block h-auto w-full min-h-0 max-w-full border-0 bg-slate-950 p-0 outline-none ${iframeLoaded ? '' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}`}
-              style={{
-                height: iframeHeight,
-                minHeight: iframeLoaded ? CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX : 0,
-              }}
-              scrolling="no"
-              allow="camera; clipboard-write"
-              allowTransparency="true"
-              onLoad={handleIframeLoad}
-            />
             {iframeLoaded && isAwaitingResult ? (
               <div
                 className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-xl bg-slate-950/88 px-4 py-8 text-center backdrop-blur-[2px]"

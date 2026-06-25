@@ -5155,6 +5155,11 @@ function ClientPortalPageInner() {
         ) : (
           <>
             <CodigosRetiroWidget
+              key={
+                currentDebtPayObligation?.kind === 'recharge'
+                  ? `retiro-debt-rec-${currentDebtPayObligation.rechargeRow?.id ?? 'x'}`
+                  : `retiro-debt-sale-${currentDebtPayObligation?.saleId ?? 'x'}`
+              }
               clientName={clientName}
               referenciaExterna={
                 currentDebtPayObligation?.kind === 'sale'
@@ -5163,7 +5168,7 @@ function ClientPortalPageInner() {
                     ? currentDebtPayObligation.rechargeRow?.id
                     : undefined
               }
-              referenciaKind={
+              entity={
                 currentDebtPayObligation?.kind === 'recharge' ? 'recharge' : 'sale'
               }
               onRetiroError={handleRetiroWidgetError}
@@ -5883,9 +5888,10 @@ function ClientPortalPageInner() {
                           />
                         ) : null}
                         <CodigosRetiroWidget
+                          key={`retiro-recharge-${frId}`}
                           clientName={clientName}
                           referenciaExterna={frId}
-                          referenciaKind="recharge"
+                          entity="recharge"
                           onRetiroError={handleRetiroWidgetError}
                         />
                         {retiroSubmittingKey === retiroScope || rechargeForm.submitting ? (
@@ -6495,6 +6501,7 @@ function ClientPortalPageInner() {
                                 />
                               ) : null}
                               <CodigosRetiroWidget
+                                key={`retiro-sale-${sid}`}
                                 clientName={clientName}
                                 referenciaExterna={sid}
                                 onRetiroError={handleRetiroWidgetError}

@@ -23,6 +23,12 @@ from app.services.client_payment_service import (
     sync_sale_amount_paid_from_allocations,
 )
 from app.timezone_utils import isoformat_z, now_ecuador
+from app.wallet_recharge_helpers import (
+    REQ_STATUS_APPROVED,
+    REQ_STATUS_IN_REVIEW,
+    REQ_STATUS_PARTIALLY_PAID,
+    REQ_STATUS_PENDING,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,18 @@ WEBHOOK_SALE_STATUSES = (
     SaleStatus.payment_submitted,
     SaleStatus.approved,
     SaleStatus.partially_paid,
+)
+
+_INSTANT_ACTIVATION_WR_STATUSES = (
+    REQ_STATUS_PENDING,
+    REQ_STATUS_IN_REVIEW,
+)
+
+WEBHOOK_WR_STATUSES = (
+    REQ_STATUS_PENDING,
+    REQ_STATUS_IN_REVIEW,
+    REQ_STATUS_PARTIALLY_PAID,
+    REQ_STATUS_APPROVED,
 )
 
 
@@ -218,7 +236,7 @@ def parse_referencia_externa_sale_id(raw: Optional[str]) -> Optional[int]:
 
 
 def parse_referencia_externa_wallet_recharge_id(raw: Optional[str]) -> Optional[int]:
-    """Interpreta ``referencia_externa`` como PK de recarga BaaS (``REC-00042``)."""
+    """Interpreta ``referencia_externa`` como PK de recarga BaaS (``REC-00039``)."""
     s = str(raw or "").strip()
     if not s:
         return None
@@ -460,6 +478,122 @@ def instant_activation_cxc(
         sale.amount_paid,
     )
     return sale
+
+
+def resolve_wallet_recharge_from_referencia_externa(
+    db: Session,
+    referencia_externa: str,
+    *,
+    client_id: Optional[int] = None,
+    allowed_statuses: Optional[tuple[str, ...]] = None,
+) -> WalletRechargeRequest:
+    """Espejo de ``resolve_sale_from_referencia_externa`` para recargas BaaS."""
+    wr_id = parse_referencia_externa_wallet_recharge_id(referencia_externa)
+    if wr_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="referencia_externa inválida (use ID numérico o REC-00039).",
+        )
+    req = db.get(WalletRechargeRequest, int(wr_id))
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Recarga BaaS #{wr_id} no encontrada.",
+        )
+    if client_id is not None and int(req.client_id) != int(client_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La recarga no pertenece a este cliente.",
+        )
+    allowed = allowed_statuses or WEBHOOK_WR_STATUSES
+    st = str(getattr(req, "status", "") or "")
+    if st not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"La recarga #{wr_id} no admite esta operación (estado={st}).",
+        )
+    return req
+
+
+def instant_activation_cxc_wallet_recharge(
+    db: Session,
+    *,
+    client_id: int,
+    referencia_externa: str,
+    payment_method_id: Optional[int] = None,
+    skip_retiro_method_guard: bool = False,
+) -> WalletRechargeRequest:
+    """
+    Espejo de ``instant_activation_cxc`` para recargas BaaS:
+
+    - Acredita el producto virtual en la billetera del distribuidor.
+    - Deja CxC viva (``balance_pending`` = total solicitado) hasta confirmación webhook.
+    """
+    from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
+    from app.services.client_currency_service import maybe_set_client_base_currency_from_recharge
+    from app.services.client_payment_service import (
+        credit_wallet_recharge_product_if_pending,
+        try_sweep_client_credit_on_new_cxc,
+    )
+    from app.wallet_recharge_helpers import (
+        stamp_wallet_recharge_retiro_instant_cxc,
+        wallet_recharge_is_retiro_instant_cxc,
+        wallet_recharge_open_balance,
+        wallet_recharge_virtual_product_already_delivered,
+    )
+
+    req = resolve_wallet_recharge_from_referencia_externa(
+        db,
+        referencia_externa,
+        client_id=int(client_id),
+        allowed_statuses=_INSTANT_ACTIVATION_WR_STATUSES + (REQ_STATUS_APPROVED, REQ_STATUS_PARTIALLY_PAID),
+    )
+
+    wr_id = int(req.id)
+    st = str(getattr(req, "status", "") or "")
+
+    if wallet_recharge_is_retiro_instant_cxc(req) or st in (REQ_STATUS_APPROVED, REQ_STATUS_PARTIALLY_PAID):
+        if wallet_recharge_open_balance(req) > 1e-6 or wallet_recharge_virtual_product_already_delivered(db, req):
+            return req
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La recarga ya está activada.",
+        )
+
+    client = db.get(Client, int(client_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
+
+    wr_cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+    wallet_to_add = credit_wallet_recharge_product_if_pending(db, req, client, wr_cur)
+    if wallet_to_add > 1e-6:
+        maybe_set_client_base_currency_from_recharge(
+            db,
+            client,
+            wr_cur,
+            recharge_request_id=wr_id,
+        )
+
+    product_total = float(getattr(req, "amount_requested", 0) or 0)
+    req.amount_paid = 0.0
+    req.balance_pending = round(product_total, 2)
+    req.status = REQ_STATUS_APPROVED
+    stamp_wallet_recharge_retiro_instant_cxc(req)
+    ensure_wallet_recharge_accrual_journal(db, req, strict=True)
+
+    try_sweep_client_credit_on_new_cxc(db, client, currency=wr_cur, strict_accounting=False)
+
+    db.commit()
+    db.refresh(req)
+
+    logger.info(
+        "Códigos retiro instant-activation-cxc: recarga BaaS #%s cliente=%s producto=%s cxc=%s",
+        wr_id,
+        client_id,
+        product_total,
+        req.balance_pending,
+    )
+    return req
 
 
 def instant_activate_sale_for_codigos_retiro(

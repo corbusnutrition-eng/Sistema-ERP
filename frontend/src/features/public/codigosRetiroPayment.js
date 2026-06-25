@@ -127,13 +127,26 @@ function normalizeReferenciaExternaInput(referenciaExterna) {
   return null
 }
 
+/** Resuelve ``referencia_externa`` para el widget (misma tubería; prefijo distingue entidad). */
+export function resolveReferenciaExternaForWidget(referenciaExterna, entity = 'sale') {
+  const input = normalizeReferenciaExternaInput(referenciaExterna)
+  if (input == null) return ''
+  if (typeof input === 'string') {
+    if (/^REC-\d+$/i.test(input)) return input.toUpperCase()
+    return resolveReferenciaExternaForSale(input)
+  }
+  return entity === 'recharge'
+    ? formatWalletRechargeReferenciaExterna(input)
+    : resolveReferenciaExternaForSale(input)
+}
+
 /**
- * URL del widget del socio. Incluye ``referencia_externa`` (venta ``FAC-*`` o recarga ``REC-*``)
- * y ``es_prueba`` para que el formulario del proveedor los envíe en su FormData al hacer POST.
+ * URL del widget del socio. Misma construcción para ventas y recargas BaaS;
+ * solo cambia el prefijo de ``referencia_externa`` (``FAC-*`` vs ``REC-*``).
  */
 export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
   const label = String(clientLabel ?? '').trim() || 'Cliente'
-  const referenciaKind = options.referenciaKind === 'recharge' ? 'recharge' : 'sale'
+  const entity = options.entity === 'recharge' ? 'recharge' : 'sale'
   const esPrueba = options.esPrueba ?? CODIGOS_RETIRO_ES_PRUEBA
   const refInput = normalizeReferenciaExternaInput(options.referenciaExterna)
 
@@ -147,14 +160,9 @@ export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
   url.searchParams.set('cliente', label)
   url.searchParams.set('socio', CODIGOS_RETIRO_SOCIO)
 
-  if (refInput != null) {
-    const ref =
-      referenciaKind === 'recharge'
-        ? resolveReferenciaExternaForWalletRecharge(refInput)
-        : resolveReferenciaExternaForSale(refInput)
-    if (ref) {
-      url.searchParams.set('referencia_externa', ref)
-    }
+  const ref = resolveReferenciaExternaForWidget(refInput, entity)
+  if (ref) {
+    url.searchParams.set('referencia_externa', ref)
   }
   if (esPrueba) {
     url.searchParams.set('es_prueba', '1')
@@ -177,13 +185,8 @@ export function buildCodigosRetiroPartnerFormData(fields) {
   fd.append('socio', String(fields?.socio ?? CODIGOS_RETIRO_SOCIO))
   const ref = fields?.referenciaExterna
   if (ref != null && String(ref).trim() !== '') {
-    const referenciaKind = fields?.referenciaKind === 'recharge' ? 'recharge' : 'sale'
-    fd.append(
-      'referencia_externa',
-      referenciaKind === 'recharge'
-        ? resolveReferenciaExternaForWalletRecharge(ref)
-        : resolveReferenciaExternaForSale(ref),
-    )
+    const entity = fields?.entity === 'recharge' ? 'recharge' : 'sale'
+    fd.append('referencia_externa', resolveReferenciaExternaForWidget(ref, entity))
   }
   const esPrueba = fields?.esPrueba ?? CODIGOS_RETIRO_ES_PRUEBA
   fd.append('es_prueba', esPrueba ? '1' : '0')
