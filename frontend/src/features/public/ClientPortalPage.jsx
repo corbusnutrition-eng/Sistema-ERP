@@ -5165,7 +5165,7 @@ function ClientPortalPageInner() {
                 currentDebtPayObligation?.kind === 'sale'
                   ? currentDebtPayObligation.saleId
                   : currentDebtPayObligation?.kind === 'recharge'
-                    ? currentDebtPayObligation.rechargeRow?.id
+                    ? walletRechargeLedgerRef(currentDebtPayObligation.rechargeRow?.id)
                     : undefined
               }
               entity={
@@ -5890,7 +5890,7 @@ function ClientPortalPageInner() {
                         <CodigosRetiroWidget
                           key={`retiro-recharge-${frId}`}
                           clientName={clientName}
-                          referenciaExterna={frId}
+                          referenciaExterna={refStr}
                           entity="recharge"
                           onRetiroError={handleRetiroWidgetError}
                         />

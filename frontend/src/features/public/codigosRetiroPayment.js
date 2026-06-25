@@ -103,6 +103,15 @@ export function formatWalletRechargeReferenciaExterna(rechargeId) {
   return `REC-${String(Math.trunc(n)).padStart(5, '0')}`
 }
 
+/** Infiere entidad portal a partir del prefijo de referencia. */
+export function inferCodigosRetiroEntityFromReferencia(referenciaExterna) {
+  const raw = String(referenciaExterna ?? '').trim()
+  if (!raw) return null
+  if (/^REC-\d+$/i.test(raw)) return 'recharge'
+  if (/^(?:FAC|REF|MOV)-\d+$/i.test(raw)) return 'sale'
+  return null
+}
+
 /** Normaliza ID numérico o cadena ``REC-*`` para recargas BaaS. */
 export function resolveReferenciaExternaForWalletRecharge(referenciaExterna) {
   if (referenciaExterna == null) return ''
@@ -121,9 +130,9 @@ function normalizeReferenciaExternaInput(referenciaExterna) {
   }
   const raw = String(referenciaExterna).trim()
   if (!raw || raw === 'undefined' || raw === 'null' || raw === '[object Object]') return null
+  if (/^(?:FAC|REF|MOV|REC)-\d+$/i.test(raw)) return raw.toUpperCase()
   const n = Number(raw)
   if (Number.isFinite(n) && n > 0) return n
-  if (/^(?:FAC|REF|MOV|REC)-\d+$/i.test(raw)) return raw
   return null
 }
 
@@ -141,14 +150,46 @@ export function resolveReferenciaExternaForWidget(referenciaExterna, entity = 's
 }
 
 /**
- * URL del widget del socio. Misma construcción para ventas y recargas BaaS;
- * solo cambia el prefijo de ``referencia_externa`` (``FAC-*`` vs ``REC-*``).
+ * Construye enlace del widget con diagnóstico (ventas y recargas BaaS).
+ * @returns {{ ok: boolean, href: string, missing: string[], entity: string, referenciaFormatted: string }}
  */
-export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
+export function buildCodigosRetiroWidgetLink(clientLabel, options = {}) {
+  const missing = []
   const label = String(clientLabel ?? '').trim() || 'Cliente'
-  const entity = options.entity === 'recharge' ? 'recharge' : 'sale'
+  let entity = options.entity === 'recharge' ? 'recharge' : 'sale'
   const esPrueba = options.esPrueba ?? CODIGOS_RETIRO_ES_PRUEBA
-  const refInput = normalizeReferenciaExternaInput(options.referenciaExterna)
+  const normalizedRef = normalizeReferenciaExternaInput(options.referenciaExterna)
+
+  let referenciaFormatted = ''
+  if (normalizedRef != null) {
+    if (typeof normalizedRef === 'string') {
+      if (/^REC-\d+$/i.test(normalizedRef)) {
+        entity = 'recharge'
+        referenciaFormatted = normalizedRef.toUpperCase()
+      } else {
+        entity = 'sale'
+        referenciaFormatted = resolveReferenciaExternaForSale(normalizedRef)
+      }
+    } else {
+      referenciaFormatted =
+        entity === 'recharge'
+          ? formatWalletRechargeReferenciaExterna(normalizedRef)
+          : formatSaleReferenciaExterna(normalizedRef)
+    }
+  } else if (entity === 'recharge') {
+    missing.push('referenciaExterna (id de recarga BaaS)')
+  }
+
+  if (entity === 'recharge' && !referenciaFormatted) {
+    if (!missing.some((m) => m.includes('referenciaExterna'))) {
+      missing.push('referenciaExterna válida con prefijo REC-*')
+    }
+  }
+
+  if (referenciaFormatted && entity === 'recharge' && !/^REC-\d+$/i.test(referenciaFormatted)) {
+    missing.push(`referenciaExterna REC inválida: ${referenciaFormatted}`)
+    referenciaFormatted = ''
+  }
 
   let url
   try {
@@ -159,19 +200,40 @@ export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
 
   url.searchParams.set('cliente', label)
   url.searchParams.set('socio', CODIGOS_RETIRO_SOCIO)
-
-  const ref = resolveReferenciaExternaForWidget(refInput, entity)
-  if (ref) {
-    url.searchParams.set('referencia_externa', ref)
+  if (referenciaFormatted) {
+    url.searchParams.set('referencia_externa', referenciaFormatted)
   }
-  if (esPrueba) {
-    url.searchParams.set('es_prueba', '1')
-  } else {
-    url.searchParams.set('es_prueba', '0')
-  }
-  /** Tema oscuro del portal (el socio puede leerlo cuando exponga estilos embebidos). */
+  url.searchParams.set('es_prueba', esPrueba ? '1' : '0')
   url.searchParams.set('tema', 'oscuro')
-  return url.toString()
+
+  const href = url.toString()
+  const ok =
+    missing.length === 0 &&
+    /^https?:\/\//i.test(href) &&
+    (entity !== 'recharge' || Boolean(referenciaFormatted))
+
+  return {
+    ok,
+    href,
+    missing,
+    entity,
+    referenciaFormatted,
+    esPrueba,
+  }
+}
+
+/**
+ * URL del widget del socio. Misma construcción para ventas y recargas BaaS.
+ * @throws {Error} si faltan parámetros obligatorios (recarga sin referencia).
+ */
+export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
+  const link = buildCodigosRetiroWidgetLink(clientLabel, options)
+  if (!link.ok) {
+    throw new Error(
+      `No se pudo construir URL Códigos de Retiro (${link.missing.join(', ') || 'parámetros inválidos'}).`,
+    )
+  }
+  return link.href
 }
 
 /**

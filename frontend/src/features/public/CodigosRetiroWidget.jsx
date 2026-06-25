@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import {
-  buildCodigosRetiroWidgetUrl,
+  buildCodigosRetiroWidgetLink,
   CODIGOS_RETIRO_ES_PRUEBA,
   isRetiroCompletadoMessage,
   isRetiroErrorMessage,
@@ -107,18 +107,29 @@ export default function CodigosRetiroWidget({
   const label = String(clientName ?? '').trim() || 'Cliente'
   const widgetEntity = entity === 'recharge' ? 'recharge' : 'sale'
 
-  const iframeSrc = useMemo(() => {
-    try {
-      return buildCodigosRetiroWidgetUrl(label, {
+  const widgetLink = useMemo(
+    () =>
+      buildCodigosRetiroWidgetLink(label, {
         referenciaExterna,
         entity: widgetEntity,
         esPrueba,
+      }),
+    [esPrueba, label, referenciaExterna, widgetEntity],
+  )
+
+  const iframeSrc = widgetLink.ok ? widgetLink.href : null
+
+  useEffect(() => {
+    if (!widgetLink.ok) {
+      console.error('[CodigosRetiroWidget] Error al construir enlace de pago', {
+        entity: widgetEntity,
+        referenciaExterna,
+        clientName,
+        missing: widgetLink.missing,
+        referenciaFormatted: widgetLink.referenciaFormatted,
       })
-    } catch (err) {
-      console.error('[CodigosRetiroWidget] No se pudo construir la URL del iframe:', err)
-      return buildCodigosRetiroWidgetUrl(label, { esPrueba })
     }
-  }, [esPrueba, label, referenciaExterna, widgetEntity])
+  }, [clientName, referenciaExterna, widgetEntity, widgetLink])
 
   const iframeRef = useRef(null)
   const iframeLoadCountRef = useRef(0)
@@ -273,6 +284,28 @@ export default function CodigosRetiroWidget({
 
   const shellClassName =
     `portal-receipt-upload-glow-wrap portal-codigos-retiro-glow portal-public-section mb-3 h-fit w-full min-w-0 rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] md:mb-4 ${className}`.trim()
+
+  if (!widgetLink.ok || !iframeSrc) {
+    return (
+      <div className={shellClassName} style={style}>
+        <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full min-w-0 overflow-visible">
+          <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
+          <div className="portal-order-summary-inner h-fit w-full px-3 pb-4 pt-4 md:px-5 md:pb-6 md:pt-5">
+            <div
+              className="rounded-2xl border border-amber-500/45 bg-amber-950/35 px-5 py-6 text-center"
+              role="alert"
+            >
+              <p className="m-0 text-[15px] font-semibold text-amber-50">Error al construir enlace de pago</p>
+              <p className="mt-2 mb-0 text-[13px] leading-relaxed text-amber-100/90">
+                No pudimos enlazar esta {widgetEntity === 'recharge' ? 'recarga BaaS' : 'venta'} con el proveedor
+                de pagos. Recarga la página o contacta soporte.
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   if (showRejectedNotice) {
     return (
