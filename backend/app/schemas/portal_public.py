@@ -546,6 +546,17 @@ class PortalInstantActivationResponse(BaseModel):
     currency: str = "USD"
 
 
+class PortalWalletRechargeInstantActivationResponse(BaseModel):
+    ok: bool = True
+    message: str
+    wallet_recharge_id: int
+    recharge_status: str
+    amount_requested: float
+    cxc_open_balance: float
+    amount_paid: float = 0.0
+    currency: str = "USD"
+
+
 class PortalCxcBalanceResponse(BaseModel):
     """GET /portal/{token}/cxc-balance — deuda CxC abierta del cliente."""
 

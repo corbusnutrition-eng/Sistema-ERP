@@ -32,6 +32,7 @@ import {
   RETIRO_REJECTED_DEFAULT_MESSAGE,
   submitCodigosRetiroPortalPayment,
   requestCodigosRetiroInstantActivationCxc,
+  requestCodigosRetiroInstantActivationCxcWalletRecharge,
   paymentMethodNameById,
 } from './codigosRetiroPayment'
 
@@ -4675,16 +4676,6 @@ function ClientPortalPageInner() {
       if (!row) return
       const rid = Number(row.id)
       if (!Number.isFinite(rid)) return
-      const { monto, receiptUrl, codigo } = payload
-      if (!Number.isFinite(monto) || monto <= 0) {
-        patchRechargePayForm(setRechargeFormById, rid, { error: 'El widget no devolvió un importe válido.' })
-        return
-      }
-      if (!receiptUrl) {
-        patchRechargePayForm(setRechargeFormById, rid, { error: 'El widget no devolvió la URL del comprobante.' })
-        return
-      }
-      const form = rechargePayFormFromMap(rechargeFormById, rid)
       const cur =
         row?.recharge_currency && String(row.recharge_currency).trim().length >= 3
           ? String(row.recharge_currency).trim().toUpperCase().slice(0, 10)
@@ -4696,40 +4687,68 @@ function ClientPortalPageInner() {
         cur,
         row?.payment_methods_tree,
       )
-      const depList = portalAccountsForMethod(payTree, form.method || payMethodByRecharge[rid])
-      const method = form.method
-      const depId = form.account || (depList[0]?.id != null ? String(depList[0].id) : '')
-      if (!method || !depId) {
-        patchRechargePayForm(setRechargeFormById, rid, {
-          error: 'Selecciona método y cuenta de retiro antes de continuar.',
+      const pmList = portalParentMethods(payTree)
+      const selectedMethodId = payMethodByRecharge[rid] ?? rechargePayFormFromMap(rechargeFormById, rid).method
+      const isSelectedCodigosRetiro = isCodigosRetiroMethodId(pmList, selectedMethodId)
+
+      if (!isSelectedCodigosRetiro) {
+        console.warn('[portal] instant-activation-cxc recarga omitido: método de pago distinto a Códigos de Retiro', {
+          rechargeId: rid,
+          selectedMethodId,
+          selectedMethodName: paymentMethodNameById(pmList, selectedMethodId),
         })
         return
       }
+
       const retiroScope = `recharge:${rid}`
       setRetiroSubmittingKey(retiroScope)
       patchRechargePayForm(setRechargeFormById, rid, { submitting: true, error: null, success: false })
       try {
-        await submitCodigosRetiroPortalPayment(api, token, {
-          paymentIntent: 'abono',
-          paymentMethodId: method,
-          depositAccountId: depId,
-          paidAmount: monto,
-          currency: cur,
-          receiptUrl,
-          portalDebtKind: 'wallet_recharge',
-          portalWalletRechargeId: rid,
-          notes: codigo ? `codigo_retiro=${codigo}` : undefined,
-        })
-        setWalletRechargePatchById((prev) => ({ ...prev, [rid]: { status: 'in_review' } }))
-        setReceiptFilesByRecharge((prev) => ({ ...prev, [rid]: [] }))
+        await requestCodigosRetiroInstantActivationCxcWalletRecharge(api, token, rid, selectedMethodId)
         patchRechargePayForm(setRechargeFormById, rid, { success: true, amount: '', aiResult: null })
-        setRetiroSuccessByScope({ scope: retiroScope, monto, currency: cur })
+        setRetiroSuccessByScope({
+          scope: retiroScope,
+          monto: Number.isFinite(payload?.monto) ? payload.monto : undefined,
+          currency: cur,
+        })
         await loadWalletRecharges()
         await loadPortal()
       } catch (err) {
+        const requestUrl = err?.config?.url
+          ? `${String(err.config.baseURL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')}${err.config.url}`
+          : null
+        console.error('[portal] instant-activation-cxc recarga failed', {
+          rechargeId: rid,
+          referenciaExterna: rid,
+          portalToken: token,
+          apiBaseURL: err?.config?.baseURL ?? import.meta.env.VITE_API_BASE_URL ?? null,
+          requestUrl,
+          message: err?.message,
+          code: err?.code,
+          name: err?.name,
+          responseStatus: err?.response?.status ?? null,
+          responseData: err?.response?.data ?? null,
+          isNetworkError: !err?.response && Boolean(err?.request),
+          stack: err?.stack,
+          error: err,
+        })
+        if (err?.response?.status === 409) {
+          patchRechargePayForm(setRechargeFormById, rid, { success: true, amount: '', aiResult: null })
+          setRetiroSuccessByScope({
+            scope: retiroScope,
+            monto: Number.isFinite(payload?.monto) ? payload.monto : undefined,
+            currency: cur,
+          })
+          await loadWalletRecharges()
+          await loadPortal()
+          return
+        }
         const d = err?.response?.data?.detail
         patchRechargePayForm(setRechargeFormById, rid, {
-          error: typeof d === 'string' ? d : 'No se pudo registrar el pago con códigos de retiro.',
+          error:
+            typeof d === 'string'
+              ? d
+              : 'No se pudo activar la recarga. Verifica tu conexión e inténtalo de nuevo.',
         })
       } finally {
         setRetiroSubmittingKey(null)

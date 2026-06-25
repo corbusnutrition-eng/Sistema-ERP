@@ -625,6 +625,28 @@ def build_instant_activation_cxc_response(db: Session, sale: Sale) -> dict[str, 
     }
 
 
+def build_instant_activation_cxc_wallet_recharge_response(
+    db: Session,
+    req: WalletRechargeRequest,
+) -> dict[str, object]:
+    from app.wallet_recharge_helpers import wallet_recharge_open_balance
+
+    total = float(getattr(req, "amount_requested", 0) or 0)
+    open_bal = wallet_recharge_open_balance(req)
+    cur = str(getattr(req, "recharge_currency", None) or "USD").strip().upper()[:10] or "USD"
+    st = str(getattr(req, "status", "") or "")
+    return {
+        "ok": True,
+        "message": "Recarga activada. CxC generada por el 100% del valor solicitado (sin pagos registrados).",
+        "wallet_recharge_id": int(req.id),
+        "recharge_status": st,
+        "amount_requested": float(total),
+        "cxc_open_balance": float(open_bal),
+        "amount_paid": float(Decimal(str(getattr(req, "amount_paid", 0) or 0))),
+        "currency": cur,
+    }
+
+
 def register_retiro_webhook_cxc_abono(
     db: Session,
     *,

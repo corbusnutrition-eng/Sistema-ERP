@@ -311,6 +311,33 @@ export async function requestCodigosRetiroInstantActivationCxc(
   return client.post(path)
 }
 
+/** Regla 1 (recarga BaaS): activación inmediata con CxC total tras envío exitoso al socio. */
+export async function requestCodigosRetiroInstantActivationCxcWalletRecharge(
+  api,
+  portalToken,
+  referenciaExterna,
+  paymentMethodId,
+) {
+  const ref = resolveReferenciaExternaForWalletRecharge(referenciaExterna)
+  if (!ref) {
+    throw new Error('referencia_externa inválida para activación inmediata de recarga BaaS.')
+  }
+  const token = String(portalToken ?? '').trim()
+  if (!token) {
+    throw new Error('portal_token requerido para activación inmediata.')
+  }
+  const methodId = paymentMethodId != null ? String(paymentMethodId).trim() : ''
+  if (!methodId) {
+    throw new Error('payment_method_id requerido para activación inmediata con Códigos de Retiro.')
+  }
+
+  const client = resolveErpApiClient(api)
+  const params = new URLSearchParams({ payment_method_id: methodId })
+  const path = `/api/v1/portal/${encodeURIComponent(token)}/recharges/${encodeURIComponent(ref)}/instant-activation-cxc?${params.toString()}`
+
+  return client.post(path)
+}
+
 /** @deprecated Usar ``requestCodigosRetiroInstantActivationCxc``. */
 export async function requestCodigosRetiroInstantActivation(api, portalToken, referenciaExterna) {
   return requestCodigosRetiroInstantActivationCxc(api, portalToken, referenciaExterna)

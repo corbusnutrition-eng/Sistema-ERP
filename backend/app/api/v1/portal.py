@@ -75,6 +75,7 @@ from app.schemas.portal_public import (
     PortalDepositPick,
     PortalHomeResponse,
     PortalInstantActivationResponse,
+    PortalWalletRechargeInstantActivationResponse,
     PortalLedgerEntry,
     PortalOutstandingSale,
     PortalPaymentMethodPick,
@@ -3800,6 +3801,42 @@ def portal_codigos_retiro_instant_activation(
     db: DbDep,
 ) -> PortalInstantActivationResponse:
     return portal_instant_activation_cxc(portal_token, referencia_externa, db)
+
+
+@router.post(
+    "/{portal_token}/recharges/{referencia_externa}/instant-activation-cxc",
+    response_model=PortalWalletRechargeInstantActivationResponse,
+    summary="Activación inmediata con CxC total (Códigos de Retiro, recarga BaaS)",
+)
+def portal_instant_activation_cxc_wallet_recharge(
+    portal_token: uuid_pkg.UUID,
+    referencia_externa: str,
+    db: DbDep,
+    payment_method_id: Annotated[
+        Optional[int],
+        Query(description="ID del método de pago seleccionado (debe ser Códigos de Retiro)"),
+    ] = None,
+) -> PortalWalletRechargeInstantActivationResponse:
+    """
+    Espejo de ``portal_instant_activation_cxc`` para recargas BaaS (``REC-*``).
+
+    Acredita el producto virtual y deja CxC viva; el webhook del socio aplicará abonos después.
+    """
+    from app.services.codigos_retiro_instant_service import (
+        build_instant_activation_cxc_wallet_recharge_response,
+        instant_activation_cxc_wallet_recharge,
+    )
+
+    client = _portal_client_from_token(db, portal_token)
+    req = instant_activation_cxc_wallet_recharge(
+        db,
+        client_id=int(client.id),
+        referencia_externa=referencia_externa,
+        payment_method_id=payment_method_id,
+    )
+    return PortalWalletRechargeInstantActivationResponse.model_validate(
+        build_instant_activation_cxc_wallet_recharge_response(db, req)
+    )
 
 
 # ── POST analyze-receipt ──────────────────────────────────────────────────────

@@ -131,6 +131,16 @@ export default function CodigosRetiroWidget({
     }
   }, [clientName, referenciaExterna, widgetEntity, widgetLink])
 
+  useEffect(() => {
+    if (iframeSrc) {
+      console.log('[CodigosRetiroWidget] URL del iframe:', iframeSrc, {
+        entity: widgetEntity,
+        referenciaExterna,
+        referenciaFormatted: widgetLink.referenciaFormatted,
+      })
+    }
+  }, [iframeSrc, referenciaExterna, widgetEntity, widgetLink.referenciaFormatted])
+
   const iframeRef = useRef(null)
   const iframeLoadCountRef = useRef(0)
   const userInteractedRef = useRef(false)
@@ -344,6 +354,16 @@ export default function CodigosRetiroWidget({
           <p className="mb-4 text-[13px] leading-relaxed text-slate-200/90">
             Sube tu comprobante y confirma los datos detectados en el formulario de verificación.
           </p>
+          {iframeSrc ? (
+            <a
+              href={iframeSrc}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mb-3 inline-block text-[11px] text-slate-400/90 underline-offset-2 transition-colors hover:text-emerald-300/90 hover:underline"
+            >
+              Probar Enlace Directo
+            </a>
+          ) : null}
           <div
             className="portal-codigos-retiro-iframe-shell relative min-h-[720px] w-full overflow-visible"
             onPointerDown={handleIframeShellPointerDown}
