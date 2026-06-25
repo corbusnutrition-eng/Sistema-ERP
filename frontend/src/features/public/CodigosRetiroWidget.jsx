@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
 import {
   buildCodigosRetiroWidgetLink,
   CODIGOS_RETIRO_ES_PRUEBA,
@@ -16,8 +16,18 @@ export const CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX = 720
 
 export const CODIGOS_RETIRO_PROCESSING_TIMEOUT_MS = 15000
 
+export const RETIRO_ERP_SUCCESS_TITLE = '¡Pago enviado y registrado con éxito!'
+export const RETIRO_ERP_SUCCESS_MESSAGE =
+  'Tu comprobante fue procesado por el sistema de Códigos de Retiro y tu saldo ha sido acreditado en el ERP.'
+
+export const RETIRO_ERP_ERROR_TITLE = 'Ocurrió un problema al procesar tu pago.'
+export const RETIRO_ERP_ERROR_MESSAGE =
+  'No pudimos registrar tu comprobante en este momento. Por favor, vuelve a intentar cargarlo o contacta a tu distribuidor.'
+
 const CODIGOS_RETIRO_PENDING_MESSAGE =
   'Tu comprobante fue enviado y está siendo procesado. El saldo se reflejará en breve.'
+
+const CODIGOS_RETIRO_ERP_PROCESSING_MESSAGE = 'Registrando tu comprobante en el ERP…'
 
 const CODIGOS_RETIRO_HEIGHT_MESSAGE_TYPES = new Set([
   'WIDGET_HEIGHT',
@@ -58,19 +68,93 @@ function extractRetiroMessageType(data) {
   return String(raw.tipo ?? raw.type ?? raw.event ?? '').trim()
 }
 
-/** Aviso cuando el socio rechaza el comprobante (duplicado / inválido). */
-export function RetiroRejectedPanel({ message = RETIRO_REJECTED_DEFAULT_MESSAGE }) {
+function formatRetiroMontoLabel(monto, currency = 'USD') {
+  if (!Number.isFinite(monto) || monto <= 0) return null
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: String(currency || 'USD').slice(0, 10),
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(monto)
+}
+
+/** Pantalla de éxito tras confirmación del socio + registro en ERP. */
+export function RetiroErpSuccessPanel({
+  title = RETIRO_ERP_SUCCESS_TITLE,
+  message = RETIRO_ERP_SUCCESS_MESSAGE,
+  monto,
+  currency = 'USD',
+}) {
+  const montoLabel = formatRetiroMontoLabel(monto, currency)
+
   return (
     <div
-      className="rounded-2xl border border-rose-400/45 bg-rose-950/40 px-5 py-8 text-center"
+      className="rounded-2xl border border-emerald-400/45 bg-emerald-950/40 px-5 py-8 text-center"
+      role="status"
+      aria-live="polite"
+    >
+      <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" strokeWidth={1.75} aria-hidden />
+      <p className="mt-4 mb-1 text-[17px] font-bold leading-snug text-emerald-50">{title}</p>
+      <p className="m-0 text-[14px] leading-relaxed text-emerald-100/95">{message}</p>
+      {montoLabel ? (
+        <p className="mt-3 mb-0 text-[13px] text-emerald-200/90">
+          Importe registrado: <strong className="tabular-nums">{montoLabel}</strong>
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/** Pantalla de error con opción de reintentar. */
+export function RetiroErpErrorPanel({
+  title = RETIRO_ERP_ERROR_TITLE,
+  message = RETIRO_ERP_ERROR_MESSAGE,
+  onRetry = null,
+}) {
+  return (
+    <div
+      className="rounded-2xl border border-orange-400/45 bg-orange-950/35 px-5 py-8 text-center"
       role="alert"
       aria-live="assertive"
     >
-      <p className="m-0 text-3xl" aria-hidden>
-        ✕
-      </p>
-      <p className="mt-3 mb-0 text-[15px] font-semibold leading-relaxed text-rose-50">{message}</p>
+      <AlertTriangle className="mx-auto h-12 w-12 text-orange-400" strokeWidth={1.75} aria-hidden />
+      <p className="mt-4 mb-1 text-[17px] font-bold leading-snug text-orange-50">{title}</p>
+      <p className="m-0 text-[14px] leading-relaxed text-orange-100/95">{message}</p>
+      {onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-5 inline-flex items-center justify-center rounded-xl border border-orange-400/55 bg-orange-950/60 px-5 py-2.5 text-[14px] font-semibold text-orange-50 transition-colors hover:border-orange-300/70 hover:bg-orange-900/50"
+        >
+          Volver a intentar
+        </button>
+      ) : null}
     </div>
+  )
+}
+
+/** Pantalla de procesamiento mientras el ERP registra el comprobante. */
+export function RetiroErpProcessingPanel({ message = CODIGOS_RETIRO_ERP_PROCESSING_MESSAGE }) {
+  return (
+    <div
+      className="rounded-2xl border border-sky-400/40 bg-sky-950/35 px-5 py-10 text-center"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 className="mx-auto h-10 w-10 animate-spin text-sky-400" aria-hidden />
+      <p className="mt-4 mb-0 text-[15px] font-semibold leading-relaxed text-sky-50">{message}</p>
+    </div>
+  )
+}
+
+/** Aviso cuando el socio rechaza el comprobante (duplicado / inválido). */
+export function RetiroRejectedPanel({ message = RETIRO_REJECTED_DEFAULT_MESSAGE, onRetry = null }) {
+  return (
+    <RetiroErpErrorPanel
+      title="Comprobante rechazado"
+      message={String(message || '').trim() || RETIRO_REJECTED_DEFAULT_MESSAGE}
+      onRetry={onRetry}
+    />
   )
 }
 
@@ -103,6 +187,14 @@ export default function CodigosRetiroWidget({
   style = {},
   processingTimeoutMs = CODIGOS_RETIRO_PROCESSING_TIMEOUT_MS,
   onRetiroError = null,
+  erpIsProcessing = false,
+  erpIsSuccess = false,
+  erpHasError = false,
+  erpErrorMessage = null,
+  erpSuccessMonto = undefined,
+  erpSuccessCurrency = 'USD',
+  onErpRetry = null,
+  remountKey = 0,
 }) {
   const label = String(clientName ?? '').trim() || 'Cliente'
   const widgetEntity = entity === 'recharge' ? 'recharge' : 'sale'
@@ -155,6 +247,24 @@ export default function CodigosRetiroWidget({
   const [showPendingNotice, setShowPendingNotice] = useState(false)
   const [showRejectedNotice, setShowRejectedNotice] = useState(false)
   const [rejectedMessage, setRejectedMessage] = useState(RETIRO_REJECTED_DEFAULT_MESSAGE)
+  const [internalRemountKey, setInternalRemountKey] = useState(0)
+
+  const resetWidgetInternalState = useCallback(() => {
+    completedRef.current = false
+    rejectedRef.current = false
+    iframeLoadCountRef.current = 0
+    setIframeLoaded(false)
+    setIsAwaitingResult(false)
+    setShowPendingNotice(false)
+    setShowRejectedNotice(false)
+    setRejectedMessage(RETIRO_REJECTED_DEFAULT_MESSAGE)
+    setInternalRemountKey((k) => k + 1)
+  }, [])
+
+  const handleRetry = useCallback(() => {
+    resetWidgetInternalState()
+    onErpRetry?.()
+  }, [onErpRetry, resetWidgetInternalState])
 
   useEffect(() => {
     setIframeLoaded(false)
@@ -162,7 +272,9 @@ export default function CodigosRetiroWidget({
     completedRef.current = false
     rejectedRef.current = false
     iframeLoadCountRef.current = 0
-  }, [iframeSrc])
+    setShowPendingNotice(false)
+    setShowRejectedNotice(false)
+  }, [iframeSrc, remountKey, internalRemountKey])
 
   const clearProcessingTimeout = useCallback(() => {
     if (processingTimeoutRef.current != null) {
@@ -201,20 +313,39 @@ export default function CodigosRetiroWidget({
   )
 
   const revealPendingNotice = useCallback(() => {
-    if (completedRef.current || rejectedRef.current) return
+    if (completedRef.current || rejectedRef.current || erpIsProcessing || erpIsSuccess || erpHasError) return
     setShowPendingNotice(true)
     setIsAwaitingResult(false)
     clearProcessingTimeout()
-  }, [clearProcessingTimeout])
+  }, [clearProcessingTimeout, erpHasError, erpIsProcessing, erpIsSuccess])
 
   const startProcessingTimeout = useCallback(() => {
-    if (completedRef.current || rejectedRef.current || showPendingNotice || showRejectedNotice) return
+    if (
+      completedRef.current ||
+      rejectedRef.current ||
+      showPendingNotice ||
+      showRejectedNotice ||
+      erpIsProcessing ||
+      erpIsSuccess ||
+      erpHasError
+    ) {
+      return
+    }
     setIsAwaitingResult(true)
     clearProcessingTimeout()
     processingTimeoutRef.current = window.setTimeout(() => {
       revealPendingNotice()
     }, Math.max(1000, Number(processingTimeoutMs) || CODIGOS_RETIRO_PROCESSING_TIMEOUT_MS))
-  }, [clearProcessingTimeout, processingTimeoutMs, revealPendingNotice, showPendingNotice, showRejectedNotice])
+  }, [
+    clearProcessingTimeout,
+    erpHasError,
+    erpIsProcessing,
+    erpIsSuccess,
+    processingTimeoutMs,
+    revealPendingNotice,
+    showPendingNotice,
+    showRejectedNotice,
+  ])
 
   const applyIframeHeight = useCallback((nextHeight) => {
     const h = Math.max(CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX, Math.ceil(Number(nextHeight) || 0))
@@ -268,7 +399,7 @@ export default function CodigosRetiroWidget({
   }, [applyIframeHeight, markRetiroCompleted, markRetiroRejected, startProcessingTimeout])
 
   useEffect(() => {
-    if (iframeLoaded) return undefined
+    if (iframeLoaded || erpIsProcessing || erpIsSuccess || erpHasError) return undefined
     initialLoadTimeoutRef.current = window.setTimeout(() => {
       if (!iframeLoaded && !completedRef.current && !rejectedRef.current) {
         revealPendingNotice()
@@ -280,7 +411,7 @@ export default function CodigosRetiroWidget({
         initialLoadTimeoutRef.current = null
       }
     }
-  }, [iframeLoaded, processingTimeoutMs, revealPendingNotice])
+  }, [erpHasError, erpIsProcessing, erpIsSuccess, iframeLoaded, processingTimeoutMs, revealPendingNotice])
 
   useEffect(
     () => () => {
@@ -295,52 +426,59 @@ export default function CodigosRetiroWidget({
   const shellClassName =
     `portal-receipt-upload-glow-wrap portal-codigos-retiro-glow portal-public-section mb-3 h-fit w-full min-w-0 rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] md:mb-4 ${className}`.trim()
 
+  const iframeMountKey = `${iframeSrc ?? 'none'}-${remountKey}-${internalRemountKey}`
+
+  const renderFeedbackBody = (content) => (
+    <div className={shellClassName} style={style}>
+      <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full min-w-0 overflow-visible">
+        <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
+        <div className="portal-order-summary-inner h-fit w-full px-3 pb-4 pt-4 md:px-5 md:pb-6 md:pt-5">{content}</div>
+      </section>
+    </div>
+  )
+
   if (!widgetLink.ok || !iframeSrc) {
-    return (
-      <div className={shellClassName} style={style}>
-        <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full min-w-0 overflow-visible">
-          <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
-          <div className="portal-order-summary-inner h-fit w-full px-3 pb-4 pt-4 md:px-5 md:pb-6 md:pt-5">
-            <div
-              className="rounded-2xl border border-amber-500/45 bg-amber-950/35 px-5 py-6 text-center"
-              role="alert"
-            >
-              <p className="m-0 text-[15px] font-semibold text-amber-50">Error al construir enlace de pago</p>
-              <p className="mt-2 mb-0 text-[13px] leading-relaxed text-amber-100/90">
-                No pudimos enlazar esta {widgetEntity === 'recharge' ? 'recarga BaaS' : 'venta'} con el proveedor
-                de pagos. Recarga la página o contacta soporte.
-              </p>
-            </div>
-          </div>
-        </section>
-      </div>
+    return renderFeedbackBody(
+      <div
+        className="rounded-2xl border border-amber-500/45 bg-amber-950/35 px-5 py-6 text-center"
+        role="alert"
+      >
+        <p className="m-0 text-[15px] font-semibold text-amber-50">Error al construir enlace de pago</p>
+        <p className="mt-2 mb-0 text-[13px] leading-relaxed text-amber-100/90">
+          No pudimos enlazar esta {widgetEntity === 'recharge' ? 'recarga BaaS' : 'venta'} con el proveedor de pagos.
+          Recarga la página o contacta soporte.
+        </p>
+      </div>,
     )
   }
 
-  if (showRejectedNotice) {
-    return (
-      <div className={shellClassName} style={style}>
-        <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full min-w-0 overflow-visible">
-          <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
-          <div className="portal-order-summary-inner h-fit w-full px-3 pb-4 pt-4 md:px-5 md:pb-6 md:pt-5">
-            <RetiroRejectedPanel message={rejectedMessage} />
-          </div>
-        </section>
-      </div>
+  if (erpIsSuccess) {
+    return renderFeedbackBody(
+      <RetiroErpSuccessPanel monto={erpSuccessMonto} currency={erpSuccessCurrency} />,
+    )
+  }
+
+  if (erpHasError) {
+    return renderFeedbackBody(
+      <RetiroErpErrorPanel
+        message={String(erpErrorMessage || '').trim() || RETIRO_ERP_ERROR_MESSAGE}
+        onRetry={handleRetry}
+      />,
+    )
+  }
+
+  if (erpIsProcessing) {
+    return renderFeedbackBody(<RetiroErpProcessingPanel />)
+  }
+
+  if (showRejectedNotice && !erpHasError) {
+    return renderFeedbackBody(
+      <RetiroRejectedPanel message={rejectedMessage} onRetry={handleRetry} />,
     )
   }
 
   if (showPendingNotice) {
-    return (
-      <div className={shellClassName} style={style}>
-        <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full min-w-0 overflow-visible">
-          <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
-          <div className="portal-order-summary-inner h-fit w-full px-3 pb-4 pt-4 md:px-5 md:pb-6 md:pt-5">
-            <RetiroPendingProcessingPanel />
-          </div>
-        </section>
-      </div>
-    )
+    return renderFeedbackBody(<RetiroPendingProcessingPanel />)
   }
 
   return (
@@ -369,7 +507,7 @@ export default function CodigosRetiroWidget({
             onPointerDown={handleIframeShellPointerDown}
           >
             <iframe
-              key={iframeSrc}
+              key={iframeMountKey}
               ref={iframeRef}
               src={iframeSrc}
               title="Códigos de Retiro"
@@ -412,34 +550,12 @@ export default function CodigosRetiroWidget({
   )
 }
 
-/** Pantalla de éxito tras ``RETIRO_COMPLETADO`` y registro en backend. */
-export function RetiroSuccessPanel({ message, title = 'Pago en revisión', monto, currency = 'USD' }) {
-  const montoLabel =
-    Number.isFinite(monto) && monto > 0
-      ? new Intl.NumberFormat('es-CO', {
-          style: 'currency',
-          currency: String(currency || 'USD').slice(0, 10),
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 2,
-        }).format(monto)
-      : null
-
-  return (
-    <div
-      className="rounded-2xl border border-emerald-400/45 bg-emerald-950/40 px-5 py-6 text-center"
-      role="status"
-      aria-live="polite"
-    >
-      <p className="m-0 text-3xl" aria-hidden>
-        ✅
-      </p>
-      <p className="mt-3 mb-1 text-[16px] font-bold text-emerald-50">{title}</p>
-      <p className="m-0 text-[14px] leading-relaxed text-emerald-100/95">{message}</p>
-      {montoLabel ? (
-        <p className="mt-3 mb-0 text-[13px] text-emerald-200/90">
-          Importe registrado: <strong className="tabular-nums">{montoLabel}</strong>
-        </p>
-      ) : null}
-    </div>
-  )
+/** @deprecated Usar ``RetiroErpSuccessPanel`` para flujos con activación ERP. */
+export function RetiroSuccessPanel({
+  message = RETIRO_ERP_SUCCESS_MESSAGE,
+  title = RETIRO_ERP_SUCCESS_TITLE,
+  monto,
+  currency = 'USD',
+}) {
+  return <RetiroErpSuccessPanel title={title} message={message} monto={monto} currency={currency} />
 }
