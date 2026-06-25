@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import bcrypt
 import secrets
@@ -53,30 +53,58 @@ class UserCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=150)
     email: EmailStr
     password: str = Field(..., min_length=6)
-    role: UserRole = UserRole.worker
     role_template: str = Field(default=ROLE_TEMPLATE_CUSTOM, max_length=64)
     permissions: list[str] = Field(default_factory=list)
 
-    @field_validator("permissions")
+    @field_validator("permissions", mode="before")
     @classmethod
-    def validate_permissions(cls, v: list[str]) -> list[str]:
+    def coerce_permissions(cls, v: Any) -> list[str]:
         return normalize_permissions(v)
+
+    @field_validator("role_template", mode="before")
+    @classmethod
+    def coerce_role_template(cls, v: Any) -> str:
+        return str(v or ROLE_TEMPLATE_CUSTOM).strip() or ROLE_TEMPLATE_CUSTOM
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=150)
     email: Optional[EmailStr] = None
-    password: Optional[str] = Field(default=None, min_length=6)
+    password: Optional[str] = Field(default=None)
     role_template: Optional[str] = Field(default=None, max_length=64)
     permissions: Optional[list[str]] = None
     is_active: Optional[bool] = None
 
-    @field_validator("permissions")
+    @field_validator("permissions", mode="before")
     @classmethod
-    def validate_permissions(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+    def coerce_permissions(cls, v: Any) -> Optional[list[str]]:
         if v is None:
             return None
         return normalize_permissions(v)
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def empty_password_to_none(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return str(v).strip()
+
+    @field_validator("password")
+    @classmethod
+    def password_min_length(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and len(v) < 6:
+            raise ValueError("La contraseña debe tener al menos 6 caracteres.")
+        return v
+
+    @field_validator("role_template", mode="before")
+    @classmethod
+    def coerce_role_template(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
 
 class UserResponse(BaseModel):

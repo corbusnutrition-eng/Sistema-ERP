@@ -18,7 +18,47 @@ import {
 function parseErrorDetail(err) {
   const detail = err?.response?.data?.detail
   if (typeof detail === 'string') return detail
+  if (Array.isArray(detail) && detail.length > 0) {
+    return detail
+      .map((item) => {
+        if (typeof item === 'string') return item
+        const loc = Array.isArray(item?.loc) ? item.loc.join('.') : ''
+        const msg = item?.msg || 'Error de validación'
+        return loc ? `${loc}: ${msg}` : msg
+      })
+      .join(' · ')
+  }
   return 'No se pudo guardar el usuario.'
+}
+
+function buildUserPayload({
+  name,
+  email,
+  password,
+  roleTemplate,
+  isCustomRole,
+  granted,
+  modules,
+}) {
+  const payload = {
+    name: String(name || '').trim(),
+    email: String(email || '').trim(),
+    role_template: String(roleTemplate || '').trim(),
+  }
+
+  const pwd = String(password || '').trim()
+  if (pwd) {
+    if (pwd.length < 6) {
+      throw new Error('La contraseña debe tener al menos 6 caracteres.')
+    }
+    payload.password = pwd
+  }
+
+  if (isCustomRole) {
+    payload.permissions = matrixPermissionsOnly(new Set(granted), modules)
+  }
+
+  return payload
 }
 
 export default function UserFormPage() {
@@ -158,19 +198,32 @@ export default function UserFormPage() {
       return
     }
 
-    const payload = {
-      name,
-      email: email.trim(),
-      role_template: roleTemplate,
-      permissions: isCustomRole ? matrixPermissionsOnly(new Set(granted), matrixData.modules) : granted,
+    let payload
+    try {
+      payload = buildUserPayload({
+        name,
+        email,
+        password,
+        roleTemplate,
+        isCustomRole,
+        granted,
+        modules: matrixData.modules,
+      })
+    } catch (buildErr) {
+      setError(buildErr.message)
+      return
     }
-    if (password.trim()) payload.password = password
 
     setSaving(true)
     try {
       if (isEdit) {
         await updateTeamUser(userId, payload)
       } else {
+        if (!password.trim()) {
+          setError('La contraseña es obligatoria para usuarios nuevos.')
+          setSaving(false)
+          return
+        }
         await createTeamUser(payload)
       }
       navigate('/equipo', { replace: true })

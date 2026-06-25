@@ -308,16 +308,55 @@ def expand_permissions_with_legacy(raw: list[str]) -> list[str]:
     return sorted(seen)
 
 
-def normalize_permissions(raw: Optional[Any]) -> list[str]:
+def coerce_permissions_input(raw: Optional[Any]) -> list[str]:
+    """
+    Acepta permisos como lista de claves, dict plano/matriz, CSV o JSON string.
+    Devuelve claves válidas deduplicadas (sin expandir legacy).
+    """
     if raw is None:
         return []
+
     items: list[Any]
+
     if isinstance(raw, list):
         items = raw
+    elif isinstance(raw, dict):
+        items = []
+        for key, val in raw.items():
+            k = str(key or "").strip()
+            if not k:
+                continue
+            if isinstance(val, dict):
+                for row_key, actions in val.items():
+                    rk = str(row_key or "").strip()
+                    if not rk:
+                        continue
+                    if isinstance(actions, dict):
+                        for action, allowed in actions.items():
+                            if allowed in (True, 1, "1", "true", "yes"):
+                                items.append(f"{k}:{rk}:{action}")
+                    elif actions in (True, 1, "1", "true", "yes"):
+                        items.append(f"{k}:{rk}:view")
+            elif val in (True, 1, "1", "true", "yes"):
+                items.append(k)
+        if not items:
+            items = list(raw.keys())
     elif isinstance(raw, str):
-        items = [p.strip() for p in raw.split(",") if p.strip()]
+        s = raw.strip()
+        if not s:
+            return []
+        if s.startswith("[") or s.startswith("{"):
+            try:
+                import json
+
+                parsed = json.loads(s)
+                return coerce_permissions_input(parsed)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+        items = [p.strip() for p in s.split(",") if p.strip()]
     else:
         return []
+
     seen: set[str] = set()
     out: list[str] = []
     for item in items:
@@ -327,6 +366,11 @@ def normalize_permissions(raw: Optional[Any]) -> list[str]:
         seen.add(key)
         out.append(key)
     return sorted(out)
+
+
+def normalize_permissions(raw: Optional[Any]) -> list[str]:
+    """Filtra y deduplica permisos válidos desde JSON/lista/dict."""
+    return coerce_permissions_input(raw)
 
 
 def effective_permissions(*, role: str, permissions: Optional[Any]) -> list[str]:
