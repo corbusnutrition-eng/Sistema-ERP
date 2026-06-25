@@ -226,6 +226,24 @@ REPORTS_CLASSES_VIEW = "reports:classes:view"
 REPORTS_CLASSES_CREATE = "reports:classes:create"
 REPORTS_CLASSES_EDIT = "reports:classes:edit"
 REPORTS_CLASSES_DELETE = "reports:classes:delete"
+
+# BaaS — claves canónicas de la matriz (deben coincidir con PERMISSION_MATRIX)
+BAAS_DISTRIBUTORS_VIEW = "baas:distributors:view"
+BAAS_DISTRIBUTORS_CREATE = "baas:distributors:create"
+BAAS_DISTRIBUTORS_EDIT = "baas:distributors:edit"
+BAAS_DISTRIBUTORS_DELETE = "baas:distributors:delete"
+
+BAAS_RECHARGE_REQUESTS_VIEW = "baas:recharge_requests:view"
+BAAS_RECHARGE_REQUESTS_CREATE = "baas:recharge_requests:create"
+BAAS_RECHARGE_REQUESTS_EDIT = "baas:recharge_requests:edit"
+BAAS_RECHARGE_REQUESTS_DELETE = "baas:recharge_requests:delete"
+BAAS_RECHARGE_REQUESTS_APPROVE = "baas:recharge_requests:approve"
+
+BAAS_NOTIFICATIONS_VIEW = "baas:notifications:view"
+BAAS_NOTIFICATIONS_CREATE = "baas:notifications:create"
+BAAS_NOTIFICATIONS_EDIT = "baas:notifications:edit"
+BAAS_NOTIFICATIONS_DELETE = "baas:notifications:delete"
+
 PERMISSION_GROUPS: list[dict[str, Any]] = [
     {
         "module": "baas",
@@ -456,11 +474,16 @@ def user_has_permission(*, role: str, permissions: Optional[Any], permission: st
     if str(role or "").strip().lower() == "admin":
         return True
     granted = set(effective_permissions(role=role, permissions=permissions))
-    if perm in granted:
+    raw = set(normalize_permissions(permissions))
+    if perm in granted or perm in raw:
         return True
-    # Legacy endpoint pide clave antigua; usuario puede tener solo matriz equivalente
+    # Endpoint legacy ← usuario con claves de matriz
     for matrix_key, legacy_key in MATRIX_TO_LEGACY.items():
-        if perm == legacy_key and matrix_key in granted:
+        if perm == legacy_key and (matrix_key in granted or matrix_key in raw):
+            return True
+    # Endpoint matriz ← usuario con claves legacy en BD
+    for matrix_key, legacy_key in MATRIX_TO_LEGACY.items():
+        if perm == matrix_key and (legacy_key in granted or legacy_key in raw):
             return True
     return False
 

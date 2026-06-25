@@ -9,7 +9,12 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import require_permission
+from app.permissions import (
+    TEAM_USERS_CREATE,
+    TEAM_USERS_EDIT,
+    TEAM_USERS_VIEW,
+)
 from app.database import get_db
 from app.models.user import User, UserRole
 from app.permissions import (
@@ -31,6 +36,9 @@ from app.services.render_sync import (
 router = APIRouter(prefix="/users", tags=["users"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+TeamUsersViewDep = Annotated[dict, Depends(require_permission(TEAM_USERS_VIEW))]
+TeamUsersCreateDep = Annotated[dict, Depends(require_permission(TEAM_USERS_CREATE))]
+TeamUsersEditDep = Annotated[dict, Depends(require_permission(TEAM_USERS_EDIT))]
 
 
 # bcrypt hard-limits passwords to 72 bytes. We encode to UTF-8 and truncate
@@ -236,7 +244,7 @@ def _unique_referral_code(db: Session) -> str:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def create_user(payload: UserCreate, db: DbDep, _: AdminDep) -> UserResponse:
+def create_user(payload: UserCreate, db: DbDep, _: TeamUsersCreateDep) -> UserResponse:
     """Registra un nuevo trabajador/administrador. Sin password → contraseña temporal."""
     if not payload.name.strip():
         raise HTTPException(
@@ -272,7 +280,7 @@ def create_user(payload: UserCreate, db: DbDep, _: AdminDep) -> UserResponse:
 
 
 @router.get("/team", response_model=list[UserResponse])
-def list_team_users(db: DbDep, _: AdminDep) -> list[UserResponse]:
+def list_team_users(db: DbDep, _: TeamUsersViewDep) -> list[UserResponse]:
     """Lista miembros del equipo ERP con permisos y plantilla de rol."""
     rows = db.query(User).order_by(User.name.asc()).all()
     for u in rows:
@@ -289,7 +297,7 @@ def list_team_users(db: DbDep, _: AdminDep) -> list[UserResponse]:
 @router.get("/", response_model=list[UserPickerRow])
 def list_users(
     db: DbDep,
-    _: AdminDep,
+    _: TeamUsersViewDep,
     role: Annotated[
         Optional[str],
         Query(
@@ -387,7 +395,7 @@ def list_users(
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: DbDep, _: AdminDep) -> UserResponse:
+def get_user(user_id: int, db: DbDep, _: TeamUsersViewDep) -> UserResponse:
     user: Optional[User] = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
@@ -395,7 +403,7 @@ def get_user(user_id: int, db: DbDep, _: AdminDep) -> UserResponse:
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
-def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: AdminDep) -> UserResponse:
+def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: TeamUsersEditDep) -> UserResponse:
     user: Optional[User] = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
@@ -437,7 +445,7 @@ def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: AdminDep) -> Us
 
 
 @router.patch("/{user_id}/toggle-active", response_model=UserResponse)
-def toggle_active(user_id: int, db: DbDep, _: AdminDep) -> UserResponse:
+def toggle_active(user_id: int, db: DbDep, _: TeamUsersEditDep) -> UserResponse:
     """Activa o desactiva un usuario."""
     user: Optional[User] = db.get(User, user_id)
     if user is None:

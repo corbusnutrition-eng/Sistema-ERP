@@ -7,6 +7,9 @@ import {
 import { Loader2, Megaphone, Pencil, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import Select from 'react-select'
 import api from '../../api/axios'
+import { getApiErrorMessage } from '../../lib/apiErrors'
+import usePermissions from '../../hooks/usePermissions'
+import { PERMS } from '../../lib/permissions'
 import { formatSaleTableDate } from '../sales/saleTableHelpers'
 
 const DELETE_SECURITY_PIN = '301985'
@@ -261,6 +264,10 @@ function EditBatchModal({ batch, onClose, onSaved }) {
 }
 
 export default function NotificationManagementPanel({ clients = [], onToast }) {
+  const { hasPermission } = usePermissions()
+  const canCreate = hasPermission(PERMS.BAAS_NOTIFICATIONS_CREATE)
+  const canEdit = hasPermission(PERMS.BAAS_NOTIFICATIONS_EDIT)
+  const canDelete = hasPermission(PERMS.BAAS_NOTIFICATIONS_DELETE)
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
   const [targetType, setTargetType] = useState('all')
@@ -289,12 +296,7 @@ export default function NotificationManagementPanel({ clients = [], onToast }) {
       const rows = normalizeHistoryPayload(data).map(normalizeHistoryRow)
       setHistorialNotificaciones(rows)
     } catch (err) {
-      try {
-        const d = err?.response?.data?.detail
-        setHistoryErr(typeof d === 'string' ? d : 'No se pudo cargar el historial.')
-      } catch {
-        setHistoryErr('No se pudo cargar el historial.')
-      }
+      setHistoryErr(getApiErrorMessage(err, { fallback: 'No se pudo cargar el historial.' }))
       setHistorialNotificaciones([])
     } finally {
       setHistoryLoading(false)
@@ -426,6 +428,7 @@ export default function NotificationManagementPanel({ clients = [], onToast }) {
   )
 
   const canSubmit =
+    canCreate &&
     title.trim().length > 0 &&
     htmlMessageHasContent(message) &&
     !submitting &&
@@ -459,8 +462,7 @@ export default function NotificationManagementPanel({ clients = [], onToast }) {
       setCurrentPage(1)
       await loadHistory()
     } catch (err) {
-      const d = err?.response?.data?.detail
-      setSendError(typeof d === 'string' ? d : 'No se pudo enviar la notificación.')
+      setSendError(getApiErrorMessage(err, { fallback: 'No se pudo enviar la notificación.' }))
     } finally {
       setSubmitting(false)
     }
@@ -473,6 +475,9 @@ export default function NotificationManagementPanel({ clients = [], onToast }) {
           <Megaphone size={18} className="text-violet-600" />
           <h2 className="text-base font-semibold text-gray-800">Enviar notificación</h2>
         </div>
+        {!canCreate ? (
+          <p className="px-6 py-5 text-sm text-gray-500">No tienes permiso para enviar notificaciones.</p>
+        ) : (
         <form onSubmit={handleSend} className="px-6 py-5 space-y-4">
           <div>
             <label htmlFor="notif-panel-title" className="block text-xs font-semibold text-gray-600 mb-1.5">
@@ -582,13 +587,14 @@ export default function NotificationManagementPanel({ clients = [], onToast }) {
             </button>
           </div>
         </form>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col min-h-[420px]">
         <div className="flex items-center justify-between gap-2 px-6 py-4 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-800">Historial de envíos</h2>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {selectedBatchIds.length > 0 ? (
+            {canDelete && selectedBatchIds.length > 0 ? (
               <button
                 type="button"
                 onClick={() => void handleBulkDelete()}
@@ -669,24 +675,28 @@ export default function NotificationManagementPanel({ clients = [], onToast }) {
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
-                      <button
-                        type="button"
-                        onClick={() => setEditBatch(row)}
-                        disabled={!batchId}
-                        className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40"
-                      >
-                        <Pencil size={13} />
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDelete(batchId)}
-                        disabled={!batchId || deletingBatchId === batchId}
-                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-40"
-                      >
-                        <Trash2 size={13} />
-                        {deletingBatchId === batchId ? 'Eliminando…' : 'Eliminar'}
-                      </button>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => setEditBatch(row)}
+                          disabled={!batchId}
+                          className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-40"
+                        >
+                          <Pencil size={13} />
+                          Editar
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => void handleDelete(batchId)}
+                          disabled={!batchId || deletingBatchId === batchId}
+                          className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-40"
+                        >
+                          <Trash2 size={13} />
+                          {deletingBatchId === batchId ? 'Eliminando…' : 'Eliminar'}
+                        </button>
+                      )}
                     </div>
                     </div>
                   </div>

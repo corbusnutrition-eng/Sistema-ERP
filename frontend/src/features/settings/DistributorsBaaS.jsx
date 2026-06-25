@@ -22,8 +22,8 @@ import {
 import api from '../../api/axios'
 import usePermissions from '../../hooks/usePermissions'
 import {
-  BAAS_CREATE_RECHARGE,
   BAAS_TAB_PERMISSIONS,
+  PERMS,
 } from '../../lib/permissions'
 import { useAuth } from '../../context/AuthContext'
 import { notifyAccountsReceivableStale } from '../../utils/arReportEvents'
@@ -217,7 +217,9 @@ export default function DistributorsBaaSPage() {
     return tabs
   }, [hasPermission])
 
-  const canCreateRecharge = hasPermission(BAAS_CREATE_RECHARGE)
+  const canCreateRecharge = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_CREATE)
+  const canEditRecharge = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_EDIT)
+  const canApproveRecharge = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_APPROVE)
 
   const [tab, setTab] = useState(() => allowedTabs[0] ?? 'users')
 
@@ -1739,25 +1741,30 @@ export default function DistributorsBaaSPage() {
                           {r.status === 'in_review' ? (
                             <div className="flex flex-col items-end gap-1.5 max-w-[min(100%,20rem)]">
                               <div className="flex flex-wrap gap-2 justify-end">
-                                <button
-                                  type="button"
-                                  disabled={processingReqId === r.id}
-                                  onClick={() => openApproveModal(r)}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-                                >
-                                  <CheckCircle size={14} />
-                                  Aprobar
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={processingReqId === r.id}
-                                  onClick={() => rejectRequest(r.id)}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
-                                >
-                                  <XCircle size={14} />
-                                  Rechazar
-                                </button>
+                                {canApproveRecharge && (
+                                  <button
+                                    type="button"
+                                    disabled={processingReqId === r.id}
+                                    onClick={() => openApproveModal(r)}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+                                  >
+                                    <CheckCircle size={14} />
+                                    Aprobar
+                                  </button>
+                                )}
+                                {canEditRecharge && (
+                                  <button
+                                    type="button"
+                                    disabled={processingReqId === r.id}
+                                    onClick={() => rejectRequest(r.id)}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
+                                  >
+                                    <XCircle size={14} />
+                                    Rechazar
+                                  </button>
+                                )}
                               </div>
+                              {canEditRecharge && (
                               <div className="flex items-center justify-end gap-0.5">
                                 <button
                                   type="button"
@@ -1783,6 +1790,7 @@ export default function DistributorsBaaSPage() {
                                   <span className="sr-only">Comentario o nota</span>
                                 </button>
                               </div>
+                              )}
                             </div>
                           ) : null}
                           {rechargeAwaitingClientReceipt(r) ? (

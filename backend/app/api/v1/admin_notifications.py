@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.dependencies import require_permission
 from app.database import get_db
-from app.permissions import BAAS_VIEW_NOTIFICATIONS_TAB
+from app.permissions import (
+    BAAS_NOTIFICATIONS_CREATE,
+    BAAS_NOTIFICATIONS_DELETE,
+    BAAS_NOTIFICATIONS_EDIT,
+    BAAS_NOTIFICATIONS_VIEW,
+)
 from app.schemas.client_notifications import (
     AdminBulkDeleteNotificationBatchesRequest,
     AdminBulkDeleteNotificationBatchesResponse,
@@ -31,14 +36,17 @@ from app.services.client_notification_service import (
 router = APIRouter(prefix="/admin/notifications", tags=["admin-notifications"])
 
 DbDep = Annotated[Session, Depends(get_db)]
-BaasNotificationsDep = Annotated[dict, Depends(require_permission(BAAS_VIEW_NOTIFICATIONS_TAB))]
+BaasNotificationsViewDep = Annotated[dict, Depends(require_permission(BAAS_NOTIFICATIONS_VIEW))]
+BaasNotificationsCreateDep = Annotated[dict, Depends(require_permission(BAAS_NOTIFICATIONS_CREATE))]
+BaasNotificationsEditDep = Annotated[dict, Depends(require_permission(BAAS_NOTIFICATIONS_EDIT))]
+BaasNotificationsDeleteDep = Annotated[dict, Depends(require_permission(BAAS_NOTIFICATIONS_DELETE))]
 
 
 @router.post("/send", response_model=AdminSendNotificationResponse)
 def admin_send_notifications(
     payload: AdminSendNotificationRequest,
     db: DbDep,
-    _: BaasNotificationsDep,
+    _: BaasNotificationsCreateDep,
 ) -> AdminSendNotificationResponse:
     """Crea notificaciones de bandeja para todos, un nivel de red o un cliente específico."""
     created, batch_id = send_client_notifications(
@@ -56,7 +64,7 @@ def admin_send_notifications(
 
 
 @router.get("/history", response_model=list[AdminNotificationBatchHistoryItem])
-def admin_notification_history(db: DbDep, _: AdminDep) -> list[AdminNotificationBatchHistoryItem]:
+def admin_notification_history(db: DbDep, _: BaasNotificationsViewDep) -> list[AdminNotificationBatchHistoryItem]:
     """Historial agrupado por lote de envío masivo."""
     rows = list_notification_batch_history(db)
     return [AdminNotificationBatchHistoryItem.model_validate(r) for r in rows]
@@ -67,7 +75,7 @@ def admin_update_notification_batch(
     batch_id: str,
     payload: AdminUpdateNotificationBatchRequest,
     db: DbDep,
-    _: BaasNotificationsDep,
+    _: BaasNotificationsEditDep,
 ) -> AdminUpdateNotificationBatchResponse:
     """Actualiza título y mensaje de todas las notificaciones de un lote."""
     updated = update_notification_batch(
@@ -87,7 +95,7 @@ def admin_update_notification_batch(
 def admin_delete_notification_batch(
     batch_id: str,
     db: DbDep,
-    _: BaasNotificationsDep,
+    _: BaasNotificationsDeleteDep,
 ) -> AdminDeleteNotificationBatchResponse:
     """Elimina permanentemente todas las notificaciones de un lote."""
     deleted = delete_notification_batch(db, batch_id=batch_id)
@@ -102,7 +110,7 @@ def admin_delete_notification_batch(
 def admin_bulk_delete_notification_batches(
     payload: AdminBulkDeleteNotificationBatchesRequest,
     db: DbDep,
-    _: BaasNotificationsDep,
+    _: BaasNotificationsDeleteDep,
 ) -> AdminBulkDeleteNotificationBatchesResponse:
     """Elimina permanentemente varios lotes de notificaciones en una sola operación."""
     batches_deleted, deleted = delete_notification_batches(db, batch_ids=payload.batch_ids)
