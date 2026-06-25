@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import require_permission
+from app.permissions import (
+    ACCOUNTING_EXPENSES_CREATE,
+    ACCOUNTING_RECEIVABLES_VIEW,
+    REPORTS_FINANCIAL_VIEW,
+)
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.models.account import Account
@@ -43,6 +48,9 @@ from app.timezone_utils import now_ecuador
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+ReportsFinancialViewDep = Annotated[dict, Depends(require_permission(REPORTS_FINANCIAL_VIEW))]
+ReceivablesViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECEIVABLES_VIEW))]
+ExpensesCreateDep = Annotated[dict, Depends(require_permission(ACCOUNTING_EXPENSES_CREATE))]
 
 # Detalle contable sembrado como «Otros gastos» (misma account_type expense en BD).
 OTHERS_EXPENSE_DETAIL_TYPES = frozenset({"Pérdida de cambio", "Otros gastos", "Liquidaciones"})
@@ -126,7 +134,7 @@ def _pnl_lines_from_journal(
 @router.get("/pnl", response_model=PnlResponse)
 def get_pnl_legacy(
     db: DbDep,
-    _: AdminDep,
+    _: ReportsFinancialViewDep,
     start_date: date = Query(..., description="Inicio inclusive (calendario Ecuador)."),
     end_date: date = Query(..., description="Fin inclusive (calendario Ecuador)."),
     currency: Optional[str] = Query(None, description="Filtrar por moneda ISO de la cuenta (opcional)."),
@@ -198,7 +206,7 @@ def get_pnl_legacy(
 
 
 @router.post("/expense-entry", response_model=ExpenseJournalResponse, status_code=status.HTTP_201_CREATED)
-def create_expense_journal_entry(payload: ExpenseJournalCreate, db: DbDep, _: AdminDep) -> ExpenseJournalResponse:
+def create_expense_journal_entry(payload: ExpenseJournalCreate, db: DbDep, _: ExpensesCreateDep) -> ExpenseJournalResponse:
     cur = normalize_currency_code(payload.currency)
     entry = post_manual_expense_journal(
         db,
@@ -249,7 +257,7 @@ _TICKETS_DETAILS = frozenset(TICKETS_DETAIL_BY_INCOME.values())
 @router.get("/profit-and-loss", response_model=ProfitAndLossResponse)
 def get_profit_and_loss(
     db: DbDep,
-    _: AdminDep,
+    _: ReportsFinancialViewDep,
     start_date: date = Query(..., description="Inicio inclusive del periodo."),
     end_date: date = Query(..., description="Fin inclusive del periodo."),
 ) -> ProfitAndLossResponse:
@@ -298,7 +306,7 @@ def get_profit_and_loss(
 @router.get("/accounts-receivable", response_model=AccountsReceivableReportResponse)
 def get_accounts_receivable_summary(
     db: DbDep,
-    _: AdminDep,
+    _: ReceivablesViewDep,
     currency: Optional[str] = Query(
         None,
         description="Filtrar deuda pendiente por moneda ISO (opcional).",

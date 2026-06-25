@@ -12,7 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.api.v1.dependencies import AdminDep, UserDep
+from app.api.v1.dependencies import require_permission, UserDep
+from app.permissions import (
+    INVENTORY_CREATE,
+    INVENTORY_DELETE,
+    INVENTORY_EDIT,
+)
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.models.account import Account
@@ -49,6 +54,9 @@ from app.schemas.inventory import (
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+InventoryCreateDep = Annotated[dict, Depends(require_permission(INVENTORY_CREATE))]
+InventoryEditDep = Annotated[dict, Depends(require_permission(INVENTORY_EDIT))]
+InventoryDeleteDep = Annotated[dict, Depends(require_permission(INVENTORY_DELETE))]
 
 logger = logging.getLogger(__name__)
 
@@ -866,7 +874,7 @@ def inventory_sales_options(
     response_model=AccountResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_account(payload: AccountCreate, db: DbDep, _: AdminDep) -> AccountResponse:
+def create_account(payload: AccountCreate, db: DbDep, _: InventoryCreateDep) -> AccountResponse:
     """
     Crea una entrada de inventario IPTV (servicio completo).
 
@@ -991,7 +999,7 @@ def update_account(
     account_id: int,
     payload: dict,
     db: DbDep,
-    _: AdminDep,
+    _: InventoryEditDep,
 ) -> AccountResponse:
     """Actualiza campos de una cuenta de servicio completo."""
     acc = db.get(IPTVAccount, account_id)
@@ -1010,7 +1018,7 @@ def update_account(
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_account(account_id: int, db: DbDep, _: AdminDep) -> None:
+def delete_account(account_id: int, db: DbDep, _: InventoryDeleteDep) -> None:
     """Elimina una cuenta de inventario y sus pantallas asociadas."""
     acc = db.get(IPTVAccount, account_id)
     if not acc:
@@ -1137,7 +1145,7 @@ def get_inventory_stats(db: DbDep, _: UserDep) -> InventoryStatsResponse:
     response_model=list[ScreenStockResponse],
     status_code=status.HTTP_201_CREATED,
 )
-def create_screen_stock(payload: ScreenStockBulkCreate, db: DbDep, _: AdminDep):
+def create_screen_stock(payload: ScreenStockBulkCreate, db: DbDep, _: InventoryCreateDep):
     """
     Crea pantallas en bodega desde múltiples líneas de compra (carrito).
 
@@ -1314,7 +1322,7 @@ def update_screen_stock(
     screen_id: int,
     payload: dict,
     db: DbDep,
-    _: AdminDep,
+    _: InventoryEditDep,
 ) -> ScreenStockResponse:
     """Actualiza campos de una pantalla (ej. status, expiration_date, cost_per_package, credenciales)."""
     item = db.get(ScreenStock, screen_id)
@@ -1339,7 +1347,7 @@ def update_screen_stock(
 @router.delete("/catalog-packages", status_code=status.HTTP_204_NO_CONTENT)
 def validate_catalog_package_removable(
     db: DbDep,
-    _: AdminDep,
+    _: InventoryDeleteDep,
     provider: str = Query(..., min_length=1, max_length=80),
     package: str = Query(..., min_length=1, max_length=120),
 ) -> None:
@@ -1359,7 +1367,7 @@ def validate_catalog_package_removable(
 
 
 @router.delete("/screens/{screen_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_screen_stock(screen_id: int, db: DbDep, _: AdminDep) -> None:
+def delete_screen_stock(screen_id: int, db: DbDep, _: InventoryDeleteDep) -> None:
     """Elimina una pantalla individual de la bodega (solo si está disponible)."""
     item = db.get(ScreenStock, screen_id)
     if not item:

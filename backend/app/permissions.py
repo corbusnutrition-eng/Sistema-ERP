@@ -165,14 +165,67 @@ CLIENTS_EDIT = "clients_inventory:clients:edit"
 CLIENTS_DELETE = "clients_inventory:clients:delete"
 
 INVENTORY_VIEW = "clients_inventory:inventory:view"
+INVENTORY_CREATE = "clients_inventory:inventory:create"
+INVENTORY_EDIT = "clients_inventory:inventory:edit"
+INVENTORY_DELETE = "clients_inventory:inventory:delete"
+
 PRODUCTS_VIEW = "clients_inventory:products:view"
+PRODUCTS_CREATE = "clients_inventory:products:create"
+PRODUCTS_EDIT = "clients_inventory:products:edit"
+PRODUCTS_DELETE = "clients_inventory:products:delete"
 
 SALES_INVOICES_VIEW = "sales:invoices:view"
+SALES_INVOICES_CREATE = "sales:invoices:create"
+SALES_INVOICES_EDIT = "sales:invoices:edit"
+SALES_INVOICES_DELETE = "sales:invoices:delete"
 SALES_SUBSCRIPTIONS_VIEW = "sales:subscriptions:view"
+SALES_SUBSCRIPTIONS_CREATE = "sales:subscriptions:create"
+SALES_SUBSCRIPTIONS_EDIT = "sales:subscriptions:edit"
+SALES_SUBSCRIPTIONS_DELETE = "sales:subscriptions:delete"
 SALES_RECEIPTS_VIEW = "sales:receipts:view"
+SALES_RECEIPTS_CREATE = "sales:receipts:create"
+SALES_RECEIPTS_EDIT = "sales:receipts:edit"
+SALES_RECEIPTS_DELETE = "sales:receipts:delete"
+
+ACCOUNTING_CHART_VIEW = "accounting:chart:view"
+ACCOUNTING_CHART_CREATE = "accounting:chart:create"
+ACCOUNTING_CHART_EDIT = "accounting:chart:edit"
+ACCOUNTING_CHART_DELETE = "accounting:chart:delete"
+
+ACCOUNTING_RECEIVABLES_VIEW = "accounting:receivables:view"
+ACCOUNTING_RECEIVABLES_CREATE = "accounting:receivables:create"
+ACCOUNTING_RECEIVABLES_EDIT = "accounting:receivables:edit"
+ACCOUNTING_RECEIVABLES_DELETE = "accounting:receivables:delete"
+
+ACCOUNTING_EXPENSES_VIEW = "accounting:expenses:view"
+ACCOUNTING_EXPENSES_CREATE = "accounting:expenses:create"
+ACCOUNTING_EXPENSES_EDIT = "accounting:expenses:edit"
+ACCOUNTING_EXPENSES_DELETE = "accounting:expenses:delete"
+
+ACCOUNTING_VENDORS_VIEW = "accounting:vendors:view"
+ACCOUNTING_VENDORS_CREATE = "accounting:vendors:create"
+ACCOUNTING_VENDORS_EDIT = "accounting:vendors:edit"
+ACCOUNTING_VENDORS_DELETE = "accounting:vendors:delete"
+
+ACCOUNTING_RECONCILE_VIEW = "accounting:reconcile:view"
+ACCOUNTING_RECONCILE_CREATE = "accounting:reconcile:create"
+ACCOUNTING_RECONCILE_EDIT = "accounting:reconcile:edit"
+ACCOUNTING_RECONCILE_DELETE = "accounting:reconcile:delete"
 
 TEAM_USERS_VIEW = "team:users:view"
+TEAM_USERS_CREATE = "team:users:create"
+TEAM_USERS_EDIT = "team:users:edit"
+TEAM_USERS_DELETE = "team:users:delete"
+
 REPORTS_FINANCIAL_VIEW = "reports:financial:view"
+REPORTS_LISTS_VIEW = "reports:lists:view"
+REPORTS_LISTS_CREATE = "reports:lists:create"
+REPORTS_LISTS_EDIT = "reports:lists:edit"
+REPORTS_LISTS_DELETE = "reports:lists:delete"
+REPORTS_CLASSES_VIEW = "reports:classes:view"
+REPORTS_CLASSES_CREATE = "reports:classes:create"
+REPORTS_CLASSES_EDIT = "reports:classes:edit"
+REPORTS_CLASSES_DELETE = "reports:classes:delete"
 PERMISSION_GROUPS: list[dict[str, Any]] = [
     {
         "module": "baas",

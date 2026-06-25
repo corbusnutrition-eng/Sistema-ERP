@@ -11,7 +11,13 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import require_permission
+from app.permissions import (
+    ACCOUNTING_VENDORS_CREATE,
+    ACCOUNTING_VENDORS_DELETE,
+    ACCOUNTING_VENDORS_EDIT,
+    ACCOUNTING_VENDORS_VIEW,
+)
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.models.account import Account
@@ -38,6 +44,10 @@ bill_router = APIRouter(prefix="/vendor-bills", tags=["vendor-bills"])
 pay_router = APIRouter(prefix="/vendor-payments", tags=["vendor-payments"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+VendorsViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_VENDORS_VIEW))]
+VendorsCreateDep = Annotated[dict, Depends(require_permission(ACCOUNTING_VENDORS_CREATE))]
+VendorsEditDep = Annotated[dict, Depends(require_permission(ACCOUNTING_VENDORS_EDIT))]
+VendorsDeleteDep = Annotated[dict, Depends(require_permission(ACCOUNTING_VENDORS_DELETE))]
 
 
 def _maybe_with_for_update(q, db: Session):
@@ -154,7 +164,7 @@ def _payment_response(p: VendorPayment) -> VendorPaymentResponse:
 
 
 @router.get("/stats/dashboard/", response_model=VendorDashboardStats)
-def vendor_dashboard_stats(db: DbDep, _: AdminDep) -> VendorDashboardStats:
+def vendor_dashboard_stats(db: DbDep, _: VendorsViewDep) -> VendorDashboardStats:
     vendors = db.query(Vendor.id).all()
     vids = [int(x[0]) for x in vendors]
     if not vids:
@@ -193,7 +203,7 @@ def vendor_dashboard_stats(db: DbDep, _: AdminDep) -> VendorDashboardStats:
 
 
 @router.get("/", response_model=list[VendorListRow])
-def list_vendors(db: DbDep, _: AdminDep) -> list[VendorListRow]:
+def list_vendors(db: DbDep, _: VendorsViewDep) -> list[VendorListRow]:
     vendors = db.query(Vendor).order_by(Vendor.name.asc()).all()
     if not vendors:
         return []
@@ -232,7 +242,7 @@ def list_vendors(db: DbDep, _: AdminDep) -> list[VendorListRow]:
 
 
 @router.post("/", response_model=VendorResponse, status_code=status.HTTP_201_CREATED)
-def create_vendor(payload: VendorCreate, db: DbDep, _: AdminDep) -> VendorResponse:
+def create_vendor(payload: VendorCreate, db: DbDep, _: VendorsCreateDep) -> VendorResponse:
     cur = normalize_currency_code(payload.currency)
     vendor = Vendor(
         name=payload.name.strip(),
@@ -250,7 +260,7 @@ def create_vendor(payload: VendorCreate, db: DbDep, _: AdminDep) -> VendorRespon
 
 
 @router.get("/{vendor_id}", response_model=VendorDetailResponse)
-def get_vendor(vendor_id: int, db: DbDep, _: AdminDep) -> VendorDetailResponse:
+def get_vendor(vendor_id: int, db: DbDep, _: VendorsViewDep) -> VendorDetailResponse:
     v = db.get(Vendor, vendor_id)
     if v is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado.")
@@ -265,7 +275,7 @@ def get_vendor(vendor_id: int, db: DbDep, _: AdminDep) -> VendorDetailResponse:
 
 
 @router.patch("/{vendor_id}", response_model=VendorResponse)
-def update_vendor(vendor_id: int, payload: VendorUpdate, db: DbDep, _: AdminDep) -> VendorResponse:
+def update_vendor(vendor_id: int, payload: VendorUpdate, db: DbDep, _: VendorsEditDep) -> VendorResponse:
     v = db.get(Vendor, vendor_id)
     if v is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado.")
@@ -289,7 +299,7 @@ def update_vendor(vendor_id: int, payload: VendorUpdate, db: DbDep, _: AdminDep)
 
 
 @router.delete("/{vendor_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_vendor(vendor_id: int, db: DbDep, _: AdminDep) -> None:
+def delete_vendor(vendor_id: int, db: DbDep, _: VendorsDeleteDep) -> None:
     """Elimina un proveedor solo si no tiene facturas ni pagos (historial contable)."""
     v = db.get(Vendor, vendor_id)
     if v is None:
@@ -318,7 +328,7 @@ def delete_vendor(vendor_id: int, db: DbDep, _: AdminDep) -> None:
 def vendor_ledger(
     vendor_id: int,
     db: DbDep,
-    _: AdminDep,
+    _: VendorsViewDep,
     date_from: Optional[dt.date] = Query(None),
     date_to: Optional[dt.date] = Query(None),
 ) -> list[VendorLedgerRow]:
@@ -406,7 +416,7 @@ def vendor_ledger(
 @bill_router.get("/open/", response_model=list[VendorBillResponse])
 def list_open_bills(
     db: DbDep,
-    _: AdminDep,
+    _: VendorsViewDep,
     vendor_id: Optional[int] = Query(None, ge=1),
 ) -> list[VendorBillResponse]:
     """Facturas con saldo pendiente (para modal Pagar facturas)."""
@@ -426,7 +436,7 @@ def list_open_bills(
 
 
 @bill_router.get("/{bill_id}", response_model=VendorBillResponse)
-def get_bill(bill_id: int, db: DbDep, _: AdminDep) -> VendorBillResponse:
+def get_bill(bill_id: int, db: DbDep, _: VendorsViewDep) -> VendorBillResponse:
     row = (
         db.query(VendorBill)
         .options(
@@ -442,7 +452,7 @@ def get_bill(bill_id: int, db: DbDep, _: AdminDep) -> VendorBillResponse:
 
 
 @bill_router.post("/", response_model=VendorBillResponse, status_code=status.HTTP_201_CREATED)
-def create_vendor_bill(payload: VendorBillCreate, db: DbDep, _: AdminDep) -> VendorBillResponse:
+def create_vendor_bill(payload: VendorBillCreate, db: DbDep, _: VendorsCreateDep) -> VendorBillResponse:
     vendor = db.get(Vendor, payload.vendor_id)
     if vendor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado.")
@@ -519,7 +529,7 @@ def create_vendor_bill(payload: VendorBillCreate, db: DbDep, _: AdminDep) -> Ven
 
 
 @pay_router.get("/{payment_id}", response_model=VendorPaymentResponse)
-def get_payment(payment_id: int, db: DbDep, _: AdminDep) -> VendorPaymentResponse:
+def get_payment(payment_id: int, db: DbDep, _: VendorsViewDep) -> VendorPaymentResponse:
     row = (
         db.query(VendorPayment)
         .options(
@@ -536,7 +546,7 @@ def get_payment(payment_id: int, db: DbDep, _: AdminDep) -> VendorPaymentRespons
 
 
 @pay_router.post("/", response_model=VendorPaymentResponse, status_code=status.HTTP_201_CREATED)
-def create_vendor_payment(payload: VendorPaymentCreate, db: DbDep, _: AdminDep) -> VendorPaymentResponse:
+def create_vendor_payment(payload: VendorPaymentCreate, db: DbDep, _: VendorsCreateDep) -> VendorPaymentResponse:
     vendor = db.get(Vendor, payload.vendor_id)
     if vendor is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado.")

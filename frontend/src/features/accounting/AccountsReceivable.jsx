@@ -10,6 +10,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import api from '../../api/axios'
+import { getApiErrorMessage } from '../../lib/apiErrors'
 import { AR_REPORT_STALE_EVENT } from '../../utils/arReportEvents'
 import { formatShortDateEcuador } from '../../utils/datetime'
 
@@ -131,8 +132,7 @@ export default function AccountsReceivable({ backHref = '/contabilidad/plan-de-c
       setExpandedClients(new Set())
       setExpandedInvoices(new Set())
     } catch (err) {
-      const detail = err?.response?.data?.detail
-      setError(typeof detail === 'string' ? detail : 'No se pudo cargar cuentas por cobrar.')
+      setError(getApiErrorMessage(err, { fallback: 'No se pudo cargar cuentas por cobrar.' }))
       setReport(null)
     } finally {
       setLoading(false)

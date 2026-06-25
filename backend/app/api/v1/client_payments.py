@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from pydantic import ValidationError
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import require_permission
+from app.permissions import (
+    ACCOUNTING_RECEIVABLES_CREATE,
+    ACCOUNTING_RECEIVABLES_EDIT,
+    ACCOUNTING_RECEIVABLES_VIEW,
+)
 from app.api.v1.sales import _persist_receipt_upload, _resolve_deposit_account_id
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
@@ -49,6 +54,9 @@ _FP_PAY_EPS = Decimal("0.005")
 
 
 DbDep = Annotated[Session, Depends(get_db)]
+ReceivablesViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECEIVABLES_VIEW))]
+ReceivablesCreateDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECEIVABLES_CREATE))]
+ReceivablesEditDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECEIVABLES_EDIT))]
 
 
 def _payment_to_out(
@@ -246,7 +254,7 @@ def _create_manual_payment_record(
 async def create_payment(
     request: Request,
     db: DbDep,
-    _admin: AdminDep,
+    _: ReceivablesCreateDep,
     payload: Annotated[Optional[str], Form()] = None,
     receipt_file: Annotated[Optional[UploadFile], File()] = None,
 ) -> ClientPaymentOut:
@@ -300,7 +308,7 @@ async def create_payment(
 @router.get("/", response_model=list[ClientPaymentOut])
 def list_payments(
     db: DbDep,
-    _admin: AdminDep,
+    _: ReceivablesViewDep,
     status_filter: Optional[str] = None,
     client_id: Optional[int] = None,
     review_queue: Optional[str] = None,
@@ -346,7 +354,7 @@ def list_payments(
 
 
 @router.get("/{payment_id}", response_model=ClientPaymentOut)
-def get_payment(payment_id: int, db: DbDep, _admin: AdminDep) -> ClientPaymentOut:
+def get_payment(payment_id: int, db: DbDep, _: ReceivablesViewDep) -> ClientPaymentOut:
     p = (
         db.query(ClientPayment)
         .options(
@@ -366,7 +374,7 @@ def get_payment(payment_id: int, db: DbDep, _admin: AdminDep) -> ClientPaymentOu
 def approve_payment(
     payment_id: int,
     db: DbDep,
-    _admin: AdminDep,
+    _: ReceivablesEditDep,
     body: Optional[PaymentApproveBody] = None,
 ) -> ClientPaymentOut:
     p = (
@@ -451,7 +459,7 @@ def approve_payment(
 
 
 @router.patch("/{payment_id}/reject")
-def reject_payment(payment_id: int, db: DbDep, _admin: AdminDep) -> dict:
+def reject_payment(payment_id: int, db: DbDep, _: ReceivablesEditDep) -> dict:
     p = db.get(ClientPayment, payment_id)
     if p is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado.")

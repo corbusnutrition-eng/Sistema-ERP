@@ -8,7 +8,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import require_permission
+from app.permissions import (
+    ACCOUNTING_EXPENSES_CREATE,
+    ACCOUNTING_EXPENSES_DELETE,
+    ACCOUNTING_EXPENSES_EDIT,
+    ACCOUNTING_EXPENSES_VIEW,
+)
 from app.api.v1.accounts import refresh_accounts_balance_cache
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
@@ -21,6 +27,10 @@ from app.services.expense_document_journal import delete_vendor_expense_journal,
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+ExpensesViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_EXPENSES_VIEW))]
+ExpensesCreateDep = Annotated[dict, Depends(require_permission(ACCOUNTING_EXPENSES_CREATE))]
+ExpensesEditDep = Annotated[dict, Depends(require_permission(ACCOUNTING_EXPENSES_EDIT))]
+ExpensesDeleteDep = Annotated[dict, Depends(require_permission(ACCOUNTING_EXPENSES_DELETE))]
 
 UPLOAD_DIR = Path("uploads")
 EXP_ATTACH_MAX_BYTES = 20 * 1024 * 1024
@@ -89,7 +99,7 @@ def _validate_expense_accounts(db: Session, payload: ExpenseCreate) -> None:
 
 
 @router.get("/", response_model=list[ExpenseListItem])
-def list_expenses(db: DbDep, _: AdminDep) -> list[ExpenseListItem]:
+def list_expenses(db: DbDep, _: ExpensesViewDep) -> list[ExpenseListItem]:
     rows = (
         db.query(Expense)
         .options(
@@ -128,7 +138,7 @@ def list_expenses(db: DbDep, _: AdminDep) -> list[ExpenseListItem]:
 
 
 @router.get("/{expense_id}", response_model=ExpenseResponse)
-def get_expense(expense_id: int, db: DbDep, _: AdminDep) -> ExpenseResponse:
+def get_expense(expense_id: int, db: DbDep, _: ExpensesViewDep) -> ExpenseResponse:
     row = (
         db.query(Expense)
         .options(
@@ -147,7 +157,7 @@ def get_expense(expense_id: int, db: DbDep, _: AdminDep) -> ExpenseResponse:
 
 
 @router.post("/", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
-def create_expense(payload: ExpenseCreate, db: DbDep, _: AdminDep) -> ExpenseResponse:
+def create_expense(payload: ExpenseCreate, db: DbDep, _: ExpensesCreateDep) -> ExpenseResponse:
     payee = db.get(User, payload.payee_id)
     if payee is None or not payee.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Beneficiario no encontrado.")
@@ -223,7 +233,7 @@ def create_expense(payload: ExpenseCreate, db: DbDep, _: AdminDep) -> ExpenseRes
 
 
 @router.patch("/{expense_id}/void", response_model=ExpenseResponse)
-def void_expense(expense_id: int, db: DbDep, _: AdminDep) -> ExpenseResponse:
+def void_expense(expense_id: int, db: DbDep, _: ExpensesEditDep) -> ExpenseResponse:
     row = db.get(Expense, expense_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gasto no encontrado.")
@@ -251,7 +261,7 @@ def void_expense(expense_id: int, db: DbDep, _: AdminDep) -> ExpenseResponse:
 
 
 @router.delete("/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_expense(expense_id: int, db: DbDep, _: AdminDep) -> None:
+def delete_expense(expense_id: int, db: DbDep, _: ExpensesDeleteDep) -> None:
     row = db.get(Expense, expense_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Gasto no encontrado.")
@@ -262,7 +272,7 @@ def delete_expense(expense_id: int, db: DbDep, _: AdminDep) -> None:
 
 
 @router.post("/attachments/upload")
-async def upload_expense_attachment(file: UploadFile, _: AdminDep) -> dict[str, str]:
+async def upload_expense_attachment(file: UploadFile, _: ExpensesCreateDep) -> dict[str, str]:
     if file.content_type not in EXP_ATTACH_CT:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,

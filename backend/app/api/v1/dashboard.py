@@ -9,6 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
+from app.api.v1.dependencies import require_permission
+from app.permissions import DASHBOARD_OVERVIEW_VIEW
+
 from app.database import get_db
 from app.models.client import Client
 from app.models.expense import Expense
@@ -19,6 +22,7 @@ from app.models.sale import Sale
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+DashboardViewDep = Annotated[dict, Depends(require_permission(DASHBOARD_OVERVIEW_VIEW))]
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -47,7 +51,7 @@ class DashboardSummary(BaseModel):
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
 @router.get("/summary/", response_model=DashboardSummary)
-def get_dashboard_summary(db: DbDep) -> DashboardSummary:
+def get_dashboard_summary(db: DbDep, _: DashboardViewDep) -> DashboardSummary:
     total_clients: int = db.query(func.count(Client.id)).scalar() or 0
 
     available_screens_flujo: int = (

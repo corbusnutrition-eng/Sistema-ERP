@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react'
 import api from '../../api/axios'
+import { getApiErrorMessage } from '../../lib/apiErrors'
 import { ACCOUNT_TYPE_LABELS } from './constants'
 import NuevaCuentaModal from './components/NuevaCuentaModal'
 
@@ -429,8 +430,8 @@ export default function ChartOfAccounts() {
     try {
       const { data } = await api.get('/api/v1/accounts/')
       setRows(Array.isArray(data) ? data : [])
-    } catch {
-      setError('No se pudo cargar el plan de cuentas.')
+    } catch (err) {
+      setError(getApiErrorMessage(err, { fallback: 'No se pudo cargar el plan de cuentas.' }))
       setRows([])
     } finally {
       setLoading(false)

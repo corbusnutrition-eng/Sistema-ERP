@@ -16,7 +16,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import require_permission
+from app.permissions import (
+    PRODUCTS_CREATE,
+    PRODUCTS_DELETE,
+    PRODUCTS_EDIT,
+)
 from app.currency_utils import MAX_CURRENCY_CODE_LEN, normalize_currency_code
 from app.database import get_db
 from app.models.iptv_account import IPTVAccount
@@ -25,6 +30,9 @@ from app.models.sale import Sale, SaleStatus
 from app.models.screen_stock import ScreenStock
 
 DbDep = Annotated[Session, Depends(get_db)]
+ProductsCreateDep = Annotated[dict, Depends(require_permission(PRODUCTS_CREATE))]
+ProductsEditDep = Annotated[dict, Depends(require_permission(PRODUCTS_EDIT))]
+ProductsDeleteDep = Annotated[dict, Depends(require_permission(PRODUCTS_DELETE))]
 
 logger = logging.getLogger(__name__)
 
@@ -979,7 +987,7 @@ def list_package_type_labels(db: DbDep) -> list[str]:
     response_model=PackageTypeResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_package_type_label(payload: PackageTypeCreate, db: DbDep, _: AdminDep) -> CatalogPackageType:
+def create_package_type_label(payload: PackageTypeCreate, db: DbDep, _: ProductsCreateDep) -> CatalogPackageType:
     label = payload.label
     if label in BUILTIN_PACKAGE_TYPE_LABELS:
         raise HTTPException(
@@ -1015,7 +1023,7 @@ def list_products(db: DbDep, skip: int = 0, limit: int = 100) -> list[ProductRes
 @router.post("/upload-logo", summary="Subir logotipo de producto (admin)")
 async def upload_product_logo(
     db: DbDep,
-    _: AdminDep,
+    _: ProductsEditDep,
     file: UploadFile = File(...),
     product_id: Annotated[Optional[int], Form()] = None,
 ) -> JSONResponse:
@@ -1069,7 +1077,7 @@ def get_product(product_id: int, db: DbDep) -> ProductResponse:
 
 
 @router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
-def create_product(payload: ProductCreate, db: DbDep, _: AdminDep) -> Product:
+def create_product(payload: ProductCreate, db: DbDep, _: ProductsCreateDep) -> Product:
     saved_id: Optional[int] = None
     try:
         eff = _effective_product_create(payload)
@@ -1126,7 +1134,7 @@ def create_product(payload: ProductCreate, db: DbDep, _: AdminDep) -> Product:
 
 
 @router.post("/bulk", response_model=list[ProductResponse], status_code=status.HTTP_201_CREATED)
-def bulk_create_products(payload: ProductBulkCreate, db: DbDep, _: AdminDep) -> list[Product]:
+def bulk_create_products(payload: ProductBulkCreate, db: DbDep, _: ProductsCreateDep) -> list[Product]:
     """Carga masiva desde el modal multi-producto (solo admin)."""
     created_ids: list[int] = []
     try:
@@ -1180,7 +1188,7 @@ def bulk_create_products(payload: ProductBulkCreate, db: DbDep, _: AdminDep) -> 
 
 
 @router.patch("/{product_id}", response_model=ProductResponse)
-def update_product(product_id: int, payload: ProductUpdate, db: DbDep, _: AdminDep) -> Product:
+def update_product(product_id: int, payload: ProductUpdate, db: DbDep, _: ProductsEditDep) -> Product:
     product: Optional[Product] = db.get(Product, product_id)
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado.")
@@ -1258,7 +1266,7 @@ def update_product(product_id: int, payload: ProductUpdate, db: DbDep, _: AdminD
 
 
 @router.put("/{product_id}", response_model=ProductResponse)
-async def replace_product(product_id: int, request: Request, db: DbDep, _: AdminDep) -> Product:
+async def replace_product(product_id: int, request: Request, db: DbDep, _: ProductsEditDep) -> Product:
     """Reemplazo completo del producto (misma forma que POST /products/), incluye catálogo de paquetes."""
     product: Optional[Product] = db.get(Product, product_id)
     if product is None:
@@ -1323,7 +1331,7 @@ async def replace_product(product_id: int, request: Request, db: DbDep, _: Admin
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_product(product_id: int, db: DbDep, _: AdminDep) -> None:
+def delete_product(product_id: int, db: DbDep, _: ProductsDeleteDep) -> None:
     product: Optional[Product] = db.get(Product, product_id)
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado.")

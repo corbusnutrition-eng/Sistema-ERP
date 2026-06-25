@@ -16,7 +16,8 @@ from sqlalchemy import func, nullslast
 from sqlalchemy.orm import Session, joinedload
 from starlette.datastructures import UploadFile
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import require_permission
+from app.permissions import SALES_INVOICES_EDIT, SALES_INVOICES_VIEW
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.models.account import Account
@@ -127,6 +128,8 @@ def _portal_pending_deposit_payments_for_sale(db: Session, sale: Sale) -> list[C
 logger = logging.getLogger(__name__)
 
 DbDep = Annotated[Session, Depends(get_db)]
+SalesInvoicesViewDep = Annotated[dict, Depends(require_permission(SALES_INVOICES_VIEW))]
+SalesInvoicesEditDep = Annotated[dict, Depends(require_permission(SALES_INVOICES_EDIT))]
 
 
 class LastExchangeRateResponse(BaseModel):
@@ -137,7 +140,7 @@ class LastExchangeRateResponse(BaseModel):
 @router.get("/last-exchange-rate", response_model=LastExchangeRateResponse)
 def sales_last_exchange_rate(
     db: DbDep,
-    _: AdminDep,
+    _: SalesInvoicesViewDep,
     currency: str = Query(..., min_length=3, max_length=10, description="Código de moneda (ej. BOB)."),
 ) -> LastExchangeRateResponse:
     """Último tipo de cambio registrado para la moneda (venta, pago o recarga BaaS); 1.0 si no hay historial."""
@@ -3198,7 +3201,7 @@ async def create_sale(request: Request, db: DbDep) -> SaleResponse:
     response_model=SaleWebCreditsSyncResponse,
     summary="Sincronizar comprobantes de ventas (web VIP / Render) hacia el ERP",
 )
-def sync_sales_web_credits_from_catalog(db: DbDep, _: AdminDep) -> SaleWebCreditsSyncResponse:
+def sync_sales_web_credits_from_catalog(db: DbDep, _: SalesInvoicesEditDep) -> SaleWebCreditsSyncResponse:
     """
     Descarga desde catalogo-vip las ventas con comprobante subido por el cliente y crea/abre el flujo
     «En revisión» en el ERP (estado ``payment_submitted`` + ``ClientPayment`` pendiente donde aplica).
@@ -3365,7 +3368,7 @@ def extend_sale_reservation_timer(
     sale_id: int,
     body: SaleExtendTimerBody,
     db: DbDep,
-    _: AdminDep,
+    _: SalesInvoicesEditDep,
 ) -> SaleResponse:
     expire_pending_sales_if_needed(db)
     sale = (
@@ -3420,7 +3423,7 @@ def extend_sale_reservation_timer(
     response_model=SalePortalPaymentConsolidated,
     summary="Saldo portal aplicado + comprobante en revisión antes de activar",
 )
-def get_sale_portal_payment_consolidated(sale_id: int, db: DbDep, _admin: AdminDep) -> SalePortalPaymentConsolidated:
+def get_sale_portal_payment_consolidated(sale_id: int, db: DbDep, _: SalesInvoicesViewDep) -> SalePortalPaymentConsolidated:
     expire_pending_sales_if_needed(db)
     sale = (
         db.query(Sale)

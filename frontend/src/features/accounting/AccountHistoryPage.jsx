@@ -17,6 +17,7 @@ import {
   Eye,
 } from 'lucide-react'
 import api from '../../api/axios'
+import { getApiErrorMessage } from '../../lib/apiErrors'
 import { useModal } from '../../context/ModalContext'
 import { formatSaleDocNo, formatSaleLedgerDateParts } from '../sales/saleTableHelpers'
 import { toDatetimeLocalEcuador } from '../../utils/datetime'
@@ -240,8 +241,7 @@ export default function AccountHistoryPage() {
     } catch (err) {
       setMeta(null)
       setLines([])
-      const d = err?.response?.data?.detail
-      setError(typeof d === 'string' ? d : 'No se pudo cargar el historial.')
+      setError(getApiErrorMessage(err, { fallback: 'No se pudo cargar el historial.' }))
     } finally {
       setLoading(false)
     }

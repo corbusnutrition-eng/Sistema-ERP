@@ -9,7 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.v1.dependencies import AdminDep, UserDep
+from app.api.v1.dependencies import require_permission, UserDep
+from app.permissions import (
+    ACCOUNTING_CHART_CREATE,
+    ACCOUNTING_CHART_EDIT,
+    ACCOUNTING_CHART_VIEW,
+    ACCOUNTING_RECONCILE_EDIT,
+)
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.account_constants import is_liquid_deposit_account
@@ -35,6 +41,10 @@ from app.schemas.chart_accounts import (
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+ChartViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_CHART_VIEW))]
+ChartCreateDep = Annotated[dict, Depends(require_permission(ACCOUNTING_CHART_CREATE))]
+ChartEditDep = Annotated[dict, Depends(require_permission(ACCOUNTING_CHART_EDIT))]
+ReconcileEditDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECONCILE_EDIT))]
 
 
 def _amount_to_decimal(value: Optional[object]) -> Decimal:
@@ -610,7 +620,7 @@ def _build_response(
 @router.get("/", response_model=list[ChartAccountResponse])
 def list_chart_accounts(
     db: DbDep,
-    _: AdminDep,
+    _: ChartViewDep,
     include_inactive: bool = False,
 ) -> list[ChartAccountResponse]:
     """Plan de cuentas con saldo según líneas del libro mayor. Incluye ``currency`` por cuenta (autoselección en formularios)."""
@@ -658,7 +668,7 @@ def list_deposit_account_options(db: DbDep, _: UserDep) -> list[DepositAccountOp
 
 
 @router.post("/transfer", response_model=AccountTransferResponse, status_code=status.HTTP_201_CREATED)
-def transfer_between_accounts(payload: AccountTransferCreate, db: DbDep, _: AdminDep) -> AccountTransferResponse:
+def transfer_between_accounts(payload: AccountTransferCreate, db: DbDep, _: ReconcileEditDep) -> AccountTransferResponse:
     """Partida doble: egreso en origen e ingreso en destino, enlazados por referencia TRX-…."""
     src = db.get(Account, payload.source_account_id)
     dst = db.get(Account, payload.destination_account_id)
@@ -741,7 +751,7 @@ def transfer_between_accounts(payload: AccountTransferCreate, db: DbDep, _: Admi
 def get_account_ledger(
     account_id: int,
     db: DbDep,
-    _: AdminDep,
+    _: ChartViewDep,
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
 ) -> AccountHistoryResponse:
@@ -755,7 +765,7 @@ def get_account_ledger(
 def get_account_history(
     account_id: int,
     db: DbDep,
-    _: AdminDep,
+    _: ChartViewDep,
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
 ) -> AccountHistoryResponse:
@@ -764,7 +774,7 @@ def get_account_history(
 
 
 @router.post("/", response_model=ChartAccountResponse, status_code=status.HTTP_201_CREATED)
-def create_chart_account(payload: ChartAccountCreate, db: DbDep, _: AdminDep) -> ChartAccountResponse:
+def create_chart_account(payload: ChartAccountCreate, db: DbDep, _: ChartCreateDep) -> ChartAccountResponse:
     """Crea una cuenta en el plan."""
     code = f"ACC-{uuid.uuid4().hex[:12]}"
 
@@ -818,7 +828,7 @@ def create_chart_account(payload: ChartAccountCreate, db: DbDep, _: AdminDep) ->
 
 
 @router.patch("/{account_id}/deactivate", response_model=ChartAccountResponse)
-def deactivate_chart_account(account_id: int, db: DbDep, _: AdminDep) -> ChartAccountResponse:
+def deactivate_chart_account(account_id: int, db: DbDep, _: ChartEditDep) -> ChartAccountResponse:
     acc = db.get(Account, account_id)
     if acc is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada.")
@@ -838,7 +848,7 @@ def update_chart_account(
     account_id: int,
     payload: ChartAccountUpdate,
     db: DbDep,
-    _: AdminDep,
+    _: ChartEditDep,
 ) -> ChartAccountResponse:
     acc = db.get(Account, account_id)
     if acc is None:

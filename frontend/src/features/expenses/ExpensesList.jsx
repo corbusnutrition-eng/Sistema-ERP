@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, Loader2 } from 'lucide-react'
 import api from '../../api/axios'
+import { getApiErrorMessage } from '../../lib/apiErrors'
 import { useModal } from '../../context/ModalContext'
 
 const QB_GREEN = '#2ca01c'
@@ -28,15 +29,18 @@ export default function ExpensesList() {
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(() => new Set())
   const [openMenuId, setOpenMenuId] = useState(null)
+  const [loadError, setLoadError] = useState('')
   const { openNewExpense } = useModal()
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError('')
     try {
       const { data } = await api.get('/api/v1/expenses/')
       setRows(Array.isArray(data) ? data : [])
-    } catch {
+    } catch (err) {
       setRows([])
+      setLoadError(getApiErrorMessage(err, { fallback: 'No se pudo cargar la lista de gastos.' }))
     } finally {
       setLoading(false)
       setSelected(new Set())
@@ -140,7 +144,14 @@ export default function ExpensesList() {
                     </td>
                   </tr>
                 )}
-                {!loading && rows.length === 0 && (
+                {!loading && loadError && (
+                  <tr>
+                    <td colSpan={10} className="px-6 py-14 text-center text-red-500 text-sm">
+                      {loadError}
+                    </td>
+                  </tr>
+                )}
+                {!loading && !loadError && rows.length === 0 && (
                   <tr>
                     <td colSpan={10} className="px-6 py-14 text-center text-gray-400">
                       No hay gastos registrados.
