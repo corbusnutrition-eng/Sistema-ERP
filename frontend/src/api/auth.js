@@ -31,3 +31,15 @@ export async function loginWithEmailPassword(email, password) {
   })
   return data
 }
+
+/** GET ``/api/v1/auth/me`` — perfil y permisos efectivos del usuario autenticado. */
+export async function fetchAuthMe() {
+  const { data } = await api.get('/api/v1/auth/me')
+  return data
+}
+
+/** GET ``/api/v1/permissions/catalog`` — catálogo agrupado (solo admin). */
+export async function fetchPermissionsCatalog() {
+  const { data } = await api.get('/api/v1/permissions/catalog')
+  return data
+}

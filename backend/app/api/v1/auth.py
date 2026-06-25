@@ -1,47 +1,23 @@
 from __future__ import annotations
 
-import datetime
 from typing import Annotated, Optional
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
-from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
+from app.api.v1.dependencies import UserDep
 from app.database import get_db
+from app.jwt_utils import create_access_token
 from app.models.user import User
-from app.timezone_utils import now_utc
+from app.permissions import effective_permissions
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-# ── JWT config ────────────────────────────────────────────────────────────────
-# In production replace this with a strong random secret (e.g. os.getenv("SECRET_KEY"))
-SECRET_KEY = "iptv-erp-jwt-secret-key-fase10-rbac"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_HOURS = 8
 
 # ── Mock admin fallback (when no admin user exists in the DB yet) ─────────────
 MOCK_EMAIL = "admin@erp.com"
 MOCK_PASSWORD = "admin123"
-
-
-# ── JWT helpers ───────────────────────────────────────────────────────────────
-
-def create_access_token(data: dict) -> str:
-    """Genera un JWT firmado con expiración de ACCESS_TOKEN_EXPIRE_HOURS horas."""
-    to_encode = data.copy()
-    expire = now_utc() + datetime.timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    to_encode["exp"] = expire
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def decode_access_token(token: str) -> Optional[dict]:
-    """Decodifica y valida el JWT. Devuelve el payload o None si es inválido/expirado."""
-    try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
-        return None
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -55,12 +31,21 @@ class UserInfo(BaseModel):
     name: str
     role: str
     user_id: Optional[int] = None
+    permissions: list[str] = []
 
 
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str
     user: UserInfo
+
+
+class MeResponse(BaseModel):
+    name: str
+    role: str
+    email: str
+    user_id: Optional[int] = None
+    permissions: list[str] = []
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
@@ -90,10 +75,21 @@ def login(credentials: LoginRequest, db: DbDep) -> LoginResponse:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Usuario desactivado. Contacta al administrador.",
             )
-        user_info = UserInfo(name=db_user.name, role=db_user.role.value, user_id=db_user.id)
+        perms = effective_permissions(role=db_user.role.value, permissions=db_user.permissions)
+        user_info = UserInfo(
+            name=db_user.name,
+            role=db_user.role.value,
+            user_id=db_user.id,
+            permissions=perms,
+        )
 
     elif credentials.email == MOCK_EMAIL and credentials.password == MOCK_PASSWORD:
-        user_info = UserInfo(name="Admin", role="admin", user_id=None)
+        user_info = UserInfo(
+            name="Admin",
+            role="admin",
+            user_id=None,
+            permissions=effective_permissions(role="admin", permissions=None),
+        )
 
     else:
         raise HTTPException(
@@ -109,5 +105,40 @@ def login(credentials: LoginRequest, db: DbDep) -> LoginResponse:
     }
     if db_user is not None:
         token_payload["user_id"] = db_user.id
+        token_payload["permissions"] = user_info.permissions
+    elif user_info.role == "admin":
+        token_payload["permissions"] = user_info.permissions
     token = create_access_token(token_payload)
     return LoginResponse(access_token=token, token_type="bearer", user=user_info)
+
+
+@router.get("/me", response_model=MeResponse)
+def auth_me(current_user: UserDep, db: DbDep) -> MeResponse:
+    """Devuelve el perfil y permisos efectivos del usuario autenticado."""
+    db_user: Optional[User] = None
+    user_id = current_user.get("user_id")
+    if user_id is not None:
+        try:
+            db_user = db.get(User, int(user_id))
+        except (TypeError, ValueError):
+            db_user = None
+
+    role = str(current_user.get("role") or "worker")
+    email = str(current_user.get("sub") or "")
+    name = str(current_user.get("name") or "")
+
+    if db_user is not None:
+        role = db_user.role.value
+        email = str(db_user.email or email)
+        name = db_user.name
+        perms = effective_permissions(role=role, permissions=db_user.permissions)
+    else:
+        perms = effective_permissions(role=role, permissions=current_user.get("permissions"))
+
+    return MeResponse(
+        name=name,
+        role=role,
+        email=email,
+        user_id=int(user_id) if user_id is not None else None,
+        permissions=perms,
+    )

@@ -17,7 +17,12 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.account_constants import is_liquid_deposit_account
 from app.currency_utils import normalize_currency_code
-from app.api.v1.dependencies import AdminDep, UserDep
+from app.api.v1.dependencies import require_permission
+from app.permissions import (
+    BAAS_CREATE_RECHARGE,
+    BAAS_VIEW_REQUESTS_TAB,
+    BAAS_VIEW_USERS_TAB,
+)
 from app.api.v1.sales import _persist_receipt_upload
 from app.database import get_db
 from app.models.account import Account
@@ -91,6 +96,10 @@ from app.services.client_product_price_service import (
 router = APIRouter(prefix="/distributors", tags=["distributors"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+
+BaasViewUsersDep = Annotated[dict, Depends(require_permission(BAAS_VIEW_USERS_TAB))]
+BaasViewRequestsDep = Annotated[dict, Depends(require_permission(BAAS_VIEW_REQUESTS_TAB))]
+BaasCreateRechargeDep = Annotated[dict, Depends(require_permission(BAAS_CREATE_RECHARGE))]
 
 logger = logging.getLogger(__name__)
 
@@ -446,7 +455,7 @@ def _build_wallet_recharge_public_detail(db: Session, req: WalletRechargeRequest
 @router.get("/client-credit-preview")
 def client_credit_preview_for_recharge(
     db: DbDep,
-    _: AdminDep,
+    _: BaasViewUsersDep,
     email: str = Query(..., min_length=3),
     currency: str = Query("USD", max_length=10),
 ) -> dict[str, object]:
@@ -467,7 +476,7 @@ def client_credit_preview_for_recharge(
 
 
 @router.get("/catalog-clients", response_model=CatalogClientsPickerResponse)
-def list_catalog_clients_for_recharge_picker(db: DbDep, _: AdminDep) -> CatalogClientsPickerResponse:
+def list_catalog_clients_for_recharge_picker(db: DbDep, _: BaasViewUsersDep) -> CatalogClientsPickerResponse:
     """
     Lista clientes desde el catálogo VIP (Render) vía servidor.
 
@@ -494,7 +503,7 @@ def list_catalog_clients_for_recharge_picker(db: DbDep, _: AdminDep) -> CatalogC
 
 
 @router.get("/users", response_model=list[DistributorWalletClientRead])
-def list_distributor_users(db: DbDep, _: AdminDep) -> list[DistributorWalletClientRead]:
+def list_distributor_users(db: DbDep, _: BaasViewUsersDep) -> list[DistributorWalletClientRead]:
     """
     Clientes CRM que usan BaaS de verdad: al menos una solicitud de recarga (cualquier estado)
     o al menos un movimiento en ``wallet_transactions`` (``client_id``).
@@ -558,7 +567,7 @@ def list_distributor_users(db: DbDep, _: AdminDep) -> list[DistributorWalletClie
 def get_distributor_tree_data(
     client_uuid: uuid_module.UUID,
     db: DbDep,
-    _: AdminDep,
+    _: BaasViewUsersDep,
 ) -> DistributorTreeNode:
     """
     Árbol genealógico BaaS del cliente identificado por ``payment_token`` (UUID).
@@ -571,7 +580,7 @@ def get_distributor_tree_data(
 
 
 @router.post("/recharge", response_model=RechargeResponse)
-def recharge_wallet(payload: RechargeRequest, db: DbDep, _: AdminDep) -> RechargeResponse:
+def recharge_wallet(payload: RechargeRequest, db: DbDep, _: BaasCreateRechargeDep) -> RechargeResponse:
     """Administrador acredita saldo virtual a un distribuidor/usuario interno."""
     user = db.get(User, payload.user_id)
     if user is None:
@@ -597,7 +606,7 @@ def recharge_wallet(payload: RechargeRequest, db: DbDep, _: AdminDep) -> Recharg
 
 
 @router.post("/transfer", response_model=TransferResponse)
-def transfer_to_child(payload: TransferRequest, db: DbDep, current: UserDep) -> TransferResponse:
+def transfer_to_child(payload: TransferRequest, db: DbDep, current: BaasViewUsersDep) -> TransferResponse:
     """
     El distribuidor autenticado transfiere saldo a un subdistribuidor directo (parent_id == remitente).
     """
@@ -655,7 +664,7 @@ def transfer_to_child(payload: TransferRequest, db: DbDep, current: UserDep) -> 
 
 
 @router.post("/set-price", response_model=SetPriceResponse)
-def set_custom_price(payload: SetPriceRequest, db: DbDep, current: UserDep) -> SetPriceResponse:
+def set_custom_price(payload: SetPriceRequest, db: DbDep, current: BaasViewUsersDep) -> SetPriceResponse:
     """
     El distribuidor autenticado fija el precio de un paquete (producto) para un subdistribuidor directo.
     """
@@ -703,7 +712,7 @@ def set_custom_price(payload: SetPriceRequest, db: DbDep, current: UserDep) -> S
 
 
 @router.post("/assign-parent", response_model=DistributorUserRead)
-def assign_parent(payload: AssignParentRequest, db: DbDep, _: AdminDep) -> User:
+def assign_parent(payload: AssignParentRequest, db: DbDep, _: BaasViewUsersDep) -> User:
     """Define la jerarquía padre-hijo entre usuarios internos (solo administrador)."""
     child = db.get(User, payload.child_user_id)
     if child is None:
@@ -852,7 +861,7 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
 def request_wallet_recharge(
     payload: WalletRechargeRequestCreate,
     db: DbDep,
-    current: UserDep,
+    current: BaasCreateRechargeDep,
 ) -> WalletRechargeRequest:
     """
     El distribuidor solicita una recarga enviando importe y URL del recibo de pago.
@@ -901,7 +910,7 @@ def request_wallet_recharge(
 @router.get("/recharge-requests", response_model=list[WalletRechargeRequestAdminRow])
 def list_wallet_recharge_requests(
     db: DbDep,
-    _: AdminDep,
+    _: BaasViewRequestsDep,
     request_status: Annotated[
         str,
         Query(
@@ -944,7 +953,7 @@ def list_wallet_recharge_requests(
 
 
 @router.get("/recharge-requests/metrics", response_model=WalletRechargeRequestsMetrics)
-def wallet_recharge_request_metrics(db: DbDep, _: AdminDep) -> WalletRechargeRequestsMetrics:
+def wallet_recharge_request_metrics(db: DbDep, _: BaasViewRequestsDep) -> WalletRechargeRequestsMetrics:
     """Conteos por estado (insignias en UI, igual patrón que Ventas)."""
     rows = (
         db.query(WalletRechargeRequest.status, func.count(WalletRechargeRequest.id))
@@ -984,7 +993,7 @@ def wallet_recharge_request_metrics(db: DbDep, _: AdminDep) -> WalletRechargeReq
 def get_wallet_recharge_request_detail(
     request_id: int,
     db: DbDep,
-    _: AdminDep,
+    _: BaasViewRequestsDep,
 ) -> WalletRechargeRequestAdminRow:
     """Detalle de una solicitud BaaS (panel admin), p. ej. modal de consulta desde ficha cliente."""
     req = (
@@ -1003,7 +1012,7 @@ def patch_wallet_recharge_request_fields(
     request_id: int,
     payload: WalletRechargeRequestPendingUpdate,
     db: DbDep,
-    _: AdminDep,
+    _: BaasViewRequestsDep,
 ) -> WalletRechargeRequestAdminRow:
     """Actualiza importe/métodos/moneda/etc. en ``pending``, ``partially_paid`` o ``in_review``."""
     req = (
@@ -1149,7 +1158,7 @@ def patch_wallet_recharge_request_note(
     request_id: int,
     payload: WalletRechargeRequestAdminNoteUpdate,
     db: DbDep,
-    _: AdminDep,
+    _: BaasViewRequestsDep,
 ) -> WalletRechargeRequestAdminRow:
     """Nota administrativa (columna NOTA). Vacío borra y vuelven las sugerencias automáticas."""
     req = (
@@ -1188,7 +1197,7 @@ def _remote_row_request_id_for_sync(row: dict) -> Optional[int]:
 
 
 @router.get("/sync-recharges", response_model=WalletBridgeSyncResponse)
-def sync_wallet_recharges_from_vip_catalog(db: DbDep, _: AdminDep) -> WalletBridgeSyncResponse:
+def sync_wallet_recharges_from_vip_catalog(db: DbDep, _: BaasViewRequestsDep) -> WalletBridgeSyncResponse:
     """
     Trae desde el portal en Render las recargas pendientes de conciliar y actualiza ``receipt_url`` + estado ``in_review``.
     """
@@ -1297,7 +1306,7 @@ def sync_wallet_recharges_from_vip_catalog(db: DbDep, _: AdminDep) -> WalletBrid
 def approve_wallet_recharge(
     request_id: int,
     db: DbDep,
-    _: AdminDep,
+    _: BaasViewRequestsDep,
     background_tasks: BackgroundTasks,
     body: Annotated[Optional[ApproveWalletRechargePayload], Body()] = None,
 ) -> ApproveWalletRechargeResponse:
@@ -1383,7 +1392,7 @@ def approve_wallet_recharge(
 
 
 @router.post("/reject-recharge/{request_id}", response_model=WalletRechargeRequestRead)
-def reject_wallet_recharge(request_id: int, db: DbDep, _: AdminDep) -> WalletRechargeRequest:
+def reject_wallet_recharge(request_id: int, db: DbDep, _: BaasViewRequestsDep) -> WalletRechargeRequest:
     """Rechaza una solicitud en revisión; devuelve saldo a favor reservado si aplica."""
     req = db.get(WalletRechargeRequest, request_id)
     if req is None:
@@ -1412,7 +1421,7 @@ def reject_wallet_recharge(request_id: int, db: DbDep, _: AdminDep) -> WalletRec
 
 
 @router.post("/cancel-recharge/{request_id}", response_model=WalletRechargeRequestRead)
-def cancel_wallet_recharge_request(request_id: int, db: DbDep, _: AdminDep) -> WalletRechargeRequest:
+def cancel_wallet_recharge_request(request_id: int, db: DbDep, _: BaasViewRequestsDep) -> WalletRechargeRequest:
     """Cancela una solicitud en estado pendiente (sin comprobante todavía)."""
     req = db.get(WalletRechargeRequest, request_id)
     if req is None:
@@ -1432,7 +1441,7 @@ def cancel_wallet_recharge_request(request_id: int, db: DbDep, _: AdminDep) -> W
 @router.get("/screen-catalog-products", response_model=list[FlujoPackageForPricing])
 def list_screen_catalog_products_for_admin_pricing(
     db: DbDep,
-    _: AdminDep,
+    _: BaasViewUsersDep,
 ) -> list[FlujoPackageForPricing]:
     """Catálogo global de paquetes «crédito por pantalla» activos (costo base y stock libre)."""
     return list_screen_catalog_products_for_pricing(db)
@@ -1442,7 +1451,7 @@ def list_screen_catalog_products_for_admin_pricing(
 def generate_wallet_recharge_link(
     payload: GenerateRechargeLinkPayload,
     db: DbDep,
-    _: AdminDep,
+    _: BaasCreateRechargeDep,
 ) -> GenerateRechargeLinkResponse:
     """Crea una solicitud en estado pending (sin recibo) con métodos permitidos y devuelve la ruta del portal público."""
     try:

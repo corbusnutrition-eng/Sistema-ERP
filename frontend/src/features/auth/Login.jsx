@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { loginWithEmailPassword, parseAuthErrorDetail } from '../../api/auth'
+import { useAuth } from '../../context/AuthContext'
+import { hasAnyBaasPermission } from '../../lib/permissions'
 
 function LoginSpinner() {
   return (
@@ -25,6 +27,7 @@ function resolveLoginError(err) {
 
 export default function Login() {
   const navigate = useNavigate()
+  const { setSession } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -39,9 +42,13 @@ export default function Login() {
 
     try {
       const data = await loginWithEmailPassword(email, password)
-      localStorage.setItem('access_token', data.access_token)
-      localStorage.setItem('user', JSON.stringify(data.user))
-      const destination = data.user.role === 'admin' ? '/dashboard' : '/clientes'
+      setSession(data.access_token, data.user)
+      let destination = '/clientes'
+      if (data.user.role === 'admin') {
+        destination = '/dashboard'
+      } else if (hasAnyBaasPermission(data.user.role, data.user.permissions)) {
+        destination = '/equipo/distribuidores'
+      }
       navigate(destination, { replace: true })
     } catch (err) {
       setError(resolveLoginError(err))

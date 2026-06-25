@@ -5,13 +5,14 @@ from typing import Annotated, Optional
 import bcrypt
 import secrets
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1.dependencies import AdminDep
 from app.database import get_db
 from app.models.user import User, UserRole
+from app.permissions import normalize_permissions
 from app.services.catalog_client_picker_rows import local_clients_catalog_picker_rows
 from app.services.render_sync import (
     emails_from_listar_clientes_rows,
@@ -45,6 +46,12 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6)
     role: UserRole = UserRole.worker
+    permissions: list[str] = Field(default_factory=list)
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        return normalize_permissions(v)
 
 
 class UserResponse(BaseModel):
@@ -56,8 +63,14 @@ class UserResponse(BaseModel):
     parent_id: Optional[int] = None
     wallet_balance: float = 0.0
     referral_code: Optional[str] = None
+    permissions: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
+
+    @field_validator("permissions", mode="before")
+    @classmethod
+    def normalize_permissions_response(cls, v: object) -> list[str]:
+        return normalize_permissions(v)
 
 
 class UserPickerRow(BaseModel):
@@ -99,6 +112,11 @@ def create_user(payload: UserCreate, db: DbDep, _: AdminDep) -> User:
         role=payload.role,
         is_active=True,
         referral_code=_unique_referral_code(db),
+        permissions=(
+            normalize_permissions(payload.permissions)
+            if payload.role == UserRole.worker
+            else []
+        ),
     )
     db.add(user)
     try:

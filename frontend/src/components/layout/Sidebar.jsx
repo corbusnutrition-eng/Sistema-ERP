@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useModal } from '../../context/ModalContext'
+import { useAuth } from '../../context/AuthContext'
 import {
   LayoutDashboard,
   Users,
@@ -286,17 +287,13 @@ const NAV_ITEMS = [
 
 const BOTTOM_ITEMS = [
   { label: 'Equipo', icon: UsersRound, to: '/equipo', adminOnly: true },
-  { label: 'Billeteras BaaS', icon: Wallet, to: '/equipo/distribuidores', adminOnly: true },
+  { label: 'Billeteras BaaS', icon: Wallet, to: '/equipo/distribuidores', baasAccess: true },
 ]
 
-// ── Helper para leer el usuario actual desde localStorage ────────────────────
-
-function getCurrentUser() {
-  try {
-    return JSON.parse(localStorage.getItem('user') || 'null')
-  } catch {
-    return null
-  }
+function isBottomItemVisible(item, { isAdmin, hasAnyBaasAccess }) {
+  if (item.adminOnly) return isAdmin
+  if (item.baasAccess) return isAdmin || hasAnyBaasAccess
+  return true
 }
 
 // ── Componente ───────────────────────────────────────────────────────────────
@@ -304,16 +301,15 @@ function getCurrentUser() {
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
+  const { user, isAdmin, hasAnyBaasAccess, clearSession } = useAuth()
 
-  const user = getCurrentUser()
-  const isAdmin = user?.role === 'admin'
-
-  const visibleNavItems   = NAV_ITEMS.filter(item => !item.adminOnly || isAdmin)
-  const visibleBottomItems = BOTTOM_ITEMS.filter(item => !item.adminOnly || isAdmin)
+  const visibleNavItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin)
+  const visibleBottomItems = BOTTOM_ITEMS.filter((item) =>
+    isBottomItemVisible(item, { isAdmin, hasAnyBaasAccess }),
+  )
 
   function handleLogout() {
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user')
+    clearSession()
     navigate('/login', { replace: true })
   }
 

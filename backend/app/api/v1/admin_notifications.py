@@ -7,8 +7,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.api.v1.dependencies import AdminDep
+from app.api.v1.dependencies import require_permission
 from app.database import get_db
+from app.permissions import BAAS_VIEW_NOTIFICATIONS_TAB
 from app.schemas.client_notifications import (
     AdminBulkDeleteNotificationBatchesRequest,
     AdminBulkDeleteNotificationBatchesResponse,
@@ -30,13 +31,14 @@ from app.services.client_notification_service import (
 router = APIRouter(prefix="/admin/notifications", tags=["admin-notifications"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+BaasNotificationsDep = Annotated[dict, Depends(require_permission(BAAS_VIEW_NOTIFICATIONS_TAB))]
 
 
 @router.post("/send", response_model=AdminSendNotificationResponse)
 def admin_send_notifications(
     payload: AdminSendNotificationRequest,
     db: DbDep,
-    _: AdminDep,
+    _: BaasNotificationsDep,
 ) -> AdminSendNotificationResponse:
     """Crea notificaciones de bandeja para todos, un nivel de red o un cliente específico."""
     created, batch_id = send_client_notifications(
@@ -65,7 +67,7 @@ def admin_update_notification_batch(
     batch_id: str,
     payload: AdminUpdateNotificationBatchRequest,
     db: DbDep,
-    _: AdminDep,
+    _: BaasNotificationsDep,
 ) -> AdminUpdateNotificationBatchResponse:
     """Actualiza título y mensaje de todas las notificaciones de un lote."""
     updated = update_notification_batch(
@@ -85,7 +87,7 @@ def admin_update_notification_batch(
 def admin_delete_notification_batch(
     batch_id: str,
     db: DbDep,
-    _: AdminDep,
+    _: BaasNotificationsDep,
 ) -> AdminDeleteNotificationBatchResponse:
     """Elimina permanentemente todas las notificaciones de un lote."""
     deleted = delete_notification_batch(db, batch_id=batch_id)
@@ -100,7 +102,7 @@ def admin_delete_notification_batch(
 def admin_bulk_delete_notification_batches(
     payload: AdminBulkDeleteNotificationBatchesRequest,
     db: DbDep,
-    _: AdminDep,
+    _: BaasNotificationsDep,
 ) -> AdminBulkDeleteNotificationBatchesResponse:
     """Elimina permanentemente varios lotes de notificaciones en una sola operación."""
     batches_deleted, deleted = delete_notification_batches(db, batch_ids=payload.batch_ids)

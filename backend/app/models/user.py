@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import enum
-from typing import Optional
+from typing import Any, Optional
 
-from sqlalchemy import Boolean, Enum, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, Enum, Float, ForeignKey, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -27,6 +27,12 @@ class User(Base):
         default=UserRole.worker,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    permissions: Mapped[list[Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'"),
+    )
 
     # Multinivel / BaaS — jerarquía de distribuidores y saldo virtual
     parent_id: Mapped[Optional[int]] = mapped_column(

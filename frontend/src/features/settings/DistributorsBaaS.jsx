@@ -20,6 +20,12 @@ import {
 } from 'lucide-react'
 
 import api from '../../api/axios'
+import usePermissions from '../../hooks/usePermissions'
+import {
+  BAAS_CREATE_RECHARGE,
+  BAAS_TAB_PERMISSIONS,
+} from '../../lib/permissions'
+import { useAuth } from '../../context/AuthContext'
 import { notifyAccountsReceivableStale } from '../../utils/arReportEvents'
 import StatusFilterTabs from '../../components/ui/StatusFilterTabs'
 import NewRechargeModal, { normalizeClienteDesdeWebhook, newRechargeLineRow } from './NewRechargeModal'
@@ -200,7 +206,20 @@ function buildWalletRechargeApiPayload(linkLineItems) {
 export default function DistributorsBaaSPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const wrDeepLinkHandledRef = useRef(null)
-  const [tab, setTab] = useState('users')
+  const { hasPermission } = usePermissions()
+  const { isAdmin } = useAuth()
+
+  const allowedTabs = useMemo(() => {
+    const tabs = []
+    if (hasPermission(BAAS_TAB_PERMISSIONS.users)) tabs.push('users')
+    if (hasPermission(BAAS_TAB_PERMISSIONS.requests)) tabs.push('requests')
+    if (hasPermission(BAAS_TAB_PERMISSIONS.notifications)) tabs.push('notifications')
+    return tabs
+  }, [hasPermission])
+
+  const canCreateRecharge = hasPermission(BAAS_CREATE_RECHARGE)
+
+  const [tab, setTab] = useState(() => allowedTabs[0] ?? 'users')
 
   const [users, setUsers] = useState([])
   const [loadingUsers, setLoadingUsers] = useState(true)
@@ -356,6 +375,13 @@ export default function DistributorsBaaSPage() {
   )
 
   useEffect(() => {
+    if (allowedTabs.length === 0) return
+    if (!allowedTabs.includes(tab)) {
+      setTab(allowedTabs[0])
+    }
+  }, [allowedTabs, tab])
+
+  useEffect(() => {
     fetchUsers()
   }, [fetchUsers])
 
@@ -369,6 +395,10 @@ export default function DistributorsBaaSPage() {
     const wrId = Number(raw)
     if (!Number.isFinite(wrId) || wrId < 1 || String(raw ?? '').trim() === '') {
       wrDeepLinkHandledRef.current = null
+      return
+    }
+    if (!hasPermission(BAAS_TAB_PERMISSIONS.requests)) {
+      setSearchParams({}, { replace: true })
       return
     }
     const linkKey = `open_recharge:${wrId}`
@@ -420,7 +450,7 @@ export default function DistributorsBaaSPage() {
     return () => {
       cancelled = true
     }
-  }, [searchParams, setSearchParams])
+  }, [searchParams, setSearchParams, hasPermission])
 
   useEffect(() => {
     if (tab === 'requests') {
@@ -1302,12 +1332,21 @@ export default function DistributorsBaaSPage() {
         </div>
       )}
 
+      {allowedTabs.length === 0 ? (
+        <div className="rounded-2xl border border-amber-100 bg-amber-50 px-6 py-8 text-center">
+          <h2 className="text-base font-semibold text-amber-900">Sin permisos en Billeteras BaaS</h2>
+          <p className="text-sm text-amber-800 mt-2">
+            Tu cuenta no tiene pestañas asignadas en este módulo. Contacta al administrador.
+          </p>
+        </div>
+      ) : (
+        <>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-start gap-3">
           <Link
-            to="/equipo"
+            to={isAdmin ? '/equipo' : '/clientes'}
             className="mt-1 p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
-            aria-label="Volver a Equipo"
+            aria-label={isAdmin ? 'Volver a Equipo' : 'Volver a Clientes'}
           >
             <ArrowLeft size={18} />
           </Link>
@@ -1322,7 +1361,7 @@ export default function DistributorsBaaSPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
-          {tab === 'users' && (
+          {tab === 'users' && canCreateRecharge && (
             <button
               type="button"
               onClick={() => openLinkModal()}
@@ -1345,6 +1384,7 @@ export default function DistributorsBaaSPage() {
 
       {/* Pestañas */}
       <div className="flex gap-2 border-b border-gray-200 pb-px">
+        {hasPermission(BAAS_TAB_PERMISSIONS.users) && (
         <button
           type="button"
           onClick={() => setTab('users')}
@@ -1357,6 +1397,8 @@ export default function DistributorsBaaSPage() {
           <Users size={16} />
           Usuarios y billetera
         </button>
+        )}
+        {hasPermission(BAAS_TAB_PERMISSIONS.requests) && (
         <button
           type="button"
           onClick={() => setTab('requests')}
@@ -1369,6 +1411,8 @@ export default function DistributorsBaaSPage() {
           <ClipboardList size={16} />
           Solicitudes de recarga
         </button>
+        )}
+        {hasPermission(BAAS_TAB_PERMISSIONS.notifications) && (
         <button
           type="button"
           onClick={() => setTab('notifications')}
@@ -1381,6 +1425,7 @@ export default function DistributorsBaaSPage() {
           <Bell size={16} />
           Gestión de Notificaciones
         </button>
+        )}
       </div>
 
       {tab === 'users' && (
@@ -1947,6 +1992,9 @@ export default function DistributorsBaaSPage() {
           </div>
         </div>
       ) : null}
+
+        </>
+      )}
 
       <UpdateClientPricesModal
         open={Boolean(pricesModalClient)}
