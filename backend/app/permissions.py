@@ -54,6 +54,10 @@ def _cell(module_id: str, row_id: str, action: str) -> str:
     return f"{module_id}:{row_id}:{action}"
 
 
+def _cells(module_id: str, row_id: str, actions: tuple[str, ...]) -> set[str]:
+    return {_cell(module_id, row_id, a) for a in actions}
+
+
 def _row(module_id: str, row_id: str, label: str, *, actions: Optional[list[str]] = None) -> dict[str, Any]:
     allowed = actions or ["view", "create", "edit", "delete"]
     cells: dict[str, Optional[str]] = {}
@@ -184,14 +188,8 @@ PREDEFINED_ROLES: list[dict[str, Any]] = [
         "description": "Clientes, ventas y cobros. Sin contabilidad ni equipo.",
         "system_role": "worker",
         "permissions": sorted(
-            {
-                _cell("clients_inventory", "clients", a)
-                for a in ("view", "create", "edit")
-            }
-            | {
-                _cell("sales", "invoices", a)
-                for a in ("view", "create", "edit")
-            }
+            _cells("clients_inventory", "clients", ("view", "create", "edit"))
+            | _cells("sales", "invoices", ("view", "create", "edit"))
             | {_cell("sales", "receipts", "view"), _cell("sales", "receipts", "create")}
             | {_cell("sales", "subscriptions", "view")}
         ),
@@ -213,23 +211,11 @@ PREDEFINED_ROLES: list[dict[str, Any]] = [
         "description": "Contabilidad, informes y consulta de clientes.",
         "system_role": "worker",
         "permissions": sorted(
-            {
-                _cell("clients_inventory", "clients", "view"),
-                _cell("accounting", "chart", a)
-                for a in ("view", "create", "edit")
-            }
-            | {
-                _cell("accounting", "receivables", a)
-                for a in ("view", "create", "edit", "approve")
-            }
-            | {
-                _cell("accounting", "expenses", a)
-                for a in ("view", "create", "edit", "delete")
-            }
-            | {
-                _cell("accounting", "vendors", a)
-                for a in ("view", "create", "edit")
-            }
+            {_cell("clients_inventory", "clients", "view")}
+            | _cells("accounting", "chart", ("view", "create", "edit"))
+            | _cells("accounting", "receivables", ("view", "create", "edit", "approve"))
+            | _cells("accounting", "expenses", ("view", "create", "edit", "delete"))
+            | _cells("accounting", "vendors", ("view", "create", "edit"))
             | {_cell("accounting", "reconcile", "view"), _cell("accounting", "reconcile", "edit")}
             | {_cell("reports", "financial", "view"), _cell("reports", "lists", "view")}
         ),
