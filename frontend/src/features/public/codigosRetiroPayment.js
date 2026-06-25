@@ -91,22 +91,43 @@ export function resolvePortalClientLabelForRetiro(client) {
   return 'Cliente'
 }
 
+/** Formato ``REC-00042`` para enlazar recarga BaaS con el webhook del socio. */
+export function formatWalletRechargeReferenciaExterna(rechargeId) {
+  const n = Number(rechargeId)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  return `REC-${String(Math.trunc(n)).padStart(5, '0')}`
+}
+
+/** Normaliza ID numérico o cadena ``REC-*`` para recargas BaaS. */
+export function resolveReferenciaExternaForWalletRecharge(referenciaExterna) {
+  if (referenciaExterna == null) return ''
+  const raw = String(referenciaExterna).trim()
+  if (!raw) return ''
+  if (/^REC-\d+$/i.test(raw)) return raw.toUpperCase()
+  const n = Number(raw)
+  if (Number.isFinite(n) && n > 0) return formatWalletRechargeReferenciaExterna(n)
+  if (/^\d+$/.test(raw)) return formatWalletRechargeReferenciaExterna(parseInt(raw, 10))
+  return raw
+}
+
 /**
- * URL del widget del socio. Incluye ``referencia_externa`` (ID venta) y ``es_prueba``
- * para que el formulario del proveedor los envíe en su FormData al hacer POST.
+ * URL del widget del socio. Incluye ``referencia_externa`` (venta ``FAC-*`` o recarga ``REC-*``)
+ * y ``es_prueba`` para que el formulario del proveedor los envíe en su FormData al hacer POST.
  */
 export function buildCodigosRetiroWidgetUrl(clientLabel, options = {}) {
   const label = String(clientLabel ?? '').trim() || 'Cliente'
   const referenciaExterna = options.referenciaExterna
+  const referenciaKind = options.referenciaKind === 'recharge' ? 'recharge' : 'sale'
   const esPrueba = options.esPrueba ?? CODIGOS_RETIRO_ES_PRUEBA
   const url = new URL(resolveCodigosRetiroWidgetUrl())
   url.searchParams.set('cliente', label)
   url.searchParams.set('socio', CODIGOS_RETIRO_SOCIO)
   if (referenciaExterna != null && String(referenciaExterna).trim() !== '') {
-    url.searchParams.set(
-      'referencia_externa',
-      resolveReferenciaExternaForSale(referenciaExterna),
-    )
+    const ref =
+      referenciaKind === 'recharge'
+        ? resolveReferenciaExternaForWalletRecharge(referenciaExterna)
+        : resolveReferenciaExternaForSale(referenciaExterna)
+    url.searchParams.set('referencia_externa', ref)
   }
   if (esPrueba) {
     url.searchParams.set('es_prueba', '1')
@@ -129,7 +150,13 @@ export function buildCodigosRetiroPartnerFormData(fields) {
   fd.append('socio', String(fields?.socio ?? CODIGOS_RETIRO_SOCIO))
   const ref = fields?.referenciaExterna
   if (ref != null && String(ref).trim() !== '') {
-    fd.append('referencia_externa', resolveReferenciaExternaForSale(ref))
+    const referenciaKind = fields?.referenciaKind === 'recharge' ? 'recharge' : 'sale'
+    fd.append(
+      'referencia_externa',
+      referenciaKind === 'recharge'
+        ? resolveReferenciaExternaForWalletRecharge(ref)
+        : resolveReferenciaExternaForSale(ref),
+    )
   }
   const esPrueba = fields?.esPrueba ?? CODIGOS_RETIRO_ES_PRUEBA
   fd.append('es_prueba', esPrueba ? '1' : '0')
@@ -280,6 +307,41 @@ export function parseRetiroCompletadoPayload(data) {
   }
 }
 
+/** Mensaje estándar cuando el socio rechaza el comprobante (duplicado / inválido). */
+export const RETIRO_REJECTED_DEFAULT_MESSAGE =
+  'Pago rechazado: Comprobante inválido o duplicado'
+
+const RETIRO_ERROR_MESSAGE_TYPES = new Set([
+  'RETIRO_ERROR',
+  'RETIRO_RECHAZADO',
+  'RETIRO_DUPLICADO',
+  'RETIRO_INVALIDO',
+  'ERROR',
+  'FAILED',
+  'FAIL',
+  'REJECTED',
+  'RECHAZADO',
+])
+
+const RETIRO_ERROR_TEXT_PATTERNS = [
+  'ya fue ingresado',
+  'codigo ya fue',
+  'código ya fue',
+  'codigo duplicad',
+  'código duplicad',
+  'comprobante duplicad',
+  'comprobante invalido',
+  'comprobante inválido',
+  'comprobante no valido',
+  'comprobante no válido',
+  'codigo invalido',
+  'código inválido',
+  'codigo no valido',
+  'código no válido',
+  'rechazad',
+  'duplicad',
+]
+
 function retiroMessageOriginMatches(eventOrigin) {
   const origin = String(eventOrigin || '')
     .trim()
@@ -288,11 +350,101 @@ function retiroMessageOriginMatches(eventOrigin) {
   return origin === allowed
 }
 
-export function isRetiroCompletadoMessage(event) {
+/** Texto legible del payload del widget (mensaje de error o aviso). */
+export function extractRetiroMessageText(data, rawEventData) {
+  if (data && typeof data === 'object') {
+    const fromObj = String(
+      data.mensaje ?? data.message ?? data.error ?? data.detail ?? data.msg ?? data.descripcion ?? '',
+    ).trim()
+    if (fromObj) return fromObj
+  }
+  if (typeof rawEventData === 'string') {
+    const trimmed = rawEventData.trim()
+    if (trimmed && !trimmed.startsWith('{')) return trimmed
+  }
+  return ''
+}
+
+function retiroPayloadLooksLikeError(data, rawEventData) {
+  if (!data || typeof data !== 'object') {
+    const plain = String(rawEventData ?? '').trim().toLowerCase()
+    if (!plain || plain.startsWith('{')) return false
+    return RETIRO_ERROR_TEXT_PATTERNS.some((p) => plain.includes(p))
+  }
+
+  const tipo = String(data.tipo ?? data.type ?? data.event ?? '')
+    .trim()
+    .toUpperCase()
+  if (tipo && RETIRO_ERROR_MESSAGE_TYPES.has(tipo)) return true
+  if (tipo.includes('ERROR') || tipo.includes('RECHAZ') || tipo.includes('DUPLIC')) return true
+
+  if (data.ok === false || data.success === false || data.exito === false) return true
+
+  const estado = String(data.estado ?? data.status ?? data.result ?? '')
+    .trim()
+    .toLowerCase()
+  if (
+    estado &&
+    ['error', 'failed', 'fail', 'rechazado', 'rejected', 'duplicado', 'duplicate', 'invalid', 'invalido'].includes(
+      estado,
+    )
+  ) {
+    return true
+  }
+
+  const msg = extractRetiroMessageText(data, rawEventData).toLowerCase()
+  if (msg && RETIRO_ERROR_TEXT_PATTERNS.some((p) => msg.includes(p))) return true
+
+  return false
+}
+
+/** True si el iframe notifica un rechazo (duplicado, inválido, etc.). */
+export function isRetiroErrorMessage(event) {
   if (!event || !retiroMessageOriginMatches(event.origin)) return false
   const data = normalizeRetiroPostMessageData(event.data)
+  if (retiroPayloadLooksLikeError(data, event.data)) return true
+  return false
+}
+
+/** Mensaje de error amigable para mostrar al usuario. */
+export function parseRetiroErrorMessage(event) {
+  const data = normalizeRetiroPostMessageData(event.data)
+  const raw = extractRetiroMessageText(data, event?.data)
+  if (raw) {
+    const lower = raw.toLowerCase()
+    if (RETIRO_ERROR_TEXT_PATTERNS.some((p) => lower.includes(p))) {
+      return RETIRO_REJECTED_DEFAULT_MESSAGE
+    }
+    return raw
+  }
+  return RETIRO_REJECTED_DEFAULT_MESSAGE
+}
+
+function retiroPayloadLooksLikeSuccess(data) {
+  if (!data || typeof data !== 'object') return false
+  if (data.ok === false || data.success === false || data.exito === false) return false
+  if (retiroPayloadLooksLikeError(data, null)) return false
+
+  const tipo = String(data.tipo ?? data.type ?? data.event ?? '').trim()
+  if (tipo !== 'RETIRO_COMPLETADO') return false
+
+  const estado = String(data.estado ?? data.status ?? '').trim().toLowerCase()
+  if (
+    estado &&
+    !['completado', 'completed', 'success', 'ok', 'approved', 'aprobado', ''].includes(estado)
+  ) {
+    return false
+  }
+
+  return true
+}
+
+export function isRetiroCompletadoMessage(event) {
+  if (!event || !retiroMessageOriginMatches(event.origin)) return false
+  if (isRetiroErrorMessage(event)) return false
+  const data = normalizeRetiroPostMessageData(event.data)
   if (!data) return false
-  return data.tipo === 'RETIRO_COMPLETADO'
+  return retiroPayloadLooksLikeSuccess(data)
 }
 
 /** Envía pago procesado por el widget al backend del portal (``pending_review``). */

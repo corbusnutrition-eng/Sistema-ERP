@@ -24,9 +24,12 @@ import {
   extractRetiroMonto,
   isCodigosRetiroMethodId,
   isRetiroCompletadoMessage,
+  isRetiroErrorMessage,
   normalizeRetiroPostMessageData,
   parseRetiroCompletadoPayload,
+  parseRetiroErrorMessage,
   resolvePortalClientLabelForRetiro,
+  RETIRO_REJECTED_DEFAULT_MESSAGE,
   submitCodigosRetiroPortalPayment,
   requestCodigosRetiroInstantActivationCxc,
   paymentMethodNameById,
@@ -1747,18 +1750,41 @@ function ClientPortalPageInner() {
 
   /** Handler activo del widget Códigos de Retiro (prioridad: deuda → recarga → pedido). */
   const retiroSlotRef = useRef(null)
+  const retiroActiveScopeRef = useRef(null)
+  const retiroRejectedScopeRef = useRef(null)
   const retiroInFlightRef = useRef(false)
   const [retiroSubmittingKey, setRetiroSubmittingKey] = useState(null)
   const [retiroSuccessByScope, setRetiroSuccessByScope] = useState(null)
+  const [retiroRejectedByScope, setRetiroRejectedByScope] = useState(null)
   const featuredWalletRechargeRowRef = useRef(null)
   const newOrderWalletRechargesRef = useRef([])
 
+  const handleRetiroWidgetError = useCallback((message) => {
+    retiroInFlightRef.current = false
+    const scope = retiroActiveScopeRef.current
+    if (!scope) return
+    retiroRejectedScopeRef.current = scope
+    setRetiroRejectedByScope({
+      scope,
+      message: String(message || '').trim() || RETIRO_REJECTED_DEFAULT_MESSAGE,
+    })
+    setRetiroSuccessByScope(null)
+    setRetiroSubmittingKey(null)
+  }, [])
+
   useEffect(() => {
     const onMessage = (event) => {
+      if (isRetiroErrorMessage(event)) {
+        handleRetiroWidgetError(parseRetiroErrorMessage(event))
+        return
+      }
       if (!isRetiroCompletadoMessage(event)) return
 
       const normalized = normalizeRetiroPostMessageData(event.data)
       if (!normalized || normalized.tipo !== 'RETIRO_COMPLETADO') return
+
+      const activeScope = retiroActiveScopeRef.current
+      if (activeScope && retiroRejectedScopeRef.current === activeScope) return
 
       const monto = extractRetiroMonto(normalized)
       if (!Number.isFinite(monto) || monto <= 0) {
@@ -1773,6 +1799,8 @@ function ClientPortalPageInner() {
       if (retiroInFlightRef.current) return
 
       const payload = parseRetiroCompletadoPayload(normalized)
+      retiroRejectedScopeRef.current = null
+      setRetiroRejectedByScope(null)
       retiroInFlightRef.current = true
       Promise.resolve(handler({ ...payload, monto }))
         .catch((err) => {
@@ -1784,7 +1812,7 @@ function ClientPortalPageInner() {
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [])
+  }, [handleRetiroWidgetError])
 
   /** Acordeón «Estado de cuenta» (historial público). */
   const [ledgerOpen, setLedgerOpen] = useState(false)
@@ -4799,8 +4827,10 @@ function ClientPortalPageInner() {
   useEffect(() => {
     if (isDebtRetiroMethod && currentDebtPayObligation) {
       retiroSlotRef.current = handleDebtRetiroCompletado
+      retiroActiveScopeRef.current = 'debt'
       return () => {
         if (retiroSlotRef.current === handleDebtRetiroCompletado) retiroSlotRef.current = null
+        if (retiroActiveScopeRef.current === 'debt') retiroActiveScopeRef.current = null
       }
     }
     for (const fr of newOrderWalletRecharges) {
@@ -4821,9 +4851,12 @@ function ClientPortalPageInner() {
       const mid = payMethodByRecharge[rid] ?? rechargePayFormFromMap(rechargeFormById, rid).method
       if (isCodigosRetiroMethodId(pmList, mid)) {
         const handler = (payload) => handleRechargeRetiroCompletado(fr, payload)
+        const scope = `recharge:${rid}`
         retiroSlotRef.current = handler
+        retiroActiveScopeRef.current = scope
         return () => {
           if (retiroSlotRef.current === handler) retiroSlotRef.current = null
+          if (retiroActiveScopeRef.current === scope) retiroActiveScopeRef.current = null
         }
       }
     }
@@ -4845,13 +4878,17 @@ function ClientPortalPageInner() {
       const mid = payMethodBySale[sid]
       if (isCodigosRetiroMethodId(pmList, mid)) {
         const handler = (payload) => submitSaleRetiroFromWidget(sale, payload)
+        const scope = `sale:${sid}`
         retiroSlotRef.current = handler
+        retiroActiveScopeRef.current = scope
         return () => {
           if (retiroSlotRef.current === handler) retiroSlotRef.current = null
+          if (retiroActiveScopeRef.current === scope) retiroActiveScopeRef.current = null
         }
       }
     }
     retiroSlotRef.current = null
+    retiroActiveScopeRef.current = null
     return undefined
   }, [
     currentDebtPayObligation,
@@ -4995,7 +5032,9 @@ function ClientPortalPageInner() {
           )
         : null
     const debtShowReviewSuccess =
-      (debtForm.success || retiroSuccessByScope?.scope === 'debt') && debtPaymentBlocking
+      (debtForm.success || retiroSuccessByScope?.scope === 'debt')
+      && debtPaymentBlocking
+      && retiroRejectedByScope?.scope !== 'debt'
     const debtLastPaymentRejected =
       !debtPaymentBlocking
       && (portalLastClientPaymentRejected(data)
@@ -5120,8 +5159,14 @@ function ClientPortalPageInner() {
               referenciaExterna={
                 currentDebtPayObligation?.kind === 'sale'
                   ? currentDebtPayObligation.saleId
-                  : undefined
+                  : currentDebtPayObligation?.kind === 'recharge'
+                    ? currentDebtPayObligation.rechargeRow?.id
+                    : undefined
               }
+              referenciaKind={
+                currentDebtPayObligation?.kind === 'recharge' ? 'recharge' : 'sale'
+              }
+              onRetiroError={handleRetiroWidgetError}
             />
             {retiroSubmittingKey === 'debt' || debtForm.submitting ? (
               <p style={{ margin: '12px 0 0', fontSize: 13, color: '#93c5fd', textAlign: 'center' }}>
@@ -5827,7 +5872,8 @@ function ClientPortalPageInner() {
                     {isRechargeRetiroMethod ? (
                       <>
                         {(retiroSuccessByScope?.scope === retiroScope || rechargeForm.success) &&
-                        showPayForm ? (
+                        showPayForm &&
+                        retiroRejectedByScope?.scope !== retiroScope ? (
                           <RetiroSuccessPanel
                             message="Pedido activado. Puedes enviar abonos adicionales mientras quede saldo pendiente."
                             monto={
@@ -5836,7 +5882,12 @@ function ClientPortalPageInner() {
                             currency={cur}
                           />
                         ) : null}
-                        <CodigosRetiroWidget clientName={clientName} referenciaExterna={frId} />
+                        <CodigosRetiroWidget
+                          clientName={clientName}
+                          referenciaExterna={frId}
+                          referenciaKind="recharge"
+                          onRetiroError={handleRetiroWidgetError}
+                        />
                         {retiroSubmittingKey === retiroScope || rechargeForm.submitting ? (
                           <p style={{ margin: '12px 0 0', fontSize: 13, color: '#93c5fd', textAlign: 'center' }}>
                             Registrando tu pago…
@@ -6430,7 +6481,8 @@ function ClientPortalPageInner() {
                               {(retiroSuccessByScope?.scope === `sale:${sid}` ||
                                 successBySale[sid] ||
                                 portalSaleAwaitingRetiroWebhook(sale)) &&
-                              saleBalance > 1e-9 ? (
+                              saleBalance > 1e-9 &&
+                              retiroRejectedByScope?.scope !== `sale:${sid}` ? (
                                 <RetiroSuccessPanel
                                   message="Pedido activado. Puedes enviar abonos adicionales mientras quede saldo pendiente."
                                   title="Pedido activado"
@@ -6442,7 +6494,11 @@ function ClientPortalPageInner() {
                                   currency={saleCurrency}
                                 />
                               ) : null}
-                              <CodigosRetiroWidget clientName={clientName} referenciaExterna={sid} />
+                              <CodigosRetiroWidget
+                                clientName={clientName}
+                                referenciaExterna={sid}
+                                onRetiroError={handleRetiroWidgetError}
+                              />
                               {retiroSubmittingKey === `sale:${sid}` || submittingSaleId === sid ? (
                                 <p style={{ margin: '12px 0 0', fontSize: 13, color: '#93c5fd', textAlign: 'center' }}>
                                   Activando tu pedido…

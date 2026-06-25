@@ -4,8 +4,11 @@ import {
   buildCodigosRetiroWidgetUrl,
   CODIGOS_RETIRO_ES_PRUEBA,
   isRetiroCompletadoMessage,
+  isRetiroErrorMessage,
   normalizeRetiroPostMessageData,
+  parseRetiroErrorMessage,
   resolveCodigosRetiroOrigin,
+  RETIRO_REJECTED_DEFAULT_MESSAGE,
 } from './codigosRetiroPayment'
 
 /** Altura inicial del iframe: formulario completo (OCR + verificación + botón enviar). */
@@ -55,6 +58,22 @@ function extractRetiroMessageType(data) {
   return String(raw.tipo ?? raw.type ?? raw.event ?? '').trim()
 }
 
+/** Aviso cuando el socio rechaza el comprobante (duplicado / inválido). */
+export function RetiroRejectedPanel({ message = RETIRO_REJECTED_DEFAULT_MESSAGE }) {
+  return (
+    <div
+      className="rounded-2xl border border-rose-400/45 bg-rose-950/40 px-5 py-8 text-center"
+      role="alert"
+      aria-live="assertive"
+    >
+      <p className="m-0 text-3xl" aria-hidden>
+        ✕
+      </p>
+      <p className="mt-3 mb-0 text-[15px] font-semibold leading-relaxed text-rose-50">{message}</p>
+    </div>
+  )
+}
+
 /** Aviso amigable cuando el iframe/webhook tarda más de lo esperado. */
 export function RetiroPendingProcessingPanel({ message = CODIGOS_RETIRO_PENDING_MESSAGE }) {
   return (
@@ -81,17 +100,24 @@ export function RetiroPendingProcessingPanel({ message = CODIGOS_RETIRO_PENDING_
 export default function CodigosRetiroWidget({
   clientName = 'Cliente',
   referenciaExterna = null,
+  referenciaKind = 'sale',
   esPrueba = CODIGOS_RETIRO_ES_PRUEBA,
   className = '',
   style = {},
   processingTimeoutMs = CODIGOS_RETIRO_PROCESSING_TIMEOUT_MS,
+  onRetiroError = null,
 }) {
   const label = String(clientName ?? '').trim() || 'Cliente'
-  const iframeSrc = buildCodigosRetiroWidgetUrl(label, { referenciaExterna, esPrueba })
+  const iframeSrc = buildCodigosRetiroWidgetUrl(label, {
+    referenciaExterna,
+    referenciaKind,
+    esPrueba,
+  })
   const iframeRef = useRef(null)
   const iframeLoadCountRef = useRef(0)
   const userInteractedRef = useRef(false)
   const completedRef = useRef(false)
+  const rejectedRef = useRef(false)
   const processingTimeoutRef = useRef(null)
   const initialLoadTimeoutRef = useRef(null)
 
@@ -99,6 +125,8 @@ export default function CodigosRetiroWidget({
   const [iframeLoaded, setIframeLoaded] = useState(false)
   const [isAwaitingResult, setIsAwaitingResult] = useState(false)
   const [showPendingNotice, setShowPendingNotice] = useState(false)
+  const [showRejectedNotice, setShowRejectedNotice] = useState(false)
+  const [rejectedMessage, setRejectedMessage] = useState(RETIRO_REJECTED_DEFAULT_MESSAGE)
 
   const clearProcessingTimeout = useCallback(() => {
     if (processingTimeoutRef.current != null) {
@@ -117,21 +145,40 @@ export default function CodigosRetiroWidget({
     }
   }, [clearProcessingTimeout])
 
+  const markRetiroRejected = useCallback(
+    (message) => {
+      if (completedRef.current || rejectedRef.current) return
+      rejectedRef.current = true
+      const msg = String(message || '').trim() || RETIRO_REJECTED_DEFAULT_MESSAGE
+      setRejectedMessage(msg)
+      setShowRejectedNotice(true)
+      setIsAwaitingResult(false)
+      setShowPendingNotice(false)
+      clearProcessingTimeout()
+      if (initialLoadTimeoutRef.current != null) {
+        window.clearTimeout(initialLoadTimeoutRef.current)
+        initialLoadTimeoutRef.current = null
+      }
+      onRetiroError?.(msg)
+    },
+    [clearProcessingTimeout, onRetiroError],
+  )
+
   const revealPendingNotice = useCallback(() => {
-    if (completedRef.current) return
+    if (completedRef.current || rejectedRef.current) return
     setShowPendingNotice(true)
     setIsAwaitingResult(false)
     clearProcessingTimeout()
   }, [clearProcessingTimeout])
 
   const startProcessingTimeout = useCallback(() => {
-    if (completedRef.current || showPendingNotice) return
+    if (completedRef.current || rejectedRef.current || showPendingNotice || showRejectedNotice) return
     setIsAwaitingResult(true)
     clearProcessingTimeout()
     processingTimeoutRef.current = window.setTimeout(() => {
       revealPendingNotice()
     }, Math.max(1000, Number(processingTimeoutMs) || CODIGOS_RETIRO_PROCESSING_TIMEOUT_MS))
-  }, [clearProcessingTimeout, processingTimeoutMs, revealPendingNotice, showPendingNotice])
+  }, [clearProcessingTimeout, processingTimeoutMs, revealPendingNotice, showPendingNotice, showRejectedNotice])
 
   const applyIframeHeight = useCallback((nextHeight) => {
     const h = Math.max(CODIGOS_RETIRO_IFRAME_MIN_HEIGHT_PX, Math.ceil(Number(nextHeight) || 0))
@@ -145,10 +192,7 @@ export default function CodigosRetiroWidget({
       window.clearTimeout(initialLoadTimeoutRef.current)
       initialLoadTimeoutRef.current = null
     }
-    if (iframeLoadCountRef.current > 1) {
-      startProcessingTimeout()
-    }
-  }, [startProcessingTimeout])
+  }, [])
 
   const handleIframeShellPointerDown = useCallback(() => {
     userInteractedRef.current = true
@@ -163,6 +207,11 @@ export default function CodigosRetiroWidget({
         .replace(/\/$/, '')
       if (origin !== allowedOrigin) return
 
+      if (isRetiroErrorMessage(event)) {
+        markRetiroRejected(parseRetiroErrorMessage(event))
+        return
+      }
+
       if (isRetiroCompletadoMessage(event)) {
         markRetiroCompleted()
         return
@@ -174,28 +223,18 @@ export default function CodigosRetiroWidget({
         return
       }
 
-      if (
-        userInteractedRef.current &&
-        tipo &&
-        !CODIGOS_RETIRO_HEIGHT_MESSAGE_TYPES.has(tipo) &&
-        tipo !== 'RETIRO_COMPLETADO'
-      ) {
-        startProcessingTimeout()
-        return
-      }
-
       const next = extractIframeHeightFromMessage(event.data)
       if (next != null) applyIframeHeight(next)
     }
 
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [applyIframeHeight, markRetiroCompleted, startProcessingTimeout])
+  }, [applyIframeHeight, markRetiroCompleted, markRetiroRejected, startProcessingTimeout])
 
   useEffect(() => {
     if (iframeLoaded) return undefined
     initialLoadTimeoutRef.current = window.setTimeout(() => {
-      if (!iframeLoaded && !completedRef.current) {
+      if (!iframeLoaded && !completedRef.current && !rejectedRef.current) {
         revealPendingNotice()
       }
     }, Math.max(1000, Number(processingTimeoutMs) || CODIGOS_RETIRO_PROCESSING_TIMEOUT_MS))
@@ -219,6 +258,19 @@ export default function CodigosRetiroWidget({
 
   const shellClassName =
     `portal-receipt-upload-glow-wrap portal-codigos-retiro-glow portal-public-section mb-3 h-fit w-full min-w-0 rounded-2xl border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.6)] md:mb-4 ${className}`.trim()
+
+  if (showRejectedNotice) {
+    return (
+      <div className={shellClassName} style={style}>
+        <section className="portal-receipt-upload-card portal-codigos-retiro-card h-fit w-full min-w-0 overflow-visible">
+          <div className="portal-receipt-upload-circuit-overlay" aria-hidden />
+          <div className="portal-order-summary-inner h-fit w-full px-3 pb-4 pt-4 md:px-5 md:pb-6 md:pt-5">
+            <RetiroRejectedPanel message={rejectedMessage} />
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   if (showPendingNotice) {
     return (

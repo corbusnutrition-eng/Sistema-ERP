@@ -33,9 +33,11 @@ def webhook_codigos_retiro(
     """
     Recibe la señal del socio cuando un retiro físico se completa o falla.
 
-    **Completado:** registra abono por el monto X; cierra CxC o deja ``partially_paid``.
+    **Completado:** registra abono por el monto X; cierra CxC de venta o recarga BaaS.
 
-    **Fallido / fallido_revision:** solo nota en la venta; CxC al 100% intacta.
+    **Fallido / fallido_revision:** solo nota en la venta/recarga; CxC al 100% intacta.
+
+    ``referencia_externa``: ``FAC-0001`` (venta) o ``REC-00001`` (recarga BaaS).
 
     Responde de inmediato con HTTP 200; el procesamiento ocurre en segundo plano.
     """

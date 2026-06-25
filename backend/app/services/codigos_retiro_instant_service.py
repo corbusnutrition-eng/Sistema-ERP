@@ -206,6 +206,8 @@ def parse_referencia_externa_sale_id(raw: Optional[str]) -> Optional[int]:
     s = str(raw or "").strip()
     if not s:
         return None
+    if _REF_WR_RE.match(s):
+        return None
     if s.isdigit():
         n = int(s)
         return n if n > 0 else None
@@ -224,6 +226,35 @@ def parse_referencia_externa_wallet_recharge_id(raw: Optional[str]) -> Optional[
     if m:
         return int(m.group(1))
     return None
+
+
+def format_wallet_recharge_referencia_externa(wallet_recharge_id: int) -> str:
+    """Formato canónico ``REC-00042`` para webhooks del socio (recarga BaaS)."""
+    n = int(wallet_recharge_id)
+    if n <= 0:
+        return ""
+    return f"REC-{n:05d}"
+
+
+def classify_referencia_externa(raw: Optional[str]) -> tuple[str, Optional[int]]:
+    """
+    Clasifica ``referencia_externa`` del webhook socio.
+
+    Returns:
+        (kind, id) donde kind ∈ ``sale`` | ``wallet_recharge`` | ``ambiguous`` | ``unknown``.
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return ("unknown", None)
+    wr_id = parse_referencia_externa_wallet_recharge_id(s)
+    if wr_id is not None:
+        return ("wallet_recharge", wr_id)
+    sale_id = parse_referencia_externa_sale_id(s)
+    if sale_id is not None and (_REF_SALE_RE.match(s) or s.isdigit()):
+        if _REF_SALE_RE.match(s):
+            return ("sale", sale_id)
+        return ("ambiguous", sale_id)
+    return ("unknown", None)
 
 
 def _normalize_payment_method_name(name: Optional[str]) -> str:
