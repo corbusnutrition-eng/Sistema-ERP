@@ -111,3 +111,53 @@ export function matrixPermissionsOnly(grantedSet, modules) {
   const source = grantedSet instanceof Set ? grantedSet : new Set(grantedSet)
   return [...source].filter((k) => valid.has(k))
 }
+
+/**
+ * Serializa el estado de la matriz QBO al payload REST esperado por UserCreate/UserUpdate.
+ * Siempre devuelve: { name, email, role_template, permissions? , password? }
+ */
+export function buildUserApiPayload({
+  firstName,
+  lastName,
+  email,
+  password,
+  roleTemplate,
+  isCustomRole,
+  granted,
+  modules,
+}) {
+  const name = joinFullName(firstName, lastName)
+  const payload = {
+    name,
+    email: String(email || '').trim(),
+    role_template: String(roleTemplate || '').trim(),
+  }
+
+  if (!payload.name) {
+    throw new Error('El nombre es obligatorio.')
+  }
+  if (!payload.email) {
+    throw new Error('El correo electrónico es obligatorio.')
+  }
+  if (!payload.role_template) {
+    throw new Error('Selecciona un rol para continuar.')
+  }
+
+  const pwd = String(password || '').trim()
+  if (pwd) {
+    if (pwd.length < 6) {
+      throw new Error('La contraseña debe tener al menos 6 caracteres.')
+    }
+    payload.password = pwd
+  }
+
+  if (isCustomRole) {
+    const permissions = matrixPermissionsOnly(new Set(granted), modules)
+    if (!permissions.length) {
+      throw new Error('El rol personalizado requiere al menos un permiso en la matriz.')
+    }
+    payload.permissions = permissions
+  }
+
+  return payload
+}

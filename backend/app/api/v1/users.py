@@ -47,19 +47,64 @@ def _verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(password_bytes, hashed.encode("utf-8"))
 
 
+def _generate_temporary_password() -> str:
+    """Contraseña aleatoria para flujo «Enviar invitación» (mín. 6 caracteres bcrypt)."""
+    return secrets.token_urlsafe(16)
+
+
+def _resolve_create_password(plain: Optional[str]) -> str:
+    cleaned = str(plain or "").strip()
+    if cleaned:
+        if len(cleaned) < 6:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La contraseña debe tener al menos 6 caracteres.",
+            )
+        return cleaned
+    return _generate_temporary_password()
+
+
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class UserCreate(BaseModel):
+    """Payload POST /api/v1/users/ — claves: name, email, password?, role_template, permissions?."""
+
     name: str = Field(..., min_length=1, max_length=150)
     email: EmailStr
-    password: str = Field(..., min_length=6)
+    password: Optional[str] = Field(
+        default=None,
+        description="Opcional. Si se omite, el backend genera una contraseña temporal.",
+    )
     role_template: str = Field(default=ROLE_TEMPLATE_CUSTOM, max_length=64)
     permissions: list[str] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: Any) -> str:
+        return str(v or "").strip()
 
     @field_validator("permissions", mode="before")
     @classmethod
     def coerce_permissions(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
         return normalize_permissions(v)
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def empty_password_to_none(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return str(v).strip()
+
+    @field_validator("password")
+    @classmethod
+    def password_min_length(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and len(v) < 6:
+            raise ValueError("La contraseña debe tener al menos 6 caracteres.")
+        return v
 
     @field_validator("role_template", mode="before")
     @classmethod
@@ -192,15 +237,21 @@ def _unique_referral_code(db: Session) -> str:
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def create_user(payload: UserCreate, db: DbDep, _: AdminDep) -> UserResponse:
-    """Registra un nuevo trabajador/administrador con contraseña hasheada."""
+    """Registra un nuevo trabajador/administrador. Sin password → contraseña temporal."""
+    if not payload.name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El nombre es obligatorio.",
+        )
     db_role, perms, tpl = _apply_role_template_payload(
         role_template=payload.role_template,
         permissions=payload.permissions,
     )
+    plain_password = _resolve_create_password(payload.password)
     user = User(
         name=payload.name.strip(),
         email=payload.email,
-        hashed_password=_hash_password(payload.password),
+        hashed_password=_hash_password(plain_password),
         role=db_role,
         is_active=True,
         referral_code=_unique_referral_code(db),

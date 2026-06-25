@@ -7,10 +7,9 @@ import { createTeamUser, fetchPermissionsMatrix, fetchTeamUser, updateTeamUser }
 import {
   ROLE_TEMPLATE_CUSTOM,
   ROLE_TEMPLATE_FULL_ADMIN,
+  buildUserApiPayload,
   collectMatrixKeys,
   expandPermissionsForMatrixDisplay,
-  joinFullName,
-  matrixPermissionsOnly,
   permissionsFromRoleTemplate,
   splitFullName,
 } from '../../lib/permissionMatrix'
@@ -31,34 +30,8 @@ function parseErrorDetail(err) {
   return 'No se pudo guardar el usuario.'
 }
 
-function buildUserPayload({
-  name,
-  email,
-  password,
-  roleTemplate,
-  isCustomRole,
-  granted,
-  modules,
-}) {
-  const payload = {
-    name: String(name || '').trim(),
-    email: String(email || '').trim(),
-    role_template: String(roleTemplate || '').trim(),
-  }
-
-  const pwd = String(password || '').trim()
-  if (pwd) {
-    if (pwd.length < 6) {
-      throw new Error('La contraseña debe tener al menos 6 caracteres.')
-    }
-    payload.password = pwd
-  }
-
-  if (isCustomRole) {
-    payload.permissions = matrixPermissionsOnly(new Set(granted), modules)
-  }
-
-  return payload
+function buildUserPayload(args) {
+  return buildUserApiPayload(args)
 }
 
 export default function UserFormPage() {
@@ -180,28 +153,11 @@ export default function UserFormPage() {
     e.preventDefault()
     setError('')
 
-    const name = joinFullName(firstName, lastName)
-    if (!name || !email.trim()) {
-      setError('Nombre y correo electrónico son obligatorios.')
-      return
-    }
-    if (!roleTemplate) {
-      setError('Selecciona un rol para continuar.')
-      return
-    }
-    if (!isEdit && !password.trim()) {
-      setError('La contraseña es obligatoria para usuarios nuevos.')
-      return
-    }
-    if (isCustomRole && granted.length === 0) {
-      setError('El rol personalizado requiere al menos un permiso en la matriz.')
-      return
-    }
-
     let payload
     try {
       payload = buildUserPayload({
-        name,
+        firstName,
+        lastName,
         email,
         password,
         roleTemplate,
@@ -219,15 +175,11 @@ export default function UserFormPage() {
       if (isEdit) {
         await updateTeamUser(userId, payload)
       } else {
-        if (!password.trim()) {
-          setError('La contraseña es obligatoria para usuarios nuevos.')
-          setSaving(false)
-          return
-        }
         await createTeamUser(payload)
       }
       navigate('/equipo', { replace: true })
     } catch (err) {
+      console.error('Error 422 Detalle:', err?.response?.data?.detail || err)
       setError(parseErrorDetail(err))
     } finally {
       setSaving(false)
@@ -301,15 +253,24 @@ export default function UserFormPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                {isEdit ? 'Nueva contraseña (opcional)' : 'Contraseña'}
+                {isEdit ? 'Nueva contraseña (opcional)' : 'Contraseña (opcional)'}
               </label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600 bg-white"
-                placeholder={isEdit ? 'Dejar en blanco para no cambiar' : 'Mínimo 6 caracteres'}
+                placeholder={
+                  isEdit
+                    ? 'Dejar en blanco para no cambiar'
+                    : 'Vacío = contraseña temporal generada por el sistema'
+                }
               />
+              {!isEdit && (
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Flujo «Enviar invitación»: puedes dejarla vacía; el backend asignará una clave temporal.
+                </p>
+              )}
             </div>
           </div>
         </section>
