@@ -43,6 +43,16 @@ function ledgerAccountDisplayLabel(account) {
   return `${name} - ${num} - ${cur}`
 }
 
+function lineBalanceDelta(line) {
+  if (line.balance_effect != null && line.balance_effect !== '') {
+    const n = Number(line.balance_effect)
+    return Number.isFinite(n) ? n : 0
+  }
+  const dep = line.deposit != null && line.deposit !== '' ? Number(line.deposit) : 0
+  const pay = line.payment != null && line.payment !== '' ? Number(line.payment) : 0
+  return (Number.isFinite(dep) ? dep : 0) - (Number.isFinite(pay) ? pay : 0)
+}
+
 function lineCargoAmount(line) {
   const v = line.charge_amount ?? line.deposit
   return v != null && v !== '' ? v : null
@@ -235,10 +245,13 @@ export default function AccountHistoryPage() {
     }
   }, [])
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (opts = {}) => {
+    const silent = Boolean(opts?.silent)
     if (!accountId || Number.isNaN(accountId)) return
-    setLoading(true)
-    setError('')
+    if (!silent) {
+      setLoading(true)
+      setError('')
+    }
     try {
       const params = {}
       if (pendingDateFrom) params.date_from = pendingDateFrom
@@ -247,11 +260,13 @@ export default function AccountHistoryPage() {
       setMeta(data)
       setLines(Array.isArray(data?.lines) ? data.lines : [])
     } catch (err) {
-      setMeta(null)
-      setLines([])
-      setError(getApiErrorMessage(err, { fallback: 'No se pudo cargar el historial.' }))
+      if (!silent) {
+        setMeta(null)
+        setLines([])
+        setError(getApiErrorMessage(err, { fallback: 'No se pudo cargar el historial.' }))
+      }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [accountId, pendingDateFrom, pendingDateTo])
 
@@ -330,18 +345,22 @@ export default function AccountHistoryPage() {
     const ob = Number(meta?.opening_balance ?? 0)
     let run = ob
     return rows.map((r) => {
-      let delta = 0
-      if (r.balance_effect != null && r.balance_effect !== '') {
-        delta = Number(r.balance_effect)
-      } else {
-        const dep = r.deposit != null ? Number(r.deposit) : 0
-        const pay = r.payment != null ? Number(r.payment) : 0
-        delta = dep - pay
-      }
+      const delta = lineBalanceDelta(r)
       run += delta
       return { ...r, displayRunning: run }
     })
   }, [lines, filterUser, filterReference, meta])
+
+  const confirmedClosingDisplayed = useMemo(() => {
+    if (!showBankVerification) return Number(meta?.confirmed_balance ?? meta?.opening_balance ?? 0)
+    const ob = Number(meta?.opening_balance ?? 0)
+    let run = ob
+    for (const r of filteredWithRunning) {
+      if (String(r.verification_status ?? '').toLowerCase() !== 'confirmed') continue
+      run += lineBalanceDelta(r)
+    }
+    return run
+  }, [filteredWithRunning, meta, showBankVerification])
 
   const filteredTransactions = filteredWithRunning
 
@@ -394,6 +413,7 @@ export default function AccountHistoryPage() {
           : row,
         ),
       )
+      await loadHistory({ silent: true })
     } catch (err) {
       window.alert(getApiErrorMessage(err, 'No se pudo guardar la verificación bancaria.'))
     } finally {
@@ -644,10 +664,18 @@ export default function AccountHistoryPage() {
 
           <div className="flex flex-col items-stretch sm:items-end gap-3 shrink-0">
             <div className="text-right">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Saldo final (vista)</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Saldo sistema</p>
               <p className="text-3xl sm:text-4xl font-bold text-gray-900 tabular-nums tracking-tight">
                 {formatMoney(closingDisplayed, currency)}
               </p>
+              {showBankVerification ? (
+                <p className="mt-2 text-sm font-semibold text-emerald-700 tabular-nums">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600/90 block mb-0.5">
+                    Saldo confirmado
+                  </span>
+                  {formatMoney(confirmedClosingDisplayed, currency)}
+                </p>
+              ) : null}
               {meta && (filterUser.trim() !== '' || filterReference.trim() !== '') && (
                 <p className="text-xs text-gray-400 mt-1">
                   Total cuenta: {formatMoney(Number(meta.closing_balance ?? 0), currency)}

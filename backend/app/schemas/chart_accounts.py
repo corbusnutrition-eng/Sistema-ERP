@@ -250,6 +250,10 @@ class AccountHistoryResponse(BaseModel):
     )
     opening_balance: Decimal
     closing_balance: Decimal
+    confirmed_balance: Decimal = Field(
+        default=Decimal("0"),
+        description="Saldo neto (apertura + movimientos) solo con verification_status=confirmed.",
+    )
     lines: list[AccountHistoryEntry]
 
 

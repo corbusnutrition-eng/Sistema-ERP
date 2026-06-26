@@ -9,6 +9,8 @@ VALID_LEDGER_VERIFICATION_STATUSES: frozenset[str] = frozenset(
     {"confirmed", "not_found", "interbank", "wrong_account"},
 )
 
+LEDGER_VERIFICATION_CONFIRMED = "confirmed"
+
 
 def normalize_ledger_verification_status(raw: Optional[str]) -> Optional[str]:
     if raw is None:

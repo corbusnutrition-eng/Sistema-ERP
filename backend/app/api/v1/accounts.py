@@ -26,7 +26,7 @@ from app.models.client_payment import ClientPayment
 from app.models.journal_entry import JournalEntry, JournalEntryLine, JournalReferenceType
 from app.models.sale import Sale
 from app.models.wallet_recharge_request import WalletRechargeRequest
-from app.ledger_verification import normalize_ledger_verification_status
+from app.ledger_verification import LEDGER_VERIFICATION_CONFIRMED, normalize_ledger_verification_status
 from app.services.accounting_engine import TRANSFER_REFERENCE_TYPE, post_account_transfer
 from app.timezone_utils import datetime_at_ecuador_midnight
 from app.schemas.chart_accounts import (
@@ -620,6 +620,7 @@ def _build_account_journal_ledger(
     cur_code = (acc.currency or "USD").strip().upper()
     ob = _effective_opening(acc)
     running = ob
+    confirmed_running = ob
     lines: list[AccountHistoryEntry] = []
     display_mode = _ledger_display_mode_for_account(acc)
 
@@ -650,7 +651,10 @@ def _build_account_journal_ledger(
         )
         dr = Decimal(str(line.debit)).quantize(Decimal("0.0001"))
         cr = Decimal(str(line.credit)).quantize(Decimal("0.0001"))
-        running += dr - cr
+        signed = (dr - cr).quantize(Decimal("0.0001"))
+        running += signed
+        if _verification_status_for_line(line) == LEDGER_VERIFICATION_CONFIRMED:
+            confirmed_running += signed
         lines.append(
             _history_line_from_journal_line(
                 line,
@@ -675,6 +679,7 @@ def _build_account_journal_ledger(
         show_bank_verification=is_liquid_deposit_account(acc),
         opening_balance=ob,
         closing_balance=running,
+        confirmed_balance=confirmed_running,
         lines=lines,
     )
 
