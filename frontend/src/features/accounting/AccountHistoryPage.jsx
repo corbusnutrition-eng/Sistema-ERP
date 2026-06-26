@@ -1029,7 +1029,7 @@ export default function AccountHistoryPage() {
                             <td
                               key={col.id}
                               style={{ width: w }}
-                              className="px-2 py-2 align-top min-w-0"
+                              className="px-2 py-2.5 align-middle min-w-0"
                               onClick={(e) => e.stopPropagation()}
                             >
                               {lineIsBankDeposit(line) && line.ledger_transaction_id != null ? (

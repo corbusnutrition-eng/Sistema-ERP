@@ -2,7 +2,7 @@ import { Loader2 } from 'lucide-react'
 import { LEDGER_VERIFICATION_OPTIONS } from '../ledgerVerificationConstants'
 
 /**
- * Botonera compacta de verificación bancaria (4 estados tipo píldora).
+ * Botonera vertical de verificación bancaria (4 estados apilados).
  */
 export default function LedgerBankVerificationPills({
   lineId,
@@ -15,7 +15,7 @@ export default function LedgerBankVerificationPills({
 
   return (
     <div
-      className="flex flex-wrap gap-1 min-w-0"
+      className="flex flex-col gap-1 items-stretch w-full min-w-[7rem] max-w-[8.5rem] mx-auto"
       onClick={(e) => e.stopPropagation()}
       role="group"
       aria-label="Verificación bancaria"
@@ -30,15 +30,15 @@ export default function LedgerBankVerificationPills({
             disabled={disabled || saving || lineId == null}
             title={opt.label}
             onClick={() => onSelect?.(lineId, opt.value)}
-            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ring-1 transition-all whitespace-nowrap
+            className={`w-full flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold ring-1 transition-all
               ${isActive ? opt.activeClass : opt.idleClass}
               ${dimmed ? 'opacity-45' : ''}
               disabled:opacity-40 disabled:cursor-not-allowed`}
           >
             {saving && isActive ? (
-              <Loader2 size={11} className="animate-spin mr-0.5" aria-hidden />
+              <Loader2 size={11} className="animate-spin shrink-0" aria-hidden />
             ) : null}
-            {opt.label}
+            <span className="truncate">{opt.label}</span>
           </button>
         )
       })}

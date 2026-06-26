@@ -29,9 +29,9 @@ export const LEDGER_VERIFICATION_OPTIONS = Object.freeze([
 export const BANK_VERIFICATION_COLUMN = Object.freeze({
   id: 'bank_verification',
   label: 'VERIFICACIÓN BANCARIA',
-  defaultWidth: 340,
-  minWidth: 280,
-  maxWidth: 520,
+  defaultWidth: 148,
+  minWidth: 128,
+  maxWidth: 180,
 })
 
 export function lineIsBankDeposit(line) {
