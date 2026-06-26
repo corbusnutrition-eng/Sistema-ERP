@@ -68,7 +68,7 @@ class JournalEntryLine(Base):
     debit: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
     credit: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
     exchange_rate: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=1)
-    #: Conciliación bancaria (módulo Aprobaciones): el dueño confirmó el ingreso en el banco.
+    #: Verificación bancaria opcional (columna legacy; sin endpoint activo).
     is_bank_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     journal_entry: Mapped["JournalEntry"] = relationship(back_populates="lines")

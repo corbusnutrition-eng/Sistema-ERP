@@ -218,7 +218,7 @@ def _increment_client_credit_balance(
     currency: str,
     delta: Decimal,
 ) -> None:
-    """Persiste incremento de saldo a favor sin barrido FIFO (uso interno en aprobaciones)."""
+    """Persiste incremento de saldo a favor sin barrido FIFO (uso interno en cobros)."""
     add = delta.quantize(Decimal("0.01"))
     if add <= _FP_EPS:
         return

@@ -34,8 +34,6 @@ import ListsDashboard from './features/lists/ListsDashboard'
 import PaymentMethodsList from './features/lists/PaymentMethodsList'
 import CurrenciesList from './features/lists/CurrenciesList'
 import TagsList from './features/lists/TagsList'
-import Aprobaciones from './features/approvals/Aprobaciones'
-
 function AuthLoadingScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -117,14 +115,6 @@ function AppRoutes() {
                     <Route path="/contabilidad/gastos" element={<PermissionRoute permission={PERMS.ACCOUNTING_EXPENSES_VIEW}><ExpensesList /></PermissionRoute>} />
                     <Route path="/contabilidad/proveedores" element={<PermissionRoute permission={PERMS.ACCOUNTING_VENDORS_VIEW}><VendorsList /></PermissionRoute>} />
                     <Route path="/contabilidad/proveedores/:vendorId" element={<PermissionRoute permission={PERMS.ACCOUNTING_VENDORS_VIEW}><VendorDetail /></PermissionRoute>} />
-                    <Route
-                      path="/aprobaciones"
-                      element={
-                        <PermissionRoute permission={PERMS.APPROVALS_VIEW}>
-                          <Aprobaciones />
-                        </PermissionRoute>
-                      }
-                    />
                     <Route path="/informes" element={<PermissionRoute permission={PERMS.REPORTS_FINANCIAL_VIEW}><ReportsDashboard /></PermissionRoute>} />
                     <Route
                       path="/informes/standard/:sectionId/:reportId"

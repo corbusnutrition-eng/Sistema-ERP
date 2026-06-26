@@ -123,14 +123,6 @@ PERMISSION_MATRIX: list[dict[str, Any]] = [
         ],
     },
     {
-        "id": "approvals",
-        "label": "Aprobaciones",
-        "features_summary": ["Verificación bancaria de ingresos"],
-        "rows": [
-            _row("approvals", "bank", "Verificación bancaria", actions=["view", "verify"]),
-        ],
-    },
-    {
         "id": "reports",
         "label": "Informes y Listas",
         "features_summary": ["Informes financieros", "Listas maestras", "Clases"],
@@ -221,9 +213,6 @@ ACCOUNTING_RECONCILE_VIEW = "accounting:reconcile:view"
 ACCOUNTING_RECONCILE_CREATE = "accounting:reconcile:create"
 ACCOUNTING_RECONCILE_EDIT = "accounting:reconcile:edit"
 ACCOUNTING_RECONCILE_DELETE = "accounting:reconcile:delete"
-
-APPROVALS_BANK_VIEW = "approvals:bank:view"
-APPROVALS_BANK_VERIFY = "approvals:bank:verify"
 
 TEAM_USERS_VIEW = "team:users:view"
 TEAM_USERS_CREATE = "team:users:create"
@@ -321,7 +310,6 @@ PREDEFINED_ROLES: list[dict[str, Any]] = [
             | _cells("accounting", "expenses", ("view", "create", "edit", "delete"))
             | _cells("accounting", "vendors", ("view", "create", "edit"))
             | {_cell("accounting", "reconcile", "view"), _cell("accounting", "reconcile", "edit")}
-            | {_cell("approvals", "bank", "view"), _cell("approvals", "bank", "verify")}
             | {_cell("reports", "financial", "view"), _cell("reports", "lists", "view")}
         ),
     },

@@ -94,9 +94,6 @@ export const PERMS = Object.freeze({
   ACCOUNTING_RECONCILE_CREATE: 'accounting:reconcile:create',
   ACCOUNTING_RECONCILE_EDIT: 'accounting:reconcile:edit',
   ACCOUNTING_RECONCILE_DELETE: 'accounting:reconcile:delete',
-
-  APPROVALS_VIEW: 'approvals:bank:view',
-  APPROVALS_VERIFY: 'approvals:bank:verify',
 })
 
 /** Visibilidad de pestañas BaaS — claves canónicas de matriz */

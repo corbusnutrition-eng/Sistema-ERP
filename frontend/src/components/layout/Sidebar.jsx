@@ -22,7 +22,6 @@ import {
   BarChart3,
   Building2,
   FileText,
-  CheckCircle2,
   Landmark,
   Package,
   Wallet,
@@ -286,7 +285,6 @@ const NAV_ITEMS = [
       { label: 'Conciliar',       to: '/contabilidad/conciliar', permission: PERMS.ACCOUNTING_RECONCILE_VIEW },
     ],
   },
-  { label: 'Aprobaciones', icon: CheckCircle2, to: '/aprobaciones', permission: PERMS.APPROVALS_VIEW },
   { label: 'Informes', icon: BarChart3, to: '/informes', permission: PERMS.REPORTS_FINANCIAL_VIEW },
 ]
 
