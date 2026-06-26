@@ -228,6 +228,10 @@ class AccountHistoryEntry(BaseModel):
         ...,
         description="Descripción contable del movimiento (ej. ingreso por venta vs. abono parcial).",
     )
+    verification_status: Optional[str] = Field(
+        default=None,
+        description="Verificación bancaria: confirmed | not_found | interbank | wrong_account.",
+    )
 
 
 class AccountHistoryResponse(BaseModel):
@@ -240,9 +244,25 @@ class AccountHistoryResponse(BaseModel):
         default="cash_register",
         description="cash_register: columnas depósito/pago; ar_register: cargo/abono estilo CxC.",
     )
+    show_bank_verification: bool = Field(
+        default=False,
+        description="True si la cuenta es Efectivo y equivalentes (UI de verificación bancaria).",
+    )
     opening_balance: Decimal
     closing_balance: Decimal
     lines: list[AccountHistoryEntry]
+
+
+class LedgerVerificationUpdate(BaseModel):
+    verification_status: Optional[str] = Field(
+        default=None,
+        description="confirmed | not_found | interbank | wrong_account; null limpia el estado.",
+    )
+
+
+class LedgerVerificationResponse(BaseModel):
+    line_id: int
+    verification_status: Optional[str] = None
 
 
 class LedgerJournalLineDetail(BaseModel):

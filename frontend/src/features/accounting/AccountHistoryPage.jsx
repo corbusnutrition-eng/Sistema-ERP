@@ -23,6 +23,11 @@ import { formatSaleDocNo, formatSaleLedgerDateParts } from '../sales/saleTableHe
 import { toDatetimeLocalEcuador } from '../../utils/datetime'
 import RefundModal from './components/RefundModal'
 import LedgerTransactionDetailModal from './components/LedgerTransactionDetailModal'
+import LedgerBankVerificationPills from './components/LedgerBankVerificationPills'
+import {
+  BANK_VERIFICATION_COLUMN,
+  lineIsBankDeposit,
+} from './ledgerVerificationConstants'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
 
@@ -204,6 +209,7 @@ export default function AccountHistoryPage() {
   const [addTxnMenuOpen, setAddTxnMenuOpen] = useState(false)
   const [refundModalOpen, setRefundModalOpen] = useState(false)
   const [detailModal, setDetailModal] = useState(null)
+  const [savingVerificationId, setSavingVerificationId] = useState(null)
 
   const [currentPage, setCurrentPage] = useState(1)
 
@@ -294,13 +300,17 @@ export default function AccountHistoryPage() {
 
   const currency = meta?.currency || 'USD'
   const ledgerMode = meta?.ledger_display_mode === 'ar_register' ? 'ar_register' : 'cash_register'
-  const columnConfig = ledgerMode === 'ar_register' ? AR_LEDGER_COLUMN_CONFIG : CASH_LEDGER_COLUMN_CONFIG
+  const showBankVerification = Boolean(meta?.show_bank_verification)
+  const columnConfig = useMemo(() => {
+    const base = ledgerMode === 'ar_register' ? AR_LEDGER_COLUMN_CONFIG : CASH_LEDGER_COLUMN_CONFIG
+    if (!showBankVerification) return base
+    return [...base, BANK_VERIFICATION_COLUMN]
+  }, [ledgerMode, showBankVerification])
   const colCount = columnConfig.length
 
   useEffect(() => {
-    const cfg = ledgerMode === 'ar_register' ? AR_LEDGER_COLUMN_CONFIG : CASH_LEDGER_COLUMN_CONFIG
-    setColWidths(Object.fromEntries(cfg.map((c) => [c.id, c.defaultWidth])))
-  }, [accountId, ledgerMode])
+    setColWidths(Object.fromEntries(columnConfig.map((c) => [c.id, c.defaultWidth])))
+  }, [accountId, columnConfig])
 
   const filteredWithRunning = useMemo(() => {
     let rows = [...lines]
@@ -367,6 +377,28 @@ export default function AccountHistoryPage() {
     const lid = line?.ledger_transaction_id
     if (lid == null || lid === '') return
     setDetailModal({ ledgerLineId: lid, line })
+  }
+
+  async function setLineVerificationStatus(lineId, verificationStatus) {
+    if (lineId == null) return
+    setSavingVerificationId(lineId)
+    try {
+      const { data } = await api.patch(`/api/v1/accounting/ledger/${lineId}/verify`, {
+        verification_status: verificationStatus,
+      })
+      const next = data?.verification_status ?? verificationStatus
+      setLines((prev) =>
+        prev.map((row) =>
+          row.ledger_transaction_id === lineId ?
+            { ...row, verification_status: next }
+          : row,
+        ),
+      )
+    } catch (err) {
+      window.alert(getApiErrorMessage(err, 'No se pudo guardar la verificación bancaria.'))
+    } finally {
+      setSavingVerificationId(null)
+    }
   }
 
   function openRow(line) {
@@ -989,6 +1021,26 @@ export default function AccountHistoryPage() {
                                 </a>
                               ) : (
                                 <span className="text-gray-400 text-sm tabular-nums">—</span>
+                              )}
+                            </td>
+                          )
+                        case 'bank_verification':
+                          return (
+                            <td
+                              key={col.id}
+                              style={{ width: w }}
+                              className="px-2 py-2 align-top min-w-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {lineIsBankDeposit(line) && line.ledger_transaction_id != null ? (
+                                <LedgerBankVerificationPills
+                                  lineId={line.ledger_transaction_id}
+                                  currentStatus={line.verification_status}
+                                  saving={savingVerificationId === line.ledger_transaction_id}
+                                  onSelect={setLineVerificationStatus}
+                                />
+                              ) : (
+                                <span className="text-gray-300 text-xs">—</span>
                               )}
                             </td>
                           )

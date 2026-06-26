@@ -26,6 +26,7 @@ from app.models.client_payment import ClientPayment
 from app.models.journal_entry import JournalEntry, JournalEntryLine, JournalReferenceType
 from app.models.sale import Sale
 from app.models.wallet_recharge_request import WalletRechargeRequest
+from app.ledger_verification import normalize_ledger_verification_status
 from app.services.accounting_engine import TRANSFER_REFERENCE_TYPE, post_account_transfer
 from app.timezone_utils import datetime_at_ecuador_midnight
 from app.schemas.chart_accounts import (
@@ -40,6 +41,8 @@ from app.schemas.chart_accounts import (
     LedgerDisplayMode,
     LedgerJournalLineDetail,
     LedgerTransactionDetailResponse,
+    LedgerVerificationResponse,
+    LedgerVerificationUpdate,
 )
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -201,6 +204,19 @@ def _wallet_recharge_receipt_url(req: Optional[WalletRechargeRequest]) -> Option
     return None
 
 
+def _verification_status_for_line(line: JournalEntryLine) -> Optional[str]:
+    raw = getattr(line, "verification_status", None)
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    try:
+        return normalize_ledger_verification_status(s)
+    except ValueError:
+        return None
+
+
 def _journal_reference_label(entry: JournalEntry) -> str:
     ref_type = (entry.reference_type or "").strip()
     ref_id = entry.reference_id
@@ -278,6 +294,7 @@ def _history_line_from_journal_line(
     desc_raw = (entry.description or "").strip()
     peer_name = peer.name if peer is not None else None
     line_kind = _journal_line_kind(line_account, signed, ref_type)
+    verification_status = _verification_status_for_line(line)
 
     if ref_type == TRANSFER_REFERENCE_TYPE:
         peer_nm = peer_name or "—"
@@ -309,6 +326,7 @@ def _history_line_from_journal_line(
             running_balance=running_balance,
             iptv_username=None,
             receipt_url=None,
+            verification_status=verification_status,
             transaction_reason="Transferencia entre cuentas",
         )
 
@@ -352,6 +370,7 @@ def _history_line_from_journal_line(
             running_balance=running_balance,
             iptv_username=iptv_u,
             receipt_url=receipt_url,
+            verification_status=verification_status,
             transaction_reason=line_kind,
         )
 
@@ -402,6 +421,7 @@ def _history_line_from_journal_line(
             running_balance=running_balance,
             iptv_username=iptv_u,
             receipt_url=cp_receipt,
+            verification_status=verification_status,
             transaction_reason=line_kind,
         )
 
@@ -463,6 +483,7 @@ def _history_line_from_journal_line(
             running_balance=running_balance,
             iptv_username=iptv_u,
             receipt_url=wr_receipt,
+            verification_status=verification_status,
             transaction_reason=line_kind,
         )
 
@@ -494,6 +515,7 @@ def _history_line_from_journal_line(
         running_balance=running_balance,
         iptv_username=None,
         receipt_url=None,
+        verification_status=verification_status,
         transaction_reason=label,
     )
 
@@ -650,6 +672,7 @@ def _build_account_journal_ledger(
         detail_type=acc.detail_type,
         currency=cur_code,
         ledger_display_mode=display_mode,
+        show_bank_verification=is_liquid_deposit_account(acc),
         opening_balance=ob,
         closing_balance=running,
         lines=lines,

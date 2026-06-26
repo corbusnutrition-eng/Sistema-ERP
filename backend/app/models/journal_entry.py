@@ -70,6 +70,8 @@ class JournalEntryLine(Base):
     exchange_rate: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=1)
     #: Verificación bancaria opcional (columna legacy; sin endpoint activo).
     is_bank_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    #: Estado de verificación bancaria inline: confirmed | not_found | interbank | wrong_account.
+    verification_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
 
     journal_entry: Mapped["JournalEntry"] = relationship(back_populates="lines")
     account: Mapped["Account"] = relationship(
