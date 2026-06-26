@@ -160,6 +160,16 @@ def _account_to_approval_row(db: Session, acc: Account) -> ApprovalAccountRow:
     )
 
 
+def _client_display_name(client: Client) -> Optional[str]:
+    """Nombre visible del cliente (string), nunca el bound method ``display_name``."""
+    try:
+        raw = client.display_name()
+    except Exception:
+        raw = (client.name or client.email or client.username or "").strip()
+    s = str(raw or "").strip()
+    return s or None
+
+
 def _row_from_line(db: Session, line: JournalEntryLine) -> Optional[ApprovalPendingRow]:
     entry = line.journal_entry
     if entry is None or entry.reference_id is None:
@@ -176,7 +186,7 @@ def _row_from_line(db: Session, line: JournalEntryLine) -> Optional[ApprovalPend
     if payment.client_id is not None:
         client = db.get(Client, int(payment.client_id))
         if client is not None:
-            client_name = getattr(client, "display_name", None) or (client.name or client.email or "").strip() or None
+            client_name = _client_display_name(client)
             u = (getattr(client, "last_iptv_username", None) or client.username or "").strip()
             iptv_username = u or None
 
