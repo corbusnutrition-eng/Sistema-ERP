@@ -166,6 +166,8 @@ export default function GlobalModals() {
       {transferOpen && (
         <TransferModal
           defaultSourceAccountId={transferPrefillSourceAccountId ?? undefined}
+          defaultDestinationAccountId={transferPrefillDestinationAccountId ?? undefined}
+          interbankMode={transferInterbankMode}
           onClose={closeTransferModal}
           onToast={(message, variant = 'success') => showToast(message, variant)}
           onSuccess={({ keptOpen } = {}) => {

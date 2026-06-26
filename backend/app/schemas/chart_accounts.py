@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.account_structure import all_detail_types, validate_chart_account_classification
 from app.currency_utils import normalize_currency_code
+from app.ledger_verification import normalize_ledger_verification_status
 
 LedgerDisplayMode = Literal["cash_register", "ar_register"]
 
@@ -138,6 +139,8 @@ class AccountTransferCreate(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=4000)
     #: Si origen y destino tienen distinta ``moneda_original``: unidades destino por 1 unidad origen (p. ej. COP→USD → USD por 1 COP).
     exchange_rate: Optional[Decimal] = Field(default=None, gt=0)
+    #: Estado de verificación bancaria en la línea de ingreso (destino), p. ej. ``interbank`` para acreditación pendiente.
+    destination_verification_status: Optional[str] = Field(default=None, max_length=32)
 
     @field_validator("notes", mode="before")
     @classmethod
@@ -146,6 +149,13 @@ class AccountTransferCreate(BaseModel):
             return None
         s = str(v).strip()
         return s if s else None
+
+    @field_validator("destination_verification_status", mode="before")
+    @classmethod
+    def _normalize_destination_verification(cls, v):
+        if v is None:
+            return None
+        return normalize_ledger_verification_status(v)
 
     @model_validator(mode="after")
     def _distinct_accounts(self) -> "AccountTransferCreate":

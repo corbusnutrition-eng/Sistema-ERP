@@ -12,6 +12,7 @@ import {
   HelpCircle,
   ChevronDown,
   Paperclip,
+  Clock,
 } from 'lucide-react'
 import api from '../../../api/axios'
 import SearchableSelect from '../../../components/ui/SearchableSelect'
@@ -56,12 +57,16 @@ const TRIGGER_ROW = `box-border flex items-start gap-3 py-3 border-b border-gray
  * @param {() => void} onClose
  * @param {(msg: string, variant?: string) => void} [onToast]
  * @param {number | null} [defaultSourceAccountId]
+ * @param {number | null} [defaultDestinationAccountId]
+ * @param {boolean} [interbankMode] — marca la línea destino como acreditación interbancaria pendiente.
  */
 export default function TransferModal({
   onClose,
   onSuccess,
   onToast,
   defaultSourceAccountId = null,
+  defaultDestinationAccountId = null,
+  interbankMode = false,
 }) {
   const [accounts, setAccounts] = useState([])
   const [loadingAccounts, setLoadingAccounts] = useState(true)
@@ -219,7 +224,9 @@ export default function TransferModal({
     fetchAccountsData({ showSpinner: true })
   }, [fetchAccountsData])
 
-  /** Prefijo desde libro mayor */
+  const lockDestination = interbankMode && defaultDestinationAccountId != null && defaultDestinationAccountId >= 1
+
+  /** Prefijo desde libro mayor (origen) */
   useEffect(() => {
     const id = defaultSourceAccountId
     if (id == null || id < 1) return
@@ -227,6 +234,15 @@ export default function TransferModal({
     const exists = liquidAccounts.some((a) => Number(a.id) === Number(id))
     if (exists) setSourceId(String(Number(id)))
   }, [defaultSourceAccountId, liquidAccounts, loadingAccounts])
+
+  /** Prefijo destino (p. ej. transferencia interbancaria entrante) */
+  useEffect(() => {
+    const id = defaultDestinationAccountId
+    if (id == null || id < 1) return
+    if (!liquidAccounts.length || loadingAccounts) return
+    const exists = liquidAccounts.some((a) => Number(a.id) === Number(id))
+    if (exists) setDestId(String(Number(id)))
+  }, [defaultDestinationAccountId, liquidAccounts, loadingAccounts])
 
   useEffect(() => {
     setExchangeCross(defaultDstPerOneSrcUnits(srcCur, dstCur))
@@ -266,9 +282,15 @@ export default function TransferModal({
     setTxnDate(todayIsoDateEcuador)
     if (defaultSourceAccountId != null && defaultSourceAccountId >= 1) {
       setSourceId(String(Number(defaultSourceAccountId)))
+    } else {
+      setSourceId('')
+    }
+    if (defaultDestinationAccountId != null && defaultDestinationAccountId >= 1) {
+      setDestId(String(Number(defaultDestinationAccountId)))
+    } else {
       setDestId('')
     }
-  }, [defaultSourceAccountId])
+  }, [defaultSourceAccountId, defaultDestinationAccountId])
 
   async function uploadPendingFiles() {
     const urls = []
@@ -350,13 +372,17 @@ export default function TransferModal({
         date: txnDate,
         notes: noteOut,
         ...(xrBackend !== undefined ? { exchange_rate: String(xrBackend) } : {}),
+        ...(interbankMode ? { destination_verification_status: 'interbank' } : {}),
       }
 
       await api.post('/api/v1/accounts/transfer', payload)
 
       await fetchAccountsData({ showSpinner: false })
 
-      onToast?.('Transferencia registrada', 'success')
+      onToast?.(
+        interbankMode ? 'Transferencia interbancaria pendiente registrada' : 'Transferencia registrada',
+        'success',
+      )
 
       if (andNewAfter) {
         resetAfterNewTransfer()
@@ -431,11 +457,20 @@ export default function TransferModal({
         {/* Header QB */}
         <div className="flex items-start justify-between gap-3 px-5 py-3 border-b border-gray-200 shrink-0 bg-white">
           <div className="flex items-center gap-2 min-w-0">
-            <History size={20} className="text-green-900 shrink-0" aria-hidden />
+            {interbankMode ? (
+              <Clock size={20} className="text-amber-600 shrink-0" aria-hidden />
+            ) : (
+              <History size={20} className="text-green-900 shrink-0" aria-hidden />
+            )}
             <div className="min-w-0">
               <h2 id="transfer-modal-title" className="text-lg font-semibold text-gray-900 truncate">
-                Transferencia
+                {interbankMode ? 'Transferencia interbancaria pendiente' : 'Transferencia'}
               </h2>
+              {interbankMode ? (
+                <p className="text-xs text-amber-800 mt-0.5">
+                  Se marcará como interbancaria hasta confirmar el abono en el estado de cuenta.
+                </p>
+              ) : null}
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
@@ -499,8 +534,8 @@ export default function TransferModal({
                       onChange={setDestId}
                       options={destOpts}
                       placeholder="Selecciona cuenta…"
-                      disabled={loadingAccounts || submitting || !sourceId || !destOpts.length}
-                      hideClear={false}
+                      disabled={loadingAccounts || submitting || !sourceId || !destOpts.length || lockDestination}
+                      hideClear={lockDestination}
                     />
                   </div>
                 </div>

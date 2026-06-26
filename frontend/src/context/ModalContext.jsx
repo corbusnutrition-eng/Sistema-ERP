@@ -24,6 +24,8 @@ export function ModalProvider({ children }) {
   const [expenseOpen, setExpenseOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
   const [transferPrefillSourceAccountId, setTransferPrefillSourceAccountId] = useState(null)
+  const [transferPrefillDestinationAccountId, setTransferPrefillDestinationAccountId] = useState(null)
+  const [transferInterbankMode, setTransferInterbankMode] = useState(false)
 
   const [vendorFormOpen, setVendorFormOpen] = useState(false)
   const [vendorFormEditVendor, setVendorFormEditVendor] = useState(null)
@@ -118,12 +120,18 @@ export function ModalProvider({ children }) {
     setTransferPrefillSourceAccountId(
       o.defaultSourceAccountId != null ? Number(o.defaultSourceAccountId) || null : null,
     )
+    setTransferPrefillDestinationAccountId(
+      o.defaultDestinationAccountId != null ? Number(o.defaultDestinationAccountId) || null : null,
+    )
+    setTransferInterbankMode(Boolean(o.interbankMode))
     setTransferOpen(true)
   }, [])
 
   const closeTransferModal = useCallback(() => {
     setTransferOpen(false)
     setTransferPrefillSourceAccountId(null)
+    setTransferPrefillDestinationAccountId(null)
+    setTransferInterbankMode(false)
     transferCb.current = null
   }, [])
 
@@ -192,6 +200,8 @@ export function ModalProvider({ children }) {
       expenseOpen, openNewExpense, closeNewExpense, expenseCb,
       transferOpen,
       transferPrefillSourceAccountId,
+      transferPrefillDestinationAccountId,
+      transferInterbankMode,
       openTransferModal,
       closeTransferModal,
       transferCb,

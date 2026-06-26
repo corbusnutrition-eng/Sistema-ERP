@@ -1119,6 +1119,10 @@ def transfer_between_accounts(payload: AccountTransferCreate, db: DbDep, _: Reco
         description=desc,
     )
 
+    if payload.destination_verification_status is not None:
+        dst_line.verification_status = payload.destination_verification_status
+        db.add(dst_line)
+
     _sync_current_balance_from_opening_and_journal(db, src)
     _sync_current_balance_from_opening_and_journal(db, dst)
     db.commit()

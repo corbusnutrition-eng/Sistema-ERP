@@ -15,6 +15,7 @@ import {
   Loader2,
   CheckSquare,
   Eye,
+  Clock,
 } from 'lucide-react'
 import api from '../../api/axios'
 import { getApiErrorMessage } from '../../lib/apiErrors'
@@ -838,6 +839,26 @@ export default function AccountHistoryPage() {
                 </div>
               )}
             </div>
+            {showBankVerification ? (
+              <button
+                type="button"
+                onClick={() => {
+                  openTransferModal({
+                    defaultDestinationAccountId: accountId,
+                    interbankMode: true,
+                    afterSave: () => {
+                      loadHistory()
+                      loadAccounts()
+                    },
+                  })
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 shadow-sm transition-colors ring-1 ring-amber-600/30"
+                title="Registrar transferencia interbancaria pendiente de acreditación"
+              >
+                <Clock size={16} className="shrink-0" aria-hidden />
+                Interbancaria
+              </button>
+            ) : null}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm table-fixed border-collapse">
