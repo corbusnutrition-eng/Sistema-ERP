@@ -387,6 +387,8 @@ export default function Sales() {
   const [sales, setSales] = useState([])
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState(null)
+  const salesFetchGenRef = useRef(0)
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
   const isAdmin = getStoredUser()?.role === 'admin'
   const { openNewSale, openReceivePayment } = useModal()
   const [toast, setToast] = useState(null)
@@ -482,19 +484,25 @@ export default function Sales() {
   }, [])
 
   const fetchSales = useCallback(async () => {
+    const gen = ++salesFetchGenRef.current
     setLoading(true)
     setFetchError(null)
     try {
       const f = FILTERS.find((x) => x.id === filter)
       const params = { status: f?.apiStatus ?? 'approved' }
       const { data } = await api.get('/api/v1/sales/', { params })
+      if (gen !== salesFetchGenRef.current) return
       setSales(Array.isArray(data) ? data : [])
       await refreshMetrics()
       if (filter === 'payment_submitted') await refreshPendingPayments()
+      setHasLoadedOnce(true)
     } catch {
+      if (gen !== salesFetchGenRef.current) return
       setFetchError('No se pudo cargar el historial de ventas. Verifica la conexión.')
     } finally {
-      setLoading(false)
+      if (gen === salesFetchGenRef.current) {
+        setLoading(false)
+      }
     }
   }, [filter, refreshMetrics, refreshPendingPayments])
 
@@ -1292,13 +1300,15 @@ export default function Sales() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Ventas</h1>
             <p className="text-sm text-gray-500 mt-0.5">
-              {loading
+              {loading && !hasLoadedOnce
                 ? 'Cargando…'
-                : `${sales.length === filteredSales.length ? `${filteredSales.length} registro${filteredSales.length !== 1 ? 's' : ''} en esta vista` : `${filteredSales.length} mostrada${filteredSales.length !== 1 ? 's' : ''} · ${sales.length} en la pestaña`}${
-                    totalFiltered > ITEMS_PER_PAGE
-                      ? ` · ${ITEMS_PER_PAGE} por página (pág. ${currentPage} de ${totalPages})`
-                      : ''
-                  }`}
+                : loading
+                  ? 'Actualizando listado…'
+                  : `${sales.length === filteredSales.length ? `${filteredSales.length} registro${filteredSales.length !== 1 ? 's' : ''} en esta vista` : `${filteredSales.length} mostrada${filteredSales.length !== 1 ? 's' : ''} · ${sales.length} en la pestaña`}${
+                      totalFiltered > ITEMS_PER_PAGE
+                        ? ` · ${ITEMS_PER_PAGE} por página (pág. ${currentPage} de ${totalPages})`
+                        : ''
+                    }`}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1323,36 +1333,41 @@ export default function Sales() {
           </div>
         </div>
 
-        {!loading && !fetchError && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-            {[
-              { label: 'Total Ventas', value: metrics.total, color: 'text-blue-600', bg: 'bg-blue-50' },
-              { label: 'Activadas', value: metrics.activated, color: 'text-green-600', bg: 'bg-green-50' },
-              { label: 'Pendientes', value: metrics.pending, color: 'text-amber-600', bg: 'bg-amber-50' },
-              {
-                label: 'En revisión',
-                value: metrics.review,
-                color: 'text-sky-700',
-                bg: 'bg-sky-50',
-              },
-              { label: 'Anuladas', value: metrics.voided, color: 'text-slate-600', bg: 'bg-slate-50' },
-              {
-                label: 'Ingresos activados (USD)',
-                value: `$${metrics.revenueUsd.toLocaleString('es-ES', { minimumFractionDigits: 2 })}`,
-                color: 'text-gray-800',
-                bg: 'bg-gray-50',
-              },
-            ].map(({ label, value, color, bg }) => (
-              <div key={label} className={`${bg} rounded-2xl px-5 py-4 ring-1 ring-gray-100`}>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</p>
-                <p className={`text-2xl sm:text-3xl font-bold mt-1 ${color}`}>{value}</p>
-              </div>
-            ))}
-          </div>
-        )}
+        <div
+          className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 transition-opacity ${
+            loading ? 'opacity-90' : ''
+          }`}
+        >
+          {[
+            { label: 'Total Ventas', value: metrics.total, color: 'text-blue-600', bg: 'bg-blue-50' },
+            { label: 'Activadas', value: metrics.activated, color: 'text-green-600', bg: 'bg-green-50' },
+            { label: 'Pendientes', value: metrics.pending, color: 'text-amber-600', bg: 'bg-amber-50' },
+            {
+              label: 'En revisión',
+              value: metrics.review,
+              color: 'text-sky-700',
+              bg: 'bg-sky-50',
+            },
+            { label: 'Anuladas', value: metrics.voided, color: 'text-slate-600', bg: 'bg-slate-50' },
+            {
+              label: 'Ingresos activados (USD)',
+              value: `$${metrics.revenueUsd.toLocaleString('es-ES', { minimumFractionDigits: 2 })}`,
+              color: 'text-gray-800',
+              bg: 'bg-gray-50',
+            },
+          ].map(({ label, value, color, bg }) => (
+            <div key={label} className={`${bg} rounded-2xl px-5 py-4 ring-1 ring-gray-100`}>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</p>
+              <p className={`text-2xl sm:text-3xl font-bold mt-1 ${color}`}>{value}</p>
+            </div>
+          ))}
+        </div>
 
-        {!loading && !fetchError && (
-          <div className="flex flex-wrap items-end gap-3 mb-4 bg-white rounded-xl px-4 py-3 ring-1 ring-gray-100 shadow-sm">
+        <div
+          className={`flex flex-wrap items-end gap-3 mb-4 bg-white rounded-xl px-4 py-3 ring-1 ring-gray-100 shadow-sm transition-opacity ${
+            loading ? 'opacity-90' : ''
+          }`}
+        >
             <label className="flex flex-col w-36 shrink-0">
               <span className={filterLabelCls}>Desde</span>
               <input
@@ -1426,10 +1441,9 @@ export default function Sales() {
               onClick={clearFilters}
               className="h-8 px-3 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 border border-gray-200 rounded-md transition-colors shadow-sm flex items-center justify-center shrink-0 ml-auto"
             >
-              Limpiar filtros
-            </button>
-          </div>
-        )}
+            Limpiar filtros
+          </button>
+        </div>
 
         <StatusFilterTabs
           tabs={FILTERS}
@@ -1438,8 +1452,8 @@ export default function Sales() {
           counts={salesTabCounts}
         />
 
-        <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden w-full">
-          <div className="w-full overflow-x-auto">
+        <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden w-full min-h-[28rem] flex flex-col">
+          <div className="w-full overflow-x-auto flex-1 min-h-[22rem]">
             <table className="w-full table-auto text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
@@ -1465,17 +1479,26 @@ export default function Sales() {
 
               <tbody className="divide-y divide-gray-50">
                 {loading && (
-                  <tr>
-                    <td colSpan={tableColSpan} className="px-3 py-12 text-center text-gray-400 text-sm">
-                      <div className="flex items-center justify-center gap-2">
-                        <span
-                          className="w-4 h-4 rounded-full border-2 border-blue-500
-                                         border-t-transparent animate-spin"
-                        />
-                        Cargando ventas…
-                      </div>
-                    </td>
-                  </tr>
+                  <>
+                    <tr>
+                      <td colSpan={tableColSpan} className="px-3 py-8 text-center text-gray-400 text-sm">
+                        <div className="flex items-center justify-center gap-2">
+                          <span
+                            className="w-4 h-4 rounded-full border-2 border-blue-500
+                                           border-t-transparent animate-spin"
+                          />
+                          {hasLoadedOnce ? 'Actualizando ventas…' : 'Cargando ventas…'}
+                        </div>
+                      </td>
+                    </tr>
+                    {[...Array(4)].map((_, i) => (
+                      <tr key={`sk-${i}`} aria-hidden>
+                        <td colSpan={tableColSpan} className="px-3 py-3">
+                          <div className="h-10 bg-gray-100 rounded-lg animate-pulse" />
+                        </td>
+                      </tr>
+                    ))}
+                  </>
                 )}
 
                 {!loading && fetchError && (
@@ -1730,49 +1753,53 @@ export default function Sales() {
             </table>
           </div>
 
-          {!loading &&
-            !fetchError &&
-            (sales.length > 0 || (filter === 'payment_submitted' && pendingAbonosStandalone.length > 0)) && (
-            <div className="px-3 py-2 border-t border-gray-100 bg-gray-50/50 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-gray-400">
-                {sales.length === 0 && filter === 'payment_submitted' && pendingAbonosStandalone.length > 0 ?
-                  `${pendingAbonosStandalone.length} abono${pendingAbonosStandalone.length !== 1 ? 's' : ''} en revisión`
-                : filteredSales.length === sales.length
-                  ? `${sales.length} venta${sales.length !== 1 ? 's' : ''} ${filterEmptyCopy(filter)}`
-                  : `${filteredSales.length} de ${sales.length} ventas mostradas (filtros)`}
-                {totalFiltered > ITEMS_PER_PAGE ? (
-                  <>
-                    {' '}
-                    · Filas {(currentPage - 1) * ITEMS_PER_PAGE + 1}–
-                    {Math.min(currentPage * ITEMS_PER_PAGE, totalFiltered)} de {totalFiltered}
-                  </>
+          <div className="px-3 py-2 border-t border-gray-100 bg-gray-50/50 flex flex-wrap items-center justify-between gap-2 min-h-[2.75rem] shrink-0">
+            {loading ? (
+              <span className="text-xs text-gray-400">Actualizando listado…</span>
+            ) : fetchError ? (
+              <span className="text-xs text-red-500">{fetchError}</span>
+            ) : (
+              <>
+                <span className="text-xs text-gray-400">
+                  {sales.length === 0 && filter === 'payment_submitted' && pendingAbonosStandalone.length > 0 ?
+                    `${pendingAbonosStandalone.length} abono${pendingAbonosStandalone.length !== 1 ? 's' : ''} en revisión`
+                  : filteredSales.length === sales.length
+                    ? `${sales.length} venta${sales.length !== 1 ? 's' : ''} ${filterEmptyCopy(filter)}`
+                    : `${filteredSales.length} de ${sales.length} ventas mostradas (filtros)`}
+                  {totalFiltered > ITEMS_PER_PAGE ? (
+                    <>
+                      {' '}
+                      · Filas {(currentPage - 1) * ITEMS_PER_PAGE + 1}–
+                      {Math.min(currentPage * ITEMS_PER_PAGE, totalFiltered)} de {totalFiltered}
+                    </>
+                  ) : null}
+                </span>
+                {totalPages > 1 ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={currentPage <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="h-8 px-3 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md shadow-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Anterior
+                    </button>
+                    <span className="text-xs text-gray-500 tabular-nums min-w-[4.5rem] text-center">
+                      {currentPage} / {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      className="h-8 px-3 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md shadow-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
                 ) : null}
-              </span>
-              {totalPages > 1 ? (
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    disabled={currentPage <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="h-8 px-3 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md shadow-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Anterior
-                  </button>
-                  <span className="text-xs text-gray-500 tabular-nums min-w-[4.5rem] text-center">
-                    {currentPage} / {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={currentPage >= totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    className="h-8 px-3 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md shadow-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Siguiente
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          )}
+              </>
+            )}
+          </div>
         </div>
 
       </div>
