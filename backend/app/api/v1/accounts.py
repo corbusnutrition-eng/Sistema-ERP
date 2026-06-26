@@ -21,9 +21,11 @@ from app.database import get_db
 from app.account_constants import is_liquid_deposit_account
 from app.account_structure import validate_linked_payment_method_name
 from app.models.account import Account
+from app.models.client import Client
 from app.models.client_payment import ClientPayment
 from app.models.journal_entry import JournalEntry, JournalEntryLine, JournalReferenceType
 from app.models.sale import Sale
+from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.services.accounting_engine import TRANSFER_REFERENCE_TYPE, post_account_transfer
 from app.timezone_utils import datetime_at_ecuador_midnight
 from app.schemas.chart_accounts import (
@@ -36,6 +38,8 @@ from app.schemas.chart_accounts import (
     ChartAccountUpdate,
     DepositAccountOption,
     LedgerDisplayMode,
+    LedgerJournalLineDetail,
+    LedgerTransactionDetailResponse,
 )
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -163,11 +167,47 @@ def _sale_amount_paid_local(sale: Sale) -> Decimal:
     return Decimal("0")
 
 
+def _client_iptv_username(client: Optional[Client]) -> Optional[str]:
+    if client is None:
+        return None
+    u = (getattr(client, "last_iptv_username", None) or client.username or "").strip()
+    return u or None
+
+
+def _sale_iptv_username(sale: Optional[Sale], client: Optional[Client]) -> Optional[str]:
+    if sale is not None and isinstance(sale.invoice_lines, list):
+        for raw in sale.invoice_lines:
+            if not isinstance(raw, dict):
+                continue
+            u = raw.get("iptv_username") if raw.get("iptv_username") is not None else raw.get("iptv_usuario")
+            if isinstance(u, str) and u.strip():
+                return u.strip()
+    return _client_iptv_username(client)
+
+
+def _wallet_recharge_reference(ref_id: int) -> str:
+    return f"REC-{int(ref_id):05d}"
+
+
+def _wallet_recharge_receipt_url(req: Optional[WalletRechargeRequest]) -> Optional[str]:
+    if req is None:
+        return None
+    for attr in ("receipt_url", "admin_precheck_receipt_url"):
+        raw = getattr(req, attr, None)
+        if raw:
+            s = str(raw).strip()
+            if s:
+                return s
+    return None
+
+
 def _journal_reference_label(entry: JournalEntry) -> str:
     ref_type = (entry.reference_type or "").strip()
     ref_id = entry.reference_id
     if ref_type == JournalReferenceType.venta.value and ref_id is not None:
         return f"{int(ref_id):04d}"
+    if ref_type == JournalReferenceType.recarga.value and ref_id is not None:
+        return _wallet_recharge_reference(int(ref_id))
     if ref_type == TRANSFER_REFERENCE_TYPE:
         desc = (entry.description or "").strip()
         if desc.startswith("TRX-"):
@@ -222,6 +262,7 @@ def _history_line_from_journal_line(
     peer: Optional[Account],
     sale: Optional[Sale],
     client_payment: Optional[ClientPayment] = None,
+    wallet_recharge: Optional[WalletRechargeRequest] = None,
     cur_code: str,
     running_balance: Decimal,
 ) -> AccountHistoryEntry:
@@ -276,8 +317,7 @@ def _history_line_from_journal_line(
         client_name = cli.display_name() if cli is not None else (desc_raw[:80] or peer_name or "—")
         notes_val = sale.notes if sale is not None else None
         receipt_url = sale.receipt_url if sale is not None else None
-        u = (cli.username or "").strip() if cli is not None else ""
-        iptv_u = u if u else None
+        iptv_u = _sale_iptv_username(sale, cli)
         cid = sale.client_id if sale is not None else None
         er = float(sale.exchange_rate or 1.0) if sale is not None else float(line.exchange_rate or 1)
         tc = (sale.currency or "USD").strip().upper() if sale is not None else cur_up
@@ -324,6 +364,10 @@ def _history_line_from_journal_line(
         memo = desc_raw[:500] if desc_raw else None
         label = desc_raw[:120] if desc_raw else (peer_name or line_kind)
         cid = int(client_payment.client_id) if client_payment is not None else None
+        cp_cli = client_payment.client if client_payment is not None else None
+        iptv_u = _client_iptv_username(cp_cli)
+        if cp_cli is not None and label == (peer_name or line_kind):
+            label = cp_cli.display_name()
         return AccountHistoryEntry(
             sale_id=None,
             ledger_transaction_id=line.id,
@@ -350,10 +394,75 @@ def _history_line_from_journal_line(
             exchange_rate=float(client_payment.exchange_rate or 1.0) if client_payment is not None else float(line.exchange_rate or 1),
             local_amount=mo,
             amount_usd=mo if cur_up == "USD" else Decimal("0"),
-            status="posted",
+            status=(
+                client_payment.status.value
+                if client_payment is not None
+                else "posted"
+            ),
             running_balance=running_balance,
-            iptv_username=None,
+            iptv_username=iptv_u,
             receipt_url=cp_receipt,
+            transaction_reason=line_kind,
+        )
+
+    if ref_type == JournalReferenceType.recarga.value and entry.reference_id is not None:
+        wr_cli = wallet_recharge.client if wallet_recharge is not None else None
+        client_name = (
+            wr_cli.display_name()
+            if wr_cli is not None
+            else (desc_raw[:80] or peer_name or "Recarga BaaS")
+        )
+        cid = int(wallet_recharge.client_id) if wallet_recharge is not None else None
+        iptv_u = _client_iptv_username(wr_cli)
+        wr_receipt = _wallet_recharge_receipt_url(wallet_recharge)
+        wr_cur = (
+            str(wallet_recharge.recharge_currency or cur_up).strip().upper()[:10]
+            if wallet_recharge is not None
+            else cur_up
+        )
+        wr_amt = (
+            Decimal(str(wallet_recharge.amount_requested))
+            if wallet_recharge is not None
+            else mo
+        )
+        wr_er = (
+            float(wallet_recharge.recharge_exchange_rate or 1.0)
+            if wallet_recharge is not None
+            else float(line.exchange_rate or 1)
+        )
+        wr_notes = None
+        if wallet_recharge is not None:
+            wr_notes = (wallet_recharge.admin_note or "").strip() or None
+        return AccountHistoryEntry(
+            sale_id=None,
+            ledger_transaction_id=line.id,
+            occurred_at=datetime_at_ecuador_midnight(entry.date),
+            reference_number=ref,
+            reference=ref,
+            client_id=cid,
+            client_name=client_name,
+            notes=wr_notes or (desc_raw if desc_raw else None),
+            balance_effect=signed,
+            charge_amount=charge,
+            payment_amount=pay_mag,
+            line_kind=line_kind,
+            deposit=charge,
+            payment=pay_mag,
+            deposit_account_id=line.account_id,
+            amount_paid=(
+                Decimal(str(wallet_recharge.amount_paid))
+                if wallet_recharge is not None
+                else None
+            ),
+            amount_currency=cur_up,
+            transaction_currency=wr_cur,
+            exchange_rate=wr_er,
+            local_amount=wr_amt,
+            amount_usd=wr_amt if wr_cur == "USD" else Decimal("0"),
+            status=(wallet_recharge.status if wallet_recharge is not None else "posted"),
+            running_balance=running_balance,
+            iptv_username=iptv_u,
+            receipt_url=wr_receipt,
             transaction_reason=line_kind,
         )
 
@@ -454,8 +563,28 @@ def _build_account_journal_ledger(
     }
     payments_by_id: dict[int, ClientPayment] = {}
     if payment_ids:
-        for prow in db.query(ClientPayment).filter(ClientPayment.id.in_(payment_ids)).all():
-            payments_by_id[int(prow.id)] = prow
+        rows = (
+            db.query(ClientPayment)
+            .options(joinedload(ClientPayment.client))
+            .filter(ClientPayment.id.in_(payment_ids))
+            .all()
+        )
+        payments_by_id = {int(p.id): p for p in rows}
+
+    recharge_ids = {
+        int(e.reference_id)
+        for e in entries.values()
+        if e.reference_type == JournalReferenceType.recarga.value and e.reference_id is not None
+    }
+    recharges_by_id: dict[int, WalletRechargeRequest] = {}
+    if recharge_ids:
+        rows = (
+            db.query(WalletRechargeRequest)
+            .options(joinedload(WalletRechargeRequest.client))
+            .filter(WalletRechargeRequest.id.in_(recharge_ids))
+            .all()
+        )
+        recharges_by_id = {int(r.id): r for r in rows}
 
     account_ids_needed = {l.account_id for l in line_rows}
     for entry_lines in lines_by_entry.values():
@@ -492,6 +621,11 @@ def _build_account_journal_ledger(
             if entry.reference_type == JournalReferenceType.client_payment.value and entry.reference_id is not None
             else None
         )
+        wallet_recharge = (
+            recharges_by_id.get(int(entry.reference_id))
+            if entry.reference_type == JournalReferenceType.recarga.value and entry.reference_id is not None
+            else None
+        )
         dr = Decimal(str(line.debit)).quantize(Decimal("0.0001"))
         cr = Decimal(str(line.credit)).quantize(Decimal("0.0001"))
         running += dr - cr
@@ -503,6 +637,7 @@ def _build_account_journal_ledger(
                 peer=peer,
                 sale=sale,
                 client_payment=client_payment,
+                wallet_recharge=wallet_recharge,
                 cur_code=cur_code,
                 running_balance=running,
             ),
@@ -518,6 +653,232 @@ def _build_account_journal_ledger(
         opening_balance=ob,
         closing_balance=running,
         lines=lines,
+    )
+
+
+def _ledger_origin_label(ref_type: str) -> str:
+    rt = (ref_type or "").strip().lower()
+    if rt == TRANSFER_REFERENCE_TYPE:
+        return "Transferencia entre cuentas"
+    mapping = {
+        JournalReferenceType.venta.value: "Venta / factura",
+        JournalReferenceType.recarga.value: "Recarga BaaS",
+        JournalReferenceType.client_payment.value: "Cobro de cliente",
+        JournalReferenceType.gasto.value: "Gasto",
+        JournalReferenceType.vendor_bill.value: "Factura de proveedor",
+        JournalReferenceType.vendor_payment.value: "Pago a proveedor",
+        JournalReferenceType.ajuste_fx.value: "Ajuste de cambio",
+        JournalReferenceType.ingreso.value: "Ingreso",
+    }
+    return mapping.get(rt, rt.title() if rt else "Asiento contable")
+
+
+def _build_ledger_line_detail(db: Session, account_id: int, line_id: int) -> LedgerTransactionDetailResponse:
+    acc = db.get(Account, account_id)
+    if acc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada.")
+
+    scope_ids = {account_id} | _descendant_account_ids(db, account_id)
+    line = db.get(JournalEntryLine, line_id)
+    if line is None or int(line.account_id) not in scope_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Línea de libro mayor no encontrada en esta cuenta.",
+        )
+
+    entry = db.get(JournalEntry, line.journal_entry_id)
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asiento contable no encontrado.")
+
+    entry_lines = (
+        db.query(JournalEntryLine)
+        .filter(JournalEntryLine.journal_entry_id == entry.id)
+        .order_by(JournalEntryLine.id.asc())
+        .all()
+    )
+    account_ids_needed = {el.account_id for el in entry_lines}
+    acct_by_id: dict[int, Account] = {}
+    if account_ids_needed:
+        for arow in db.query(Account).filter(Account.id.in_(account_ids_needed)).all():
+            acct_by_id[int(arow.id)] = arow
+
+    line_acc = acct_by_id.get(int(line.account_id), acc)
+    peer = _peer_account_for_journal_line(line, entry_lines, acct_by_id)
+    ref_type = (entry.reference_type or "").strip()
+    ref_id = entry.reference_id
+    cur_code = (acc.currency or "USD").strip().upper()
+
+    sale: Optional[Sale] = None
+    client_payment: Optional[ClientPayment] = None
+    wallet_recharge: Optional[WalletRechargeRequest] = None
+
+    if ref_type == JournalReferenceType.venta.value and ref_id is not None:
+        sale = (
+            db.query(Sale)
+            .options(joinedload(Sale.client), joinedload(Sale.payment_method))
+            .filter(Sale.id == int(ref_id))
+            .first()
+        )
+    elif ref_type == JournalReferenceType.client_payment.value and ref_id is not None:
+        client_payment = (
+            db.query(ClientPayment)
+            .options(joinedload(ClientPayment.client))
+            .filter(ClientPayment.id == int(ref_id))
+            .first()
+        )
+    elif ref_type == JournalReferenceType.recarga.value and ref_id is not None:
+        wallet_recharge = (
+            db.query(WalletRechargeRequest)
+            .options(joinedload(WalletRechargeRequest.client))
+            .filter(WalletRechargeRequest.id == int(ref_id))
+            .first()
+        )
+
+    dr = Decimal(str(line.debit)).quantize(Decimal("0.0001"))
+    cr = Decimal(str(line.credit)).quantize(Decimal("0.0001"))
+    signed = (dr - cr).quantize(Decimal("0.0001"))
+    line_kind = _journal_line_kind(line_acc, signed, ref_type)
+    ref_num = _journal_reference_label(entry)
+    desc_raw = (entry.description or "").strip()
+
+    client_id: Optional[int] = None
+    client_name: Optional[str] = None
+    iptv_username: Optional[str] = None
+    amount: Optional[Decimal] = None
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = float(line.exchange_rate or 1)
+    payment_method: Optional[str] = None
+    receipt_url: Optional[str] = None
+    status_val: Optional[str] = "posted"
+    approved_at: Optional[datetime] = None
+    notes: Optional[str] = None
+    sale_id: Optional[int] = None
+    wallet_recharge_id: Optional[int] = None
+    client_payment_id: Optional[int] = None
+
+    if ref_type == TRANSFER_REFERENCE_TYPE:
+        peer_nm = peer.name if peer is not None else "—"
+        client_name = f"Transferencia → {peer_nm}" if signed < 0 else f"Transferencia desde {peer_nm}"
+        notes = _transfer_user_notes_from_description(entry.description)
+        amount = (dr if dr > 0 else cr).copy_abs()
+        currency = cur_code
+    elif ref_type == JournalReferenceType.venta.value and ref_id is not None:
+        sale_id = int(ref_id)
+        cli = sale.client if sale is not None else None
+        client_id = sale.client_id if sale is not None else None
+        client_name = cli.display_name() if cli is not None else None
+        iptv_username = _sale_iptv_username(sale, cli)
+        notes = sale.notes if sale is not None else None
+        receipt_url = sale.receipt_url if sale is not None else None
+        currency = (sale.currency or "USD").strip().upper() if sale is not None else cur_code
+        exchange_rate = float(sale.exchange_rate or 1.0) if sale is not None else exchange_rate
+        amount = sale.local_amount if sale is not None and sale.local_amount is not None else sale.amount if sale else None
+        status_val = sale.status.value if sale is not None else "posted"
+        pm_rel = getattr(sale, "payment_method", None) if sale is not None else None
+        if pm_rel is not None:
+            payment_method = (pm_rel.name or "").strip() or None
+    elif ref_type == JournalReferenceType.client_payment.value and ref_id is not None:
+        client_payment_id = int(ref_id)
+        cp_cli = client_payment.client if client_payment is not None else None
+        client_id = int(client_payment.client_id) if client_payment is not None else None
+        client_name = cp_cli.display_name() if cp_cli is not None else None
+        iptv_username = _client_iptv_username(cp_cli)
+        notes = (client_payment.notes or "").strip() if client_payment and client_payment.notes else desc_raw or None
+        receipt_url = (
+            str(client_payment.receipt_file_url or "").strip()
+            if client_payment and client_payment.receipt_file_url
+            else None
+        )
+        currency = (
+            str(client_payment.currency or cur_code).strip().upper()[:10]
+            if client_payment is not None
+            else cur_code
+        )
+        exchange_rate = (
+            float(client_payment.exchange_rate or 1.0) if client_payment is not None else exchange_rate
+        )
+        amount = Decimal(str(client_payment.amount)) if client_payment is not None else (dr if dr > 0 else cr)
+        status_val = client_payment.status.value if client_payment is not None else "posted"
+        approved_at = client_payment.approved_at if client_payment is not None else None
+        payment_method = (client_payment.payment_method or "").strip() if client_payment else None
+    elif ref_type == JournalReferenceType.recarga.value and ref_id is not None:
+        wallet_recharge_id = int(ref_id)
+        wr_cli = wallet_recharge.client if wallet_recharge is not None else None
+        client_id = int(wallet_recharge.client_id) if wallet_recharge is not None else None
+        client_name = wr_cli.display_name() if wr_cli is not None else "Recarga BaaS"
+        iptv_username = _client_iptv_username(wr_cli)
+        notes = (
+            (wallet_recharge.admin_note or "").strip()
+            if wallet_recharge and wallet_recharge.admin_note
+            else desc_raw or None
+        )
+        receipt_url = _wallet_recharge_receipt_url(wallet_recharge)
+        currency = (
+            str(wallet_recharge.recharge_currency or cur_code).strip().upper()[:10]
+            if wallet_recharge is not None
+            else cur_code
+        )
+        exchange_rate = (
+            float(wallet_recharge.recharge_exchange_rate or 1.0)
+            if wallet_recharge is not None
+            else exchange_rate
+        )
+        amount = (
+            Decimal(str(wallet_recharge.amount_requested))
+            if wallet_recharge is not None
+            else (dr if dr > 0 else cr)
+        )
+        status_val = wallet_recharge.status if wallet_recharge is not None else "posted"
+    else:
+        client_name = desc_raw[:120] if desc_raw else (peer.name if peer is not None else line_kind)
+        notes = desc_raw[:500] if desc_raw else None
+        amount = (dr if dr > 0 else cr).copy_abs()
+        currency = cur_code
+
+    journal_lines: list[LedgerJournalLineDetail] = []
+    for jl in entry_lines:
+        jl_acc = acct_by_id.get(int(jl.account_id))
+        if jl_acc is None:
+            jl_acc = db.get(Account, jl.account_id)
+        journal_lines.append(
+            LedgerJournalLineDetail(
+                account_id=int(jl.account_id),
+                account_name=jl_acc.name if jl_acc is not None else f"Cuenta #{jl.account_id}",
+                account_code=jl_acc.code if jl_acc is not None else None,
+                debit=Decimal(str(jl.debit)).quantize(Decimal("0.0001")),
+                credit=Decimal(str(jl.credit)).quantize(Decimal("0.0001")),
+                currency=(jl_acc.currency or "USD").strip().upper() if jl_acc is not None else "USD",
+            ),
+        )
+
+    return LedgerTransactionDetailResponse(
+        ledger_line_id=int(line.id),
+        journal_entry_id=int(entry.id),
+        viewed_account_id=account_id,
+        reference_type=ref_type,
+        reference_id=int(ref_id) if ref_id is not None else None,
+        reference_number=ref_num,
+        occurred_at=datetime_at_ecuador_midnight(entry.date),
+        origin_label=_ledger_origin_label(ref_type),
+        line_kind=line_kind,
+        description=desc_raw or None,
+        client_id=client_id,
+        client_name=client_name,
+        iptv_username=iptv_username,
+        amount=amount,
+        currency=currency,
+        exchange_rate=exchange_rate,
+        payment_method=payment_method,
+        receipt_url=receipt_url,
+        status=status_val,
+        approved_at=approved_at,
+        notes=notes,
+        sale_id=sale_id,
+        wallet_recharge_id=wallet_recharge_id,
+        client_payment_id=client_payment_id,
+        debit=dr,
+        credit=cr,
+        journal_lines=journal_lines,
     )
 
 
@@ -745,6 +1106,20 @@ def transfer_between_accounts(payload: AccountTransferCreate, db: DbDep, _: Reco
         source_transaction_id=src_line.id,
         destination_transaction_id=dst_line.id,
     )
+
+
+@router.get(
+    "/{account_id}/ledger/lines/{line_id}/detail",
+    response_model=LedgerTransactionDetailResponse,
+)
+def get_ledger_line_detail(
+    account_id: int,
+    line_id: int,
+    db: DbDep,
+    _: ChartViewDep,
+) -> LedgerTransactionDetailResponse:
+    """Detalle del movimiento contable (origen + líneas débito/crédito del asiento)."""
+    return _build_ledger_line_detail(db, account_id, line_id)
 
 
 @router.get("/{account_id}/ledger", response_model=AccountHistoryResponse)

@@ -18,9 +18,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(os.path.join(UPLOAD_DIR, "logos"), exist_ok=True)
+from app.upload_paths import UPLOAD_ROOT
+
+UPLOAD_DIR = str(UPLOAD_ROOT)
+UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+(UPLOAD_ROOT / "logos").mkdir(parents=True, exist_ok=True)
 
 # ── CORS: registrar ANTES de app.include_router / mount (orden del middleware global) ──
 app = FastAPI(
@@ -55,7 +57,10 @@ app.add_middleware(
     max_age=600,
 )
 
-# Routers (después de CORS)
+# Archivos estáticos antes de la API (comprobantes en /uploads/…)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+# Routers (después de CORS y estáticos)
 from app.api.v1 import accounting as accounting_router
 from app.api.v1 import admin_clients as admin_clients_router
 from app.api.v1 import admin_transactions as admin_transactions_router
@@ -130,9 +135,6 @@ app.include_router(webhooks_codigos_retiro_router.router, prefix=API_V1_PREFIX)
 app.include_router(vendors_ap_router.router, prefix=API_V1_PREFIX)
 app.include_router(vendors_ap_router.bill_router, prefix=API_V1_PREFIX)
 app.include_router(vendors_ap_router.pay_router, prefix=API_V1_PREFIX)
-
-# Archivos estáticos (después de API; CORS sigue aplicando al middleware global)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.get("/", tags=["health"])

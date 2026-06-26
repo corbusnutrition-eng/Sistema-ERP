@@ -243,3 +243,46 @@ class AccountHistoryResponse(BaseModel):
     opening_balance: Decimal
     closing_balance: Decimal
     lines: list[AccountHistoryEntry]
+
+
+class LedgerJournalLineDetail(BaseModel):
+    """Línea débito/crédito del asiento contable origen."""
+
+    account_id: int
+    account_name: str
+    account_code: Optional[str] = None
+    debit: Decimal
+    credit: Decimal
+    currency: str = "USD"
+
+
+class LedgerTransactionDetailResponse(BaseModel):
+    """Detalle enriquecido del movimiento contable (origen + asiento completo)."""
+
+    ledger_line_id: int
+    journal_entry_id: int
+    viewed_account_id: int
+    reference_type: str
+    reference_id: Optional[int] = None
+    reference_number: str
+    occurred_at: datetime
+    origin_label: str
+    line_kind: Optional[str] = None
+    description: Optional[str] = None
+    client_id: Optional[int] = None
+    client_name: Optional[str] = None
+    iptv_username: Optional[str] = None
+    amount: Optional[Decimal] = None
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = None
+    payment_method: Optional[str] = None
+    receipt_url: Optional[str] = None
+    status: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    notes: Optional[str] = None
+    sale_id: Optional[int] = None
+    wallet_recharge_id: Optional[int] = None
+    client_payment_id: Optional[int] = None
+    debit: Decimal
+    credit: Decimal
+    journal_lines: list[LedgerJournalLineDetail]

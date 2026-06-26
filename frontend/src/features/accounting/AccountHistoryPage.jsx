@@ -22,6 +22,7 @@ import { useModal } from '../../context/ModalContext'
 import { formatSaleDocNo, formatSaleLedgerDateParts } from '../sales/saleTableHelpers'
 import { toDatetimeLocalEcuador } from '../../utils/datetime'
 import RefundModal from './components/RefundModal'
+import LedgerTransactionDetailModal from './components/LedgerTransactionDetailModal'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
 
@@ -202,6 +203,7 @@ export default function AccountHistoryPage() {
 
   const [addTxnMenuOpen, setAddTxnMenuOpen] = useState(false)
   const [refundModalOpen, setRefundModalOpen] = useState(false)
+  const [detailModal, setDetailModal] = useState(null)
 
   const [currentPage, setCurrentPage] = useState(1)
 
@@ -360,6 +362,12 @@ export default function AccountHistoryPage() {
     filteredWithRunning.length > 0
       ? filteredWithRunning[filteredWithRunning.length - 1].displayRunning
       : Number(meta?.opening_balance ?? 0)
+
+  function openDetailModal(line) {
+    const lid = line?.ledger_transaction_id
+    if (lid == null || lid === '') return
+    setDetailModal({ ledgerLineId: lid, line })
+  }
 
   function openRow(line) {
     if (expandedSaleId === line.sale_id) {
@@ -808,6 +816,9 @@ export default function AccountHistoryPage() {
                 {!loading &&
                   paginatedData.map((line) => {
                     const isSaleRow = line.sale_id != null && line.sale_id !== ''
+                    const isDetailSelected =
+                      detailModal?.ledgerLineId != null &&
+                      detailModal.ledgerLineId === line.ledger_transaction_id
                     const rowKey =
                       line.ledger_transaction_id != null
                         ? `txn-${line.ledger_transaction_id}`
@@ -989,8 +1000,8 @@ export default function AccountHistoryPage() {
                     return (
                       <Fragment key={rowKey}>
                         <tr
-                          className={`transition-colors hover:bg-slate-50/90 ${isSaleRow ? 'cursor-pointer' : 'cursor-default'} ${isSaleRow && expandedSaleId === line.sale_id ? 'bg-blue-50/50' : ''}`}
-                          onClick={() => isSaleRow && openRow(line)}
+                          className={`transition-colors hover:bg-slate-50/90 cursor-pointer ${isSaleRow && expandedSaleId === line.sale_id ? 'bg-blue-50/50' : ''} ${isDetailSelected ? 'bg-slate-50 ring-1 ring-inset ring-blue-200' : ''}`}
+                          onClick={() => openDetailModal(line)}
                         >
                           {cells}
                         </tr>
@@ -1170,6 +1181,16 @@ export default function AccountHistoryPage() {
         </div>
 
         {refundModalOpen && <RefundModal clients={clients} onClose={() => setRefundModalOpen(false)} />}
+
+        <LedgerTransactionDetailModal
+          open={Boolean(detailModal)}
+          accountId={accountId}
+          ledgerLineId={detailModal?.ledgerLineId ?? null}
+          accountCurrency={currency}
+          saleLine={detailModal?.line ?? null}
+          onClose={() => setDetailModal(null)}
+          onEditSale={openRow}
+        />
 
         <p className="text-xs text-gray-400 px-1">
           Libro mayor desde journal entries (líneas del asiento contable en esta cuenta y subcuentas).

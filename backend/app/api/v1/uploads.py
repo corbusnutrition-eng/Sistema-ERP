@@ -6,7 +6,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 
-UPLOAD_DIR = Path("uploads")
+from app.upload_paths import UPLOAD_ROOT
+
+UPLOAD_DIR = UPLOAD_ROOT
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
     "image/png",
@@ -48,6 +50,7 @@ async def upload_receipt(file: UploadFile) -> JSONResponse:
         ".pdf" if file.content_type == "application/pdf" else ".jpg"
     )
     filename = f"{uuid.uuid4().hex}{suffix}"
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     dest = UPLOAD_DIR / filename
     dest.write_bytes(content)
 
