@@ -24,6 +24,7 @@ import { formatSaleDocNo, formatSaleLedgerDateParts } from '../sales/saleTableHe
 import { toDatetimeLocalEcuador } from '../../utils/datetime'
 import RefundModal from './components/RefundModal'
 import LedgerTransactionDetailModal from './components/LedgerTransactionDetailModal'
+import PendingInterbankModal from './components/PendingInterbankModal'
 import LedgerBankVerificationPills from './components/LedgerBankVerificationPills'
 import {
   BANK_VERIFICATION_COLUMN,
@@ -219,6 +220,7 @@ export default function AccountHistoryPage() {
 
   const [addTxnMenuOpen, setAddTxnMenuOpen] = useState(false)
   const [refundModalOpen, setRefundModalOpen] = useState(false)
+  const [pendingInterbankOpen, setPendingInterbankOpen] = useState(false)
   const [detailModal, setDetailModal] = useState(null)
   const [savingVerificationId, setSavingVerificationId] = useState(null)
 
@@ -362,6 +364,12 @@ export default function AccountHistoryPage() {
     }
     return run
   }, [filteredWithRunning, meta, showBankVerification])
+
+  const pendingInterbankCount = useMemo(
+    () =>
+      lines.filter((row) => String(row.verification_status ?? '').toLowerCase() === 'interbank').length,
+    [lines],
+  )
 
   const filteredTransactions = filteredWithRunning
 
@@ -831,6 +839,23 @@ export default function AccountHistoryPage() {
                     className="w-full text-left px-3 py-2.5 text-sm text-gray-800 hover:bg-slate-50"
                     onClick={() => {
                       setAddTxnMenuOpen(false)
+                      openTransferModal({
+                        defaultDestinationAccountId: accountId,
+                        interbankMode: true,
+                        afterSave: () => {
+                          loadHistory()
+                          loadAccounts()
+                        },
+                      })
+                    }}
+                  >
+                    🕐 Interbancaria entrante
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-2.5 text-sm text-gray-800 hover:bg-slate-50"
+                    onClick={() => {
+                      setAddTxnMenuOpen(false)
                       setRefundModalOpen(true)
                     }}
                   >
@@ -842,21 +867,12 @@ export default function AccountHistoryPage() {
             {showBankVerification ? (
               <button
                 type="button"
-                onClick={() => {
-                  openTransferModal({
-                    defaultDestinationAccountId: accountId,
-                    interbankMode: true,
-                    afterSave: () => {
-                      loadHistory()
-                      loadAccounts()
-                    },
-                  })
-                }}
+                onClick={() => setPendingInterbankOpen(true)}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 shadow-sm transition-colors ring-1 ring-amber-600/30"
-                title="Registrar transferencia interbancaria pendiente de acreditación"
+                title="Ver transferencias interbancarias pendientes de acreditación"
               >
                 <Clock size={16} className="shrink-0" aria-hidden />
-                Interbancaria
+                {pendingInterbankCount > 0 ? `Interbancaria (${pendingInterbankCount})` : 'Interbancaria'}
               </button>
             ) : null}
           </div>
@@ -1282,6 +1298,15 @@ export default function AccountHistoryPage() {
         </div>
 
         {refundModalOpen && <RefundModal clients={clients} onClose={() => setRefundModalOpen(false)} />}
+
+        <PendingInterbankModal
+          open={pendingInterbankOpen}
+          onClose={() => setPendingInterbankOpen(false)}
+          transactions={lines}
+          currency={currency}
+          confirmingLineId={savingVerificationId}
+          onConfirm={(lineId) => setLineVerificationStatus(lineId, 'confirmed')}
+        />
 
         <LedgerTransactionDetailModal
           open={Boolean(detailModal)}
