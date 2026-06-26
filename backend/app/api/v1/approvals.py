@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
@@ -26,6 +28,8 @@ from app.services.approvals_helpers import (
     is_missing_bank_verified_column_error,
     journal_line_bank_verified_column_exists,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -95,7 +99,8 @@ def _receipt_for_payment(db: Session, payment: ClientPayment, origin_type: str, 
     return None
 
 
-def _pending_lines_query(db: Session, account_id: int):
+def _pending_lines_filter(db: Session, account_id: int):
+    """Filtro base (sin ORDER BY ni joinedload) — apto para COUNT."""
     return (
         db.query(JournalEntryLine)
         .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
@@ -106,6 +111,13 @@ def _pending_lines_query(db: Session, account_id: int):
             JournalEntry.reference_type == JournalReferenceType.client_payment.value,
             JournalEntry.reference_id.isnot(None),
         )
+    )
+
+
+def _pending_lines_query(db: Session, account_id: int):
+    """Listado de líneas pendientes (con eager load y orden)."""
+    return (
+        _pending_lines_filter(db, account_id)
         .options(joinedload(JournalEntryLine.journal_entry))
         .order_by(JournalEntry.date.desc(), JournalEntryLine.id.desc())
     )
@@ -116,7 +128,7 @@ def _count_pending_for_account(db: Session, account_id: int) -> int:
         return 0
     try:
         return int(
-            _pending_lines_query(db, account_id)
+            _pending_lines_filter(db, account_id)
             .with_entities(func.count(JournalEntryLine.id))
             .scalar()
             or 0
@@ -125,6 +137,20 @@ def _count_pending_for_account(db: Session, account_id: int) -> int:
         if is_missing_bank_verified_column_error(exc):
             return 0
         raise
+
+
+def _account_to_approval_row(db: Session, acc: Account) -> ApprovalAccountRow:
+    code_raw = acc.code or acc.account_number
+    code = str(code_raw).strip() if code_raw is not None else None
+    return ApprovalAccountRow(
+        id=int(acc.id),
+        code=code or None,
+        name=str(acc.name or "").strip() or f"Cuenta {acc.id}",
+        currency=str(acc.currency or "USD").upper(),
+        detail_type=acc.detail_type,
+        linked_payment_method=getattr(acc, "linked_payment_method", None),
+        pending_count=_count_pending_for_account(db, int(acc.id)),
+    )
 
 
 def _row_from_line(db: Session, line: JournalEntryLine) -> Optional[ApprovalPendingRow]:
@@ -169,7 +195,7 @@ def list_approval_accounts(db: DbDep, _: ApprovalsViewDep) -> list[ApprovalAccou
     try:
         rows = (
             db.query(Account)
-            .filter(Account.is_active.is_(True), Account.account_type == "asset")
+            .filter(Account.is_active.is_(True))
             .order_by(Account.name.asc(), Account.id.asc())
             .all()
         )
@@ -177,21 +203,18 @@ def list_approval_accounts(db: DbDep, _: ApprovalsViewDep) -> list[ApprovalAccou
         for acc in rows:
             if not is_liquid_deposit_account(acc):
                 continue
-            out.append(
-                ApprovalAccountRow(
-                    id=int(acc.id),
-                    code=acc.code or acc.account_number,
-                    name=str(acc.name or "").strip() or f"Cuenta {acc.id}",
-                    currency=str(acc.currency or "USD").upper(),
-                    detail_type=acc.detail_type,
-                    linked_payment_method=getattr(acc, "linked_payment_method", None),
-                    pending_count=_count_pending_for_account(db, int(acc.id)),
-                )
-            )
+            out.append(_account_to_approval_row(db, acc))
         return out
     except HTTPException:
         raise
+    except ValidationError as exc:
+        logger.exception("Validación Pydantic en GET /approvals/accounts")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al serializar cuentas de aprobaciones.",
+        ) from exc
     except SQLAlchemyError as exc:
+        logger.exception("SQLAlchemy en GET /approvals/accounts")
         if is_missing_bank_verified_column_error(exc):
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_MIGRATION_HINT) from exc
         raise HTTPException(
@@ -199,6 +222,7 @@ def list_approval_accounts(db: DbDep, _: ApprovalsViewDep) -> list[ApprovalAccou
             detail="No se pudieron cargar las cuentas de aprobaciones.",
         ) from exc
     except Exception as exc:
+        logger.exception("Error inesperado en GET /approvals/accounts")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No se pudieron cargar las cuentas de aprobaciones.",
