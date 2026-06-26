@@ -8,6 +8,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
 from app.account_constants import is_liquid_deposit_account
@@ -21,6 +22,10 @@ from app.models.sale import Sale
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.permissions import APPROVALS_BANK_VERIFY, APPROVALS_BANK_VIEW
 from app.schemas.approvals import ApprovalAccountRow, ApprovalPendingRow, ApprovalVerifyResponse
+from app.services.approvals_helpers import (
+    is_missing_bank_verified_column_error,
+    journal_line_bank_verified_column_exists,
+)
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -29,6 +34,21 @@ ApprovalsViewDep = Annotated[dict, Depends(require_permission(APPROVALS_BANK_VIE
 ApprovalsVerifyDep = Annotated[dict, Depends(require_permission(APPROVALS_BANK_VERIFY))]
 
 _EPS = Decimal("0.0001")
+
+_MIGRATION_HINT = (
+    "Falta la columna is_bank_verified en journal_entry_lines. "
+    "Ejecuta: alembic upgrade head "
+    "o python scripts/apply_journal_line_bank_verified_pg.py"
+)
+
+
+def _ensure_bank_verified_schema(db: Session) -> None:
+    if journal_line_bank_verified_column_exists(db):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=_MIGRATION_HINT,
+    )
 
 
 def _format_sale_ref(sale_id: int) -> str:
@@ -92,12 +112,19 @@ def _pending_lines_query(db: Session, account_id: int):
 
 
 def _count_pending_for_account(db: Session, account_id: int) -> int:
-    return int(
-        _pending_lines_query(db, account_id)
-        .with_entities(func.count(JournalEntryLine.id))
-        .scalar()
-        or 0
-    )
+    if not journal_line_bank_verified_column_exists(db):
+        return 0
+    try:
+        return int(
+            _pending_lines_query(db, account_id)
+            .with_entities(func.count(JournalEntryLine.id))
+            .scalar()
+            or 0
+        )
+    except SQLAlchemyError as exc:
+        if is_missing_bank_verified_column_error(exc):
+            return 0
+        raise
 
 
 def _row_from_line(db: Session, line: JournalEntryLine) -> Optional[ApprovalPendingRow]:
@@ -139,28 +166,43 @@ def _row_from_line(db: Session, line: JournalEntryLine) -> Optional[ApprovalPend
 @router.get("/accounts", response_model=list[ApprovalAccountRow])
 def list_approval_accounts(db: DbDep, _: ApprovalsViewDep) -> list[ApprovalAccountRow]:
     """Cuentas activas de Efectivo y equivalentes (activos líquidos)."""
-    rows = (
-        db.query(Account)
-        .filter(Account.is_active.is_(True), Account.account_type == "asset")
-        .order_by(Account.name.asc(), Account.id.asc())
-        .all()
-    )
-    out: list[ApprovalAccountRow] = []
-    for acc in rows:
-        if not is_liquid_deposit_account(acc):
-            continue
-        out.append(
-            ApprovalAccountRow(
-                id=int(acc.id),
-                code=acc.code or acc.account_number,
-                name=str(acc.name or "").strip() or f"Cuenta {acc.id}",
-                currency=str(acc.currency or "USD").upper(),
-                detail_type=acc.detail_type,
-                linked_payment_method=getattr(acc, "linked_payment_method", None),
-                pending_count=_count_pending_for_account(db, int(acc.id)),
-            )
+    try:
+        rows = (
+            db.query(Account)
+            .filter(Account.is_active.is_(True), Account.account_type == "asset")
+            .order_by(Account.name.asc(), Account.id.asc())
+            .all()
         )
-    return out
+        out: list[ApprovalAccountRow] = []
+        for acc in rows:
+            if not is_liquid_deposit_account(acc):
+                continue
+            out.append(
+                ApprovalAccountRow(
+                    id=int(acc.id),
+                    code=acc.code or acc.account_number,
+                    name=str(acc.name or "").strip() or f"Cuenta {acc.id}",
+                    currency=str(acc.currency or "USD").upper(),
+                    detail_type=acc.detail_type,
+                    linked_payment_method=getattr(acc, "linked_payment_method", None),
+                    pending_count=_count_pending_for_account(db, int(acc.id)),
+                )
+            )
+        return out
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        if is_missing_bank_verified_column_error(exc):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_MIGRATION_HINT) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudieron cargar las cuentas de aprobaciones.",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudieron cargar las cuentas de aprobaciones.",
+        ) from exc
 
 
 @router.get("/pending/{account_id}", response_model=list[ApprovalPendingRow])
@@ -170,22 +212,33 @@ def list_pending_for_account(
     _: ApprovalsViewDep,
 ) -> list[ApprovalPendingRow]:
     """Ingresos en la cuenta bancaria aún no verificados por el titular."""
-    acc = db.get(Account, int(account_id))
-    if acc is None or not acc.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada.")
-    if not is_liquid_deposit_account(acc):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="La cuenta no es de Efectivo y equivalentes.",
-        )
+    _ensure_bank_verified_schema(db)
+    try:
+        acc = db.get(Account, int(account_id))
+        if acc is None or not acc.is_active:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada.")
+        if not is_liquid_deposit_account(acc):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La cuenta no es de Efectivo y equivalentes.",
+            )
 
-    lines = _pending_lines_query(db, int(account_id)).all()
-    result: list[ApprovalPendingRow] = []
-    for line in lines:
-        row = _row_from_line(db, line)
-        if row is not None:
-            result.append(row)
-    return result
+        lines = _pending_lines_query(db, int(account_id)).all()
+        result: list[ApprovalPendingRow] = []
+        for line in lines:
+            row = _row_from_line(db, line)
+            if row is not None:
+                result.append(row)
+        return result
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        if is_missing_bank_verified_column_error(exc):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_MIGRATION_HINT) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudieron cargar los ingresos pendientes.",
+        ) from exc
 
 
 @router.post("/{transaction_id}/verify", response_model=ApprovalVerifyResponse)
@@ -195,45 +248,57 @@ def verify_bank_transaction(
     _: ApprovalsVerifyDep,
 ) -> ApprovalVerifyResponse:
     """Marca un ingreso bancario como confirmado en el extracto."""
-    line = (
-        db.query(JournalEntryLine)
-        .options(joinedload(JournalEntryLine.journal_entry), joinedload(JournalEntryLine.account))
-        .filter(JournalEntryLine.id == int(transaction_id))
-        .first()
-    )
-    if line is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transacción no encontrada.")
-
-    if line.is_bank_verified:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta transacción ya fue verificada.")
-
-    acc = line.account
-    if acc is None or not is_liquid_deposit_account(acc):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Solo se pueden verificar ingresos en cuentas de Efectivo y equivalentes.",
+    _ensure_bank_verified_schema(db)
+    try:
+        line = (
+            db.query(JournalEntryLine)
+            .options(joinedload(JournalEntryLine.journal_entry), joinedload(JournalEntryLine.account))
+            .filter(JournalEntryLine.id == int(transaction_id))
+            .first()
         )
+        if line is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transacción no encontrada.")
 
-    if Decimal(str(line.debit or 0)) <= _EPS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Solo se verifican líneas de débito (ingresos).",
+        if line.is_bank_verified:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta transacción ya fue verificada.")
+
+        acc = line.account
+        if acc is None or not is_liquid_deposit_account(acc):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Solo se pueden verificar ingresos en cuentas de Efectivo y equivalentes.",
+            )
+
+        if Decimal(str(line.debit or 0)) <= _EPS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Solo se verifican líneas de débito (ingresos).",
+            )
+
+        entry = line.journal_entry
+        if entry is None or entry.reference_type != JournalReferenceType.client_payment.value:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Solo cobros de clientes pueden verificarse en este módulo.",
+            )
+
+        line.is_bank_verified = True
+        db.add(line)
+        db.commit()
+
+        now = datetime.now(timezone.utc)
+        return ApprovalVerifyResponse(
+            transaction_id=int(line.id),
+            is_bank_verified=True,
+            verified_at=now,
         )
-
-    entry = line.journal_entry
-    if entry is None or entry.reference_type != JournalReferenceType.client_payment.value:
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        if is_missing_bank_verified_column_error(exc):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_MIGRATION_HINT) from exc
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Solo cobros de clientes pueden verificarse en este módulo.",
-        )
-
-    line.is_bank_verified = True
-    db.add(line)
-    db.commit()
-
-    now = datetime.now(timezone.utc)
-    return ApprovalVerifyResponse(
-        transaction_id=int(line.id),
-        is_bank_verified=True,
-        verified_at=now,
-    )
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo verificar el ingreso.",
+        ) from exc
