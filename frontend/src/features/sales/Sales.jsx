@@ -36,8 +36,10 @@ import {
 } from './saleTableHelpers'
 import { isPortalSaldoCrossSinComprobante } from './portalCreditMeta'
 import { SALES_CURRENCIES } from './salesCurrencies'
-import SearchableSelect from '../../components/ui/SearchableSelect'
-import StatusFilterTabs from '../../components/ui/StatusFilterTabs'
+import SalesKPIs from './components/SalesKPIs'
+import SalesFilters from './components/SalesFilters'
+import SalesTabs from './components/SalesTabs'
+import SalesTableSkeleton from './components/SalesTableSkeleton'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
 
 const ITEMS_PER_PAGE = 10
@@ -385,7 +387,8 @@ function SaleRowActions({
 
 export default function Sales() {
   const [sales, setSales] = useState([])
-  const [loading, setLoading] = useState(true)
+  /** Solo afecta el cuerpo de la tabla; KPIs/filtros/pestañas permanecen montados. */
+  const [tableLoading, setTableLoading] = useState(true)
   const [fetchError, setFetchError] = useState(null)
   const salesFetchGenRef = useRef(0)
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
@@ -485,7 +488,7 @@ export default function Sales() {
 
   const fetchSales = useCallback(async () => {
     const gen = ++salesFetchGenRef.current
-    setLoading(true)
+    setTableLoading(true)
     setFetchError(null)
     try {
       const f = FILTERS.find((x) => x.id === filter)
@@ -493,18 +496,22 @@ export default function Sales() {
       const { data } = await api.get('/api/v1/sales/', { params })
       if (gen !== salesFetchGenRef.current) return
       setSales(Array.isArray(data) ? data : [])
-      await refreshMetrics()
-      if (filter === 'payment_submitted') await refreshPendingPayments()
+      void refreshMetrics()
+      if (filter === 'payment_submitted') void refreshPendingPayments()
       setHasLoadedOnce(true)
     } catch {
       if (gen !== salesFetchGenRef.current) return
       setFetchError('No se pudo cargar el historial de ventas. Verifica la conexión.')
     } finally {
       if (gen === salesFetchGenRef.current) {
-        setLoading(false)
+        setTableLoading(false)
       }
     }
   }, [filter, refreshMetrics, refreshPendingPayments])
+
+  useEffect(() => {
+    void refreshMetrics()
+  }, [refreshMetrics])
 
   const handleReviewPayment = useCallback(
     (payment) => {
@@ -1062,12 +1069,6 @@ export default function Sales() {
     setFilterTags('')
   }
 
-  const filterLabelCls =
-    'block text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1'
-  const filterInputCls =
-    'h-8 text-sm px-2.5 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm w-full'
-  const filterSelectCls = `${filterInputCls} cursor-pointer`
-
   const currentPage = Math.min(Math.max(1, page), totalPages)
 
   const showRejectReasonCol = filter === 'rejected'
@@ -1300,9 +1301,9 @@ export default function Sales() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Ventas</h1>
             <p className="text-sm text-gray-500 mt-0.5">
-              {loading && !hasLoadedOnce
+              {tableLoading && !hasLoadedOnce
                 ? 'Cargando…'
-                : loading
+                : tableLoading
                   ? 'Actualizando listado…'
                   : `${sales.length === filteredSales.length ? `${filteredSales.length} registro${filteredSales.length !== 1 ? 's' : ''} en esta vista` : `${filteredSales.length} mostrada${filteredSales.length !== 1 ? 's' : ''} · ${sales.length} en la pestaña`}${
                       totalFiltered > ITEMS_PER_PAGE
@@ -1333,125 +1334,37 @@ export default function Sales() {
           </div>
         </div>
 
-        <div
-          className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 transition-opacity ${
-            loading ? 'opacity-90' : ''
-          }`}
-        >
-          {[
-            { label: 'Total Ventas', value: metrics.total, color: 'text-blue-600', bg: 'bg-blue-50' },
-            { label: 'Activadas', value: metrics.activated, color: 'text-green-600', bg: 'bg-green-50' },
-            { label: 'Pendientes', value: metrics.pending, color: 'text-amber-600', bg: 'bg-amber-50' },
-            {
-              label: 'En revisión',
-              value: metrics.review,
-              color: 'text-sky-700',
-              bg: 'bg-sky-50',
-            },
-            { label: 'Anuladas', value: metrics.voided, color: 'text-slate-600', bg: 'bg-slate-50' },
-            {
-              label: 'Ingresos activados (USD)',
-              value: `$${metrics.revenueUsd.toLocaleString('es-ES', { minimumFractionDigits: 2 })}`,
-              color: 'text-gray-800',
-              bg: 'bg-gray-50',
-            },
-          ].map(({ label, value, color, bg }) => (
-            <div key={label} className={`${bg} rounded-2xl px-5 py-4 ring-1 ring-gray-100`}>
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">{label}</p>
-              <p className={`text-2xl sm:text-3xl font-bold mt-1 ${color}`}>{value}</p>
-            </div>
-          ))}
-        </div>
+        {/* Shell fijo: nunca condicionado por tableLoading */}
+        <SalesKPIs metrics={metrics} />
 
-        <div
-          className={`flex flex-wrap items-end gap-3 mb-4 bg-white rounded-xl px-4 py-3 ring-1 ring-gray-100 shadow-sm transition-opacity ${
-            loading ? 'opacity-90' : ''
-          }`}
-        >
-            <label className="flex flex-col w-36 shrink-0">
-              <span className={filterLabelCls}>Desde</span>
-              <input
-                type="date"
-                value={filterDateFrom}
-                onChange={(e) => setFilterDateFrom(e.target.value)}
-                className={filterInputCls}
-              />
-            </label>
-            <label className="flex flex-col w-36 shrink-0">
-              <span className={filterLabelCls}>Hasta</span>
-              <input
-                type="date"
-                value={filterDateTo}
-                onChange={(e) => setFilterDateTo(e.target.value)}
-                className={filterInputCls}
-              />
-            </label>
-            <label className="flex flex-col w-40 max-w-[160px] shrink-0">
-              <span className={filterLabelCls}>Cliente o usuario</span>
-              <input
-                type="search"
-                value={filterClientOrUser}
-                onChange={(e) => setFilterClientOrUser(e.target.value)}
-                placeholder="Nombre, email…"
-                className={`${filterInputCls} min-w-0`}
-              />
-            </label>
-            <label className="flex flex-col w-24 shrink-0">
-              <span className={filterLabelCls}>N.º ref.</span>
-              <input
-                type="search"
-                value={filterNumber}
-                onChange={(e) => setFilterNumber(e.target.value)}
-                placeholder="0034…"
-                className={filterInputCls}
-              />
-            </label>
-            <label className="flex flex-col min-w-[136px] max-w-[200px] shrink-0">
-              <span className={filterLabelCls}>Método de pago</span>
-              <SearchableSelect
-                value={filterPaymentMethod}
-                onChange={setFilterPaymentMethod}
-                options={salesPaymentMethodFilterOptions}
-                clearLabel="Todos"
-                placeholder="Todos"
-              />
-            </label>
-            <label className="flex flex-col w-28 shrink-0">
-              <span className={filterLabelCls}>Moneda</span>
-              <SearchableSelect
-                value={filterCurrency}
-                onChange={setFilterCurrency}
-                options={salesCurrencyFilterOptions}
-                clearLabel="Todas"
-                placeholder="Todas"
-              />
-            </label>
-            <label className="flex flex-col min-w-[120px] max-w-[200px] shrink-0">
-              <span className={filterLabelCls}>Etiquetas</span>
-              <input
-                type="search"
-                value={filterTags}
-                onChange={(e) => setFilterTags(e.target.value)}
-                placeholder="Buscar etiqueta…"
-                className={filterInputCls}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="h-8 px-3 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 border border-gray-200 rounded-md transition-colors shadow-sm flex items-center justify-center shrink-0 ml-auto"
-            >
-            Limpiar filtros
-          </button>
-        </div>
+        <SalesFilters
+          filterDateFrom={filterDateFrom}
+          filterDateTo={filterDateTo}
+          filterClientOrUser={filterClientOrUser}
+          filterNumber={filterNumber}
+          filterPaymentMethod={filterPaymentMethod}
+          filterCurrency={filterCurrency}
+          filterTags={filterTags}
+          onFilterDateFromChange={setFilterDateFrom}
+          onFilterDateToChange={setFilterDateTo}
+          onFilterClientOrUserChange={setFilterClientOrUser}
+          onFilterNumberChange={setFilterNumber}
+          onFilterPaymentMethodChange={setFilterPaymentMethod}
+          onFilterCurrencyChange={setFilterCurrency}
+          onFilterTagsChange={setFilterTags}
+          onClearFilters={clearFilters}
+          paymentMethodOptions={salesPaymentMethodFilterOptions}
+          currencyOptions={salesCurrencyFilterOptions}
+        />
 
-        <StatusFilterTabs
+        <SalesTabs
           tabs={FILTERS}
           activeId={filter}
           onChange={setFilter}
           counts={salesTabCounts}
         />
 
+        {/* Solo la tabla reacciona al fetch de la pestaña activa */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden w-full min-h-[28rem] flex flex-col">
           <div className="w-full overflow-x-auto flex-1 min-h-[22rem]">
             <table className="w-full table-auto text-sm">
@@ -1478,41 +1391,16 @@ export default function Sales() {
               </thead>
 
               <tbody className="divide-y divide-gray-50">
-                {loading && (
-                  <>
-                    <tr>
-                      <td colSpan={tableColSpan} className="px-3 py-8 text-center text-gray-400 text-sm">
-                        <div className="flex items-center justify-center gap-2">
-                          <span
-                            className="w-4 h-4 rounded-full border-2 border-blue-500
-                                           border-t-transparent animate-spin"
-                          />
-                          {hasLoadedOnce ? 'Actualizando ventas…' : 'Cargando ventas…'}
-                        </div>
-                      </td>
-                    </tr>
-                    {[...Array(4)].map((_, i) => (
-                      <tr key={`sk-${i}`} aria-hidden>
-                        <td colSpan={tableColSpan} className="px-3 py-3">
-                          <div className="h-10 bg-gray-100 rounded-lg animate-pulse" />
-                        </td>
-                      </tr>
-                    ))}
-                  </>
-                )}
-
-                {!loading && fetchError && (
+                {tableLoading ? (
+                  <SalesTableSkeleton colSpan={tableColSpan} isRefreshing={hasLoadedOnce} />
+                ) : fetchError ? (
                   <tr>
                     <td colSpan={tableColSpan} className="px-3 py-12 text-center text-red-500 text-sm">
                       {fetchError}
                     </td>
                   </tr>
-                )}
-
-                {!loading &&
-                  !fetchError &&
-                  sales.length === 0 &&
-                  !(filter === 'payment_submitted' && pendingAbonosStandalone.length > 0) && (
+                ) : sales.length === 0 &&
+                  !(filter === 'payment_submitted' && pendingAbonosStandalone.length > 0) ? (
                   <tr>
                     <td colSpan={tableColSpan} className="px-3 py-16 text-center">
                       <ShoppingCart size={32} className="mx-auto text-gray-200 mb-3" />
@@ -1522,19 +1410,15 @@ export default function Sales() {
                       <p className="text-gray-300 text-xs mt-1">Usa &quot;Nueva Venta&quot; o cambia de pestaña</p>
                     </td>
                   </tr>
-                )}
-
-                {!loading && !fetchError && sales.length > 0 && filteredSales.length === 0 && (
+                ) : sales.length > 0 && filteredSales.length === 0 ? (
                   <tr>
                     <td colSpan={tableColSpan} className="px-3 py-12 text-center text-gray-500 text-sm">
                       Ninguna venta coincide con los filtros. Prueba a limpiar o ampliar la búsqueda.
                     </td>
                   </tr>
-                )}
-
-                {!loading &&
-                  !fetchError &&
-                  paginatedSales.map((sale) => (
+                ) : (
+                  <>
+                  {paginatedSales.map((sale) => (
                     <tr
                       key={sale.id}
                       className={`hover:bg-gray-50/60 transition-colors group ${
@@ -1666,8 +1550,6 @@ export default function Sales() {
                   ))}
 
                 {filter === 'payment_submitted' &&
-                  !loading &&
-                  !fetchError &&
                   pendingAbonosStandalone.map((p) => {
                     let dtStr = '—'
                     try {
@@ -1749,12 +1631,14 @@ export default function Sales() {
                       </tr>
                     )
                   })}
+                  </>
+                )}
               </tbody>
             </table>
           </div>
 
           <div className="px-3 py-2 border-t border-gray-100 bg-gray-50/50 flex flex-wrap items-center justify-between gap-2 min-h-[2.75rem] shrink-0">
-            {loading ? (
+            {tableLoading ? (
               <span className="text-xs text-gray-400">Actualizando listado…</span>
             ) : fetchError ? (
               <span className="text-xs text-red-500">{fetchError}</span>
