@@ -9,7 +9,6 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
-from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
@@ -23,7 +22,13 @@ from app.models.journal_entry import JournalEntry, JournalEntryLine, JournalRefe
 from app.models.sale import Sale
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.permissions import APPROVALS_BANK_VERIFY, APPROVALS_BANK_VIEW
-from app.schemas.approvals import ApprovalAccountRow, ApprovalPendingRow, ApprovalVerifyResponse
+from app.schemas.approvals import (
+    ApprovalAccountRow,
+    ApprovalPendingRow,
+    ApprovalRejectResponse,
+    ApprovalVerifyResponse,
+)
+from app.services.accounting_engine import _journal_entry_already_reversed
 from app.services.approvals_helpers import (
     is_missing_bank_verified_column_error,
     journal_line_bank_verified_column_exists,
@@ -104,12 +109,14 @@ def _pending_lines_filter(db: Session, account_id: int):
     return (
         db.query(JournalEntryLine)
         .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
+        .join(ClientPayment, ClientPayment.id == JournalEntry.reference_id)
         .filter(
             JournalEntryLine.account_id == int(account_id),
             JournalEntryLine.debit > _EPS,
             JournalEntryLine.is_bank_verified.is_(False),
             JournalEntry.reference_type == JournalReferenceType.client_payment.value,
             JournalEntry.reference_id.isnot(None),
+            ClientPayment.status == ClientPaymentStatus.approved,
         )
     )
 
@@ -127,12 +134,12 @@ def _count_pending_for_account(db: Session, account_id: int) -> int:
     if not journal_line_bank_verified_column_exists(db):
         return 0
     try:
-        return int(
+        lines = (
             _pending_lines_filter(db, account_id)
-            .with_entities(func.count(JournalEntryLine.id))
-            .scalar()
-            or 0
+            .options(joinedload(JournalEntryLine.journal_entry))
+            .all()
         )
+        return sum(1 for line in lines if _row_from_line(db, line) is not None)
     except SQLAlchemyError as exc:
         if is_missing_bank_verified_column_error(exc):
             return 0
@@ -157,16 +164,21 @@ def _row_from_line(db: Session, line: JournalEntryLine) -> Optional[ApprovalPend
     entry = line.journal_entry
     if entry is None or entry.reference_id is None:
         return None
+    if _journal_entry_already_reversed(db, int(entry.id)):
+        return None
     payment = db.get(ClientPayment, int(entry.reference_id))
     if payment is None or payment.status != ClientPaymentStatus.approved:
         return None
 
     origin_type, origin_label, origin_id = _resolve_origin(db, payment)
     client_name: Optional[str] = None
+    iptv_username: Optional[str] = None
     if payment.client_id is not None:
         client = db.get(Client, int(payment.client_id))
         if client is not None:
             client_name = getattr(client, "display_name", None) or (client.name or client.email or "").strip() or None
+            u = (getattr(client, "last_iptv_username", None) or client.username or "").strip()
+            iptv_username = u or None
 
     ref = (payment.payment_number or payment.reference_number or f"PAG-{payment.id}").strip()
     receipt_url = _receipt_for_payment(db, payment, origin_type, origin_id)
@@ -180,6 +192,7 @@ def _row_from_line(db: Session, line: JournalEntryLine) -> Optional[ApprovalPend
         origin_label=origin_label,
         origin_id=origin_id,
         client_name=client_name,
+        iptv_username=iptv_username,
         amount=Decimal(str(line.debit)),
         currency=str(payment.currency or "USD").upper(),
         receipt_url=receipt_url,
@@ -265,6 +278,58 @@ def list_pending_for_account(
         ) from exc
 
 
+def _load_verifiable_bank_line(db: Session, transaction_id: int) -> JournalEntryLine:
+    line = (
+        db.query(JournalEntryLine)
+        .options(joinedload(JournalEntryLine.journal_entry), joinedload(JournalEntryLine.account))
+        .filter(JournalEntryLine.id == int(transaction_id))
+        .first()
+    )
+    if line is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transacción no encontrada.")
+
+    if line.is_bank_verified:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta transacción ya fue verificada.")
+
+    acc = line.account
+    if acc is None or not is_liquid_deposit_account(acc):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Solo se pueden gestionar ingresos en cuentas de Efectivo y equivalentes.",
+        )
+
+    if Decimal(str(line.debit or 0)) <= _EPS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Solo se gestionan líneas de débito (ingresos).",
+        )
+
+    entry = line.journal_entry
+    if entry is None or entry.reference_type != JournalReferenceType.client_payment.value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Solo cobros de clientes pueden gestionarse en este módulo.",
+        )
+    if entry.reference_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El asiento no tiene pago de cliente vinculado.",
+        )
+    if _journal_entry_already_reversed(db, int(entry.id)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este ingreso ya fue revertido contablemente.",
+        )
+
+    payment = db.get(ClientPayment, int(entry.reference_id))
+    if payment is None or payment.status != ClientPaymentStatus.approved:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El pago vinculado no está aprobado o no existe.",
+        )
+    return line
+
+
 @router.post("/{transaction_id}/verify", response_model=ApprovalVerifyResponse)
 def verify_bank_transaction(
     transaction_id: int,
@@ -274,37 +339,7 @@ def verify_bank_transaction(
     """Marca un ingreso bancario como confirmado en el extracto."""
     _ensure_bank_verified_schema(db)
     try:
-        line = (
-            db.query(JournalEntryLine)
-            .options(joinedload(JournalEntryLine.journal_entry), joinedload(JournalEntryLine.account))
-            .filter(JournalEntryLine.id == int(transaction_id))
-            .first()
-        )
-        if line is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transacción no encontrada.")
-
-        if line.is_bank_verified:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Esta transacción ya fue verificada.")
-
-        acc = line.account
-        if acc is None or not is_liquid_deposit_account(acc):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Solo se pueden verificar ingresos en cuentas de Efectivo y equivalentes.",
-            )
-
-        if Decimal(str(line.debit or 0)) <= _EPS:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Solo se verifican líneas de débito (ingresos).",
-            )
-
-        entry = line.journal_entry
-        if entry is None or entry.reference_type != JournalReferenceType.client_payment.value:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Solo cobros de clientes pueden verificarse en este módulo.",
-            )
+        line = _load_verifiable_bank_line(db, transaction_id)
 
         line.is_bank_verified = True
         db.add(line)
@@ -325,4 +360,61 @@ def verify_bank_transaction(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No se pudo verificar el ingreso.",
+        ) from exc
+
+
+@router.post("/{transaction_id}/reject", response_model=ApprovalRejectResponse)
+def reject_bank_transaction(
+    transaction_id: int,
+    db: DbDep,
+    _: ApprovalsVerifyDep,
+) -> ApprovalRejectResponse:
+    """
+    Marca el ingreso como «no efectivo»: rechaza el pago, revierte el asiento contable
+    y actualiza saldos para que el dinero no quede en la cuenta bancaria.
+    """
+    _ensure_bank_verified_schema(db)
+    try:
+        line = _load_verifiable_bank_line(db, transaction_id)
+        entry = line.journal_entry
+        assert entry is not None and entry.reference_id is not None
+
+        payment = db.get(ClientPayment, int(entry.reference_id))
+        if payment is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado.")
+
+        from app.api.v1.accounts import refresh_accounts_balance_cache
+        from app.services.client_payment_service import void_client_payment
+
+        account_id = int(line.account_id)
+        void_client_payment(
+            db,
+            payment,
+            reason=f"No efectivo — rechazo conciliación bancaria ({payment.payment_number or payment.id})",
+            allow_approved_non_credit=True,
+        )
+        db.flush()
+        refresh_accounts_balance_cache(db, {account_id})
+        db.commit()
+
+        now = datetime.now(timezone.utc)
+        return ApprovalRejectResponse(
+            transaction_id=int(line.id),
+            payment_id=int(payment.id),
+            status="rejected",
+            rejected_at=now,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        if is_missing_bank_verified_column_error(exc):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_MIGRATION_HINT) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No se pudo rechazar el ingreso.",
         ) from exc

@@ -30,6 +30,7 @@ class ApprovalPendingRow(BaseModel):
     origin_label: str
     origin_id: Optional[int] = None
     client_name: Optional[str] = None
+    iptv_username: Optional[str] = Field(default=None, description="Usuario IPTV del cliente que pagó.")
     amount: Decimal
     currency: str
     receipt_url: Optional[str] = None
@@ -42,3 +43,10 @@ class ApprovalVerifyResponse(BaseModel):
     transaction_id: int
     is_bank_verified: bool
     verified_at: datetime
+
+
+class ApprovalRejectResponse(BaseModel):
+    transaction_id: int
+    payment_id: int
+    status: str
+    rejected_at: datetime
