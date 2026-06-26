@@ -8,7 +8,7 @@ export const LEDGER_VERIFICATION_OPTIONS = Object.freeze([
   },
   {
     value: 'not_found',
-    label: 'No existe',
+    label: 'No efectiva',
     activeClass: 'bg-rose-600 text-white ring-rose-700 shadow-sm',
     idleClass: 'bg-rose-50 text-rose-800 ring-rose-100 hover:bg-rose-100',
   },
