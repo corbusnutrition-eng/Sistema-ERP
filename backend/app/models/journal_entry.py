@@ -5,7 +5,7 @@ import enum
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -68,6 +68,8 @@ class JournalEntryLine(Base):
     debit: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
     credit: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
     exchange_rate: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=1)
+    #: Conciliación bancaria (módulo Aprobaciones): el dueño confirmó el ingreso en el banco.
+    is_bank_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     journal_entry: Mapped["JournalEntry"] = relationship(back_populates="lines")
     account: Mapped["Account"] = relationship(
