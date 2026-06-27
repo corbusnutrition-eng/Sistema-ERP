@@ -374,3 +374,24 @@ class ReconciliationTransaction(BaseModel):
 class AccountReconciliationResponse(BaseModel):
     summary: ReconciliationSummary
     transactions: list[ReconciliationTransaction]
+
+
+class InventoryReconciliationCreditRow(BaseModel):
+    username: str
+    credits: int
+    credits_platform: Optional[int] = None
+    credits_erp: Optional[int] = None
+
+
+class InventoryReconciliationAuditResponse(BaseModel):
+    account_id: int
+    account_name: str
+    service_name: str
+    start_date: date
+    end_date: date
+    platform_rows_extracted: int = 0
+    matched: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+    missing_in_erp: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+    missing_in_platform: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+    ai_read_success: bool = True
+    ai_error: Optional[str] = None

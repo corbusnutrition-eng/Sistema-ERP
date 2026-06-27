@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -14,6 +14,7 @@ from app.api.v1.accounts import _build_account_reconciliation
 from app.api.v1.dependencies import require_permission
 from app.database import get_db
 from app.ledger_verification import LEDGER_VERIFICATION_CONFIRMED, normalize_ledger_verification_status
+from app.services.inventory_reconciliation_service import run_inventory_reconciliation_audit
 from app.timezone_utils import now_utc
 from app.models.account import Account
 from app.models.expense import Expense
@@ -22,6 +23,7 @@ from app.models.sale import Sale
 from app.permissions import ACCOUNTING_CHART_VIEW, ACCOUNTING_RECONCILE_EDIT, ACCOUNTING_RECONCILE_VIEW
 from app.schemas.chart_accounts import (
     AccountReconciliationResponse,
+    InventoryReconciliationAuditResponse,
     LedgerVerificationResponse,
     LedgerVerificationUpdate,
 )
@@ -81,6 +83,33 @@ def get_account_reconciliation(
             detail="La conciliación bancaria solo aplica a cuentas de Efectivo y equivalentes.",
         )
     return _build_account_reconciliation(db, account_id, start_date=start_date, end_date=end_date)
+
+
+@router.post(
+    "/accounts/{account_id}/inventory-reconciliation",
+    response_model=InventoryReconciliationAuditResponse,
+)
+async def post_inventory_reconciliation(
+    account_id: int,
+    db: DbDep,
+    _: ReconcileViewDep,
+    start_date: date = Form(..., description="Fecha inicio (YYYY-MM-DD)."),
+    end_date: date = Form(..., description="Fecha fin (YYYY-MM-DD)."),
+    service_name: str = Form(..., description="Servicio IPTV (ej. FLUJO TV, STELLA TV)."),
+    file: UploadFile = File(..., description="Captura de la tabla de consumos del proveedor."),
+) -> InventoryReconciliationAuditResponse:
+    """Auditoría de inventario: extrae consumos de imagen (OpenAI Vision) y cruza con el ERP."""
+    image_bytes = await file.read()
+    media_type = file.content_type or "image/png"
+    return await run_inventory_reconciliation_audit(
+        db,
+        account_id,
+        start_date=start_date,
+        end_date=end_date,
+        service_name=service_name,
+        image_bytes=image_bytes,
+        media_type=media_type,
+    )
 
 
 @router.patch("/ledger/{line_id}/verify", response_model=LedgerVerificationResponse)

@@ -1410,6 +1410,7 @@ export default function AccountHistoryPage() {
           currency={currency}
           defaultStartDate={pendingDateFrom || dateFrom}
           defaultEndDate={pendingDateTo || dateTo}
+          isInventoryAccount={showInventoryCredits}
         />
 
         <LedgerVerificationConfirmModal
