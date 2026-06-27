@@ -250,6 +250,10 @@ class AccountHistoryEntry(BaseModel):
         default=None,
         description="Créditos/unidades de inventario activados en la venta (cuenta inventario).",
     )
+    service_name: Optional[str] = Field(
+        default=None,
+        description="Nombre del producto o servicio de inventario asociado (p. ej. STELLA TV).",
+    )
 
 
 class AccountHistoryResponse(BaseModel):

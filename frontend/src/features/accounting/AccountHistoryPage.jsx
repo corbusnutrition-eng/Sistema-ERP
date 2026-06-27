@@ -101,6 +101,14 @@ const INVENTORY_CREDITS_COLUMN = Object.freeze({
   maxWidth: 180,
 })
 
+const INVENTORY_SERVICE_COLUMN = Object.freeze({
+  id: 'service_name',
+  label: 'SERVICIO',
+  defaultWidth: 148,
+  minWidth: 112,
+  maxWidth: 220,
+})
+
 function insertColumnAfter(columns, afterId, column) {
   const idx = columns.findIndex((c) => c.id === afterId)
   if (idx < 0) return [...columns, column]
@@ -349,6 +357,7 @@ export default function AccountHistoryPage() {
     let cols = base
     if (showInventoryCredits && ledgerMode === 'cash_register') {
       cols = insertColumnAfter(cols, 'notes', INVENTORY_CREDITS_COLUMN)
+      cols = insertColumnAfter(cols, 'credits_qty', INVENTORY_SERVICE_COLUMN)
     }
     if (!showBankVerification) return cols
     return [...cols, BANK_VERIFICATION_COLUMN]
@@ -1073,17 +1082,25 @@ export default function AccountHistoryPage() {
                           )
                         case 'credits_qty':
                           return (
-                            <td key={col.id} style={{ width: w }} className="px-3 py-2.5 align-top text-center min-w-0">
-                              {line.credits_qty != null && Number(line.credits_qty) > 0 ? (
-                                <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-900 ring-1 ring-indigo-200 tabular-nums">
-                                  {Number(line.credits_qty).toLocaleString('es-CO')}
-                                  <span className="font-semibold text-indigo-700/90">
-                                    {Number(line.credits_qty) === 1 ? 'crédito' : 'créditos'}
-                                  </span>
-                                </span>
-                              ) : (
-                                <span className="text-gray-300 text-xs">—</span>
-                              )}
+                            <td
+                              key={col.id}
+                              style={{ width: w }}
+                              className="px-3 py-2.5 align-top text-right tabular-nums text-gray-900 font-medium min-w-0"
+                            >
+                              {line.credits_qty != null && Number(line.credits_qty) > 0
+                                ? Number(line.credits_qty).toLocaleString('es-CO')
+                                : '—'}
+                            </td>
+                          )
+                        case 'service_name':
+                          return (
+                            <td key={col.id} style={{ width: w }} className="px-3 py-2.5 align-top min-w-0">
+                              <span
+                                className="block truncate text-gray-900 font-medium"
+                                title={line.service_name || undefined}
+                              >
+                                {line.service_name?.trim() ? line.service_name : '—'}
+                              </span>
                             </td>
                           )
                         case 'deposit':

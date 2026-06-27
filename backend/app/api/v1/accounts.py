@@ -24,6 +24,7 @@ from app.models.account import Account
 from app.models.client import Client
 from app.models.client_payment import ClientPayment
 from app.models.journal_entry import JournalEntry, JournalEntryLine, JournalReferenceType
+from app.models.product import Product
 from app.models.sale import Sale
 from app.models.screen_stock import ScreenStock
 from app.models.wallet_recharge_request import WalletRechargeRequest
@@ -274,6 +275,78 @@ def _credits_qty_for_ledger_entry(db: Session, entry: JournalEntry, sale: Sale) 
     return None
 
 
+def _provider_display_name(raw: Optional[str]) -> Optional[str]:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    low = s.lower()
+    if low == "flujo":
+        return "FLUJO TV"
+    if low == "stella":
+        return "STELLA TV"
+    return s
+
+
+def _service_name_for_ledger_entry(db: Session, entry: JournalEntry, sale: Sale) -> Optional[str]:
+    """Nombre comercial del producto/servicio de inventario asociado a la venta."""
+    ref_type = (entry.reference_type or "").strip().lower()
+    if ref_type not in (
+        JournalReferenceType.venta_cogs.value,
+        JournalReferenceType.venta.value,
+    ):
+        return None
+
+    prod: Optional[Product] = sale.product
+    if prod is None and sale.product_id is not None:
+        prod = db.get(Product, int(sale.product_id))
+    if prod is not None:
+        name = (prod.name or "").strip()
+        if name:
+            return name
+
+    ch = (sale.inventory_channel or "").strip().lower()
+    if ch == "screen_stock":
+        stock_row: Optional[ScreenStock] = None
+        if sale.screen_stock_id is not None:
+            stock_row = db.get(ScreenStock, int(sale.screen_stock_id))
+        if stock_row is None:
+            stock_row = (
+                db.query(ScreenStock)
+                .filter(ScreenStock.sale_id == int(sale.id))
+                .order_by(ScreenStock.id.asc())
+                .first()
+            )
+        if stock_row is not None:
+            if stock_row.product_id is not None:
+                sp = db.get(Product, int(stock_row.product_id))
+                if sp is not None:
+                    sp_name = (sp.name or "").strip()
+                    if sp_name:
+                        return sp_name
+            pkg = (stock_row.package or "").strip()
+            if pkg:
+                return pkg
+            prov_label = _provider_display_name(stock_row.provider)
+            if prov_label:
+                return prov_label
+
+    from app.services.client_follow_up_service import _product_id_from_invoice_lines
+
+    pid = _product_id_from_invoice_lines(sale)
+    if pid is not None:
+        line_prod = db.get(Product, int(pid))
+        if line_prod is not None:
+            line_name = (line_prod.name or "").strip()
+            if line_name:
+                return line_name
+
+    prov_label = _provider_display_name(sale.inventory_provider)
+    if prov_label:
+        return prov_label
+
+    return None
+
+
 def _journal_reference_label(entry: JournalEntry) -> str:
     ref_type = (entry.reference_type or "").strip()
     ref_id = entry.reference_id
@@ -343,6 +416,7 @@ def _history_line_from_journal_line(
     cur_code: str,
     running_balance: Decimal,
     credits_qty: Optional[int] = None,
+    service_name: Optional[str] = None,
 ) -> AccountHistoryEntry:
     dr = Decimal(str(line.debit)).quantize(Decimal("0.0001"))
     cr = Decimal(str(line.credit)).quantize(Decimal("0.0001"))
@@ -392,6 +466,7 @@ def _history_line_from_journal_line(
             verification_status=verification_status,
             verified_at=verified_at,
             credits_qty=credits_qty,
+            service_name=service_name,
             transaction_reason="Transferencia entre cuentas",
         )
 
@@ -438,6 +513,7 @@ def _history_line_from_journal_line(
             verification_status=verification_status,
             verified_at=verified_at,
             credits_qty=credits_qty,
+            service_name=service_name,
             transaction_reason=line_kind,
         )
 
@@ -477,6 +553,7 @@ def _history_line_from_journal_line(
             verification_status=verification_status,
             verified_at=verified_at,
             credits_qty=credits_qty,
+            service_name=service_name,
             transaction_reason=line_kind,
         )
 
@@ -530,6 +607,7 @@ def _history_line_from_journal_line(
             verification_status=verification_status,
             verified_at=verified_at,
             credits_qty=credits_qty,
+            service_name=service_name,
             transaction_reason=line_kind,
         )
 
@@ -594,6 +672,7 @@ def _history_line_from_journal_line(
             verification_status=verification_status,
             verified_at=verified_at,
             credits_qty=credits_qty,
+            service_name=service_name,
             transaction_reason=line_kind,
         )
 
@@ -628,6 +707,7 @@ def _history_line_from_journal_line(
         verification_status=verification_status,
         verified_at=verified_at,
         credits_qty=credits_qty,
+        service_name=service_name,
         transaction_reason=label,
     )
 
@@ -686,7 +766,7 @@ def _build_account_journal_ledger(
     if sale_ids:
         rows = (
             db.query(Sale)
-            .options(joinedload(Sale.client))
+            .options(joinedload(Sale.client), joinedload(Sale.product))
             .filter(Sale.id.in_(sale_ids))
             .all()
         )
@@ -772,8 +852,10 @@ def _build_account_journal_ledger(
         if _verification_status_for_line(line) == LEDGER_VERIFICATION_CONFIRMED:
             confirmed_running += signed
         credits_qty = None
+        service_name = None
         if _is_inventory_ledger_account(acc) and sale is not None:
             credits_qty = _credits_qty_for_ledger_entry(db, entry, sale)
+            service_name = _service_name_for_ledger_entry(db, entry, sale)
         lines.append(
             _history_line_from_journal_line(
                 line,
@@ -786,6 +868,7 @@ def _build_account_journal_ledger(
                 cur_code=cur_code,
                 running_balance=running,
                 credits_qty=credits_qty,
+                service_name=service_name,
             ),
         )
 
