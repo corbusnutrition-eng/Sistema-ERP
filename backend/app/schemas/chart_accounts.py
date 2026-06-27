@@ -395,3 +395,28 @@ class InventoryReconciliationAuditResponse(BaseModel):
     missing_in_platform: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
     ai_read_success: bool = True
     ai_error: Optional[str] = None
+
+
+class InventoryAuditReportCreate(BaseModel):
+    account_id: int
+    service_name: str
+    start_date: date
+    end_date: date
+    matched_data: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+    missing_erp_data: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+    missing_platform_data: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+
+
+class InventoryAuditReportResponse(BaseModel):
+    id: int
+    account_id: int
+    account_name: Optional[str] = None
+    service_name: str
+    start_date: date
+    end_date: date
+    matched_data: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+    missing_erp_data: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+    missing_platform_data: list[InventoryReconciliationCreditRow] = Field(default_factory=list)
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

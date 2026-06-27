@@ -20,13 +20,21 @@ from app.models.account import Account
 from app.models.expense import Expense
 from app.models.journal_entry import JournalEntryLine
 from app.models.sale import Sale
-from app.permissions import ACCOUNTING_CHART_VIEW, ACCOUNTING_RECONCILE_EDIT, ACCOUNTING_RECONCILE_VIEW
+from app.permissions import (
+    ACCOUNTING_CHART_VIEW,
+    ACCOUNTING_RECONCILE_CREATE,
+    ACCOUNTING_RECONCILE_EDIT,
+    ACCOUNTING_RECONCILE_VIEW,
+)
 from app.schemas.chart_accounts import (
     AccountReconciliationResponse,
+    InventoryAuditReportCreate,
+    InventoryAuditReportResponse,
     InventoryReconciliationAuditResponse,
     LedgerVerificationResponse,
     LedgerVerificationUpdate,
 )
+from app.models.inventory_audit_report import InventoryAuditReport
 
 router = APIRouter(prefix="/accounting", tags=["accounting"])
 
@@ -109,6 +117,93 @@ async def post_inventory_reconciliation(
         service_name=service_name,
         image_bytes=image_bytes,
         media_type=media_type,
+    )
+
+
+@router.post(
+    "/inventory-audits",
+    response_model=InventoryAuditReportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_inventory_audit_report(
+    body: InventoryAuditReportCreate,
+    db: DbDep,
+    _: Annotated[dict, Depends(require_permission(ACCOUNTING_RECONCILE_CREATE))],
+) -> InventoryAuditReportResponse:
+    """Persiste el resultado de una auditoría de inventario (IA vs ERP)."""
+    if body.start_date > body.end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La fecha inicio debe ser anterior o igual a la fecha fin.",
+        )
+    acc = db.get(Account, body.account_id)
+    if acc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada.")
+
+    svc = (body.service_name or "").strip()
+    if not svc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica el servicio.")
+
+    row = InventoryAuditReport(
+        account_id=body.account_id,
+        service_name=svc,
+        start_date=body.start_date,
+        end_date=body.end_date,
+        matched_data=[r.model_dump() for r in body.matched_data],
+        missing_erp_data=[r.model_dump() for r in body.missing_erp_data],
+        missing_platform_data=[r.model_dump() for r in body.missing_platform_data],
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _inventory_audit_report_to_schema(row, acc.name)
+
+
+@router.get(
+    "/inventory-audits",
+    response_model=list[InventoryAuditReportResponse],
+)
+def list_inventory_audit_reports(
+    db: DbDep,
+    _: ReconcileViewDep,
+    account_id: Optional[int] = Query(None, description="Filtrar por cuenta contable."),
+    date_from: Optional[date] = Query(None, description="Filtro inclusive sobre created_at (fecha)."),
+    date_to: Optional[date] = Query(None, description="Filtro inclusive sobre created_at (fecha)."),
+) -> list[InventoryAuditReportResponse]:
+    """Lista reportes de auditoría de inventario guardados."""
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="date_from debe ser anterior o igual a date_to.",
+        )
+
+    q = db.query(InventoryAuditReport).options(joinedload(InventoryAuditReport.account))
+    if account_id is not None:
+        q = q.filter(InventoryAuditReport.account_id == account_id)
+    if date_from is not None:
+        q = q.filter(func.date(InventoryAuditReport.created_at) >= date_from)
+    if date_to is not None:
+        q = q.filter(func.date(InventoryAuditReport.created_at) <= date_to)
+
+    rows = q.order_by(InventoryAuditReport.created_at.desc()).all()
+    return [_inventory_audit_report_to_schema(r, r.account.name if r.account else None) for r in rows]
+
+
+def _inventory_audit_report_to_schema(
+    row: InventoryAuditReport,
+    account_name: Optional[str],
+) -> InventoryAuditReportResponse:
+    return InventoryAuditReportResponse(
+        id=row.id,
+        account_id=row.account_id,
+        account_name=account_name,
+        service_name=row.service_name,
+        start_date=row.start_date,
+        end_date=row.end_date,
+        matched_data=row.matched_data or [],
+        missing_erp_data=row.missing_erp_data or [],
+        missing_platform_data=row.missing_platform_data or [],
+        created_at=row.created_at,
     )
 
 

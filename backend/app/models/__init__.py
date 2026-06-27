@@ -11,6 +11,7 @@ from app.models.client_notification import ClientNotification
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
 from app.models.distributor_custom_price import DistributorCustomPrice
 from app.models.expense import Expense, ExpenseLine
+from app.models.inventory_audit_report import InventoryAuditReport
 from app.models.inventory_screen_credit_drawdown import InventoryScreenCreditDrawdown
 from app.models.iptv_account import IPTVAccount
 from app.models.iptv_screen import IPTVScreen
@@ -47,6 +48,7 @@ __all__ = [
     "ExpenseLine",
     "IPTVAccount",
     "IPTVScreen",
+    "InventoryAuditReport",
     "InventoryScreenCreditDrawdown",
     "JournalEntry",
     "JournalEntryLine",

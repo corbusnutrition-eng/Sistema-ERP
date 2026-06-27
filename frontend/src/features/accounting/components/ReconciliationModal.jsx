@@ -173,6 +173,200 @@ function exportToPDF({ summary, transactions, accountName, reportCurrency }) {
   doc.save(`${buildExportBaseName(summary, accountName)}.pdf`)
 }
 
+function formatAuditCreatedAt(createdAt) {
+  if (!createdAt) return '—'
+  const { dateLine, timeLine } = formatSaleLedgerDateParts(createdAt)
+  return timeLine ? `${dateLine} ${timeLine}` : dateLine
+}
+
+function auditSourceLabel(audit) {
+  return `${audit.service_name} (${audit.start_date} → ${audit.end_date})`
+}
+
+function flattenAuditRows(audits, field) {
+  const out = []
+  for (const audit of audits) {
+    const rows = Array.isArray(audit[field]) ? audit[field] : []
+    for (const row of rows) {
+      out.push({
+        ...row,
+        _source: auditSourceLabel(audit),
+        _service: audit.service_name,
+        _period: `${audit.start_date} → ${audit.end_date}`,
+      })
+    }
+  }
+  return out
+}
+
+function buildConsolidatedExportBaseName(accountName) {
+  const name = sanitizeFilePart(accountName)
+  const today = todayIsoDateEcuador()
+  return `Auditorias_Inventario_${name}_${today}`
+}
+
+function exportConsolidatedInventoryExcel({ audits, accountName }) {
+  if (!Array.isArray(audits) || audits.length === 0) return
+
+  const matched = flattenAuditRows(audits, 'matched_data')
+  const missingErp = flattenAuditRows(audits, 'missing_erp_data')
+  const missingPlatform = flattenAuditRows(audits, 'missing_platform_data')
+
+  const rows = [
+    ['Auditorías de inventario — reporte consolidado'],
+    ['Cuenta', accountName || '—'],
+    ['Total auditorías', audits.length],
+    [],
+    ['Resumen por auditoría'],
+    ['Fecha guardado', 'Servicio', 'Periodo', 'Cuadran', 'Faltan ERP', 'Faltan plataforma'],
+  ]
+
+  for (const audit of audits) {
+    rows.push([
+      formatAuditCreatedAt(audit.created_at),
+      audit.service_name,
+      `${audit.start_date} → ${audit.end_date}`,
+      (audit.matched_data || []).length,
+      (audit.missing_erp_data || []).length,
+      (audit.missing_platform_data || []).length,
+    ])
+  }
+
+  rows.push(
+    [],
+    ['✅ Cuadran perfectamente (consolidado)'],
+    ['Servicio / periodo', 'Usuario', 'Plataforma', 'ERP', 'Créditos'],
+  )
+  for (const row of matched) {
+    rows.push([
+      row._source,
+      row.username,
+      row.credits_platform ?? '',
+      row.credits_erp ?? '',
+      row.credits ?? '',
+    ])
+  }
+
+  rows.push(
+    [],
+    ['⚠️ Faltan en el sistema (consolidado)'],
+    ['Servicio / periodo', 'Usuario', 'Plataforma', 'ERP', 'Créditos'],
+  )
+  for (const row of missingErp) {
+    rows.push([
+      row._source,
+      row.username,
+      row.credits_platform ?? '',
+      row.credits_erp ?? '',
+      row.credits ?? '',
+    ])
+  }
+
+  rows.push(
+    [],
+    ['❓ Faltan en plataforma (consolidado)'],
+    ['Servicio / periodo', 'Usuario', 'Plataforma', 'ERP', 'Créditos'],
+  )
+  for (const row of missingPlatform) {
+    rows.push([
+      row._source,
+      row.username,
+      row.credits_platform ?? '',
+      row.credits_erp ?? '',
+      row.credits ?? '',
+    ])
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+  ws['!cols'] = [{ wch: 28 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 12 }]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Consolidado')
+  XLSX.writeFile(wb, `${buildConsolidatedExportBaseName(accountName)}.xlsx`)
+}
+
+function exportConsolidatedInventoryPDF({ audits, accountName }) {
+  if (!Array.isArray(audits) || audits.length === 0) return
+
+  const matched = flattenAuditRows(audits, 'matched_data')
+  const missingErp = flattenAuditRows(audits, 'missing_erp_data')
+  const missingPlatform = flattenAuditRows(audits, 'missing_platform_data')
+
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  doc.setFontSize(16)
+  doc.text('Auditorías de inventario — consolidado', 14, 14)
+  doc.setFontSize(10)
+  doc.text(`Cuenta: ${accountName || '—'}`, 14, 22)
+  doc.text(`Total auditorías: ${audits.length}`, 14, 28)
+
+  const summaryBody = audits.map((audit) => [
+    formatAuditCreatedAt(audit.created_at),
+    audit.service_name,
+    `${audit.start_date} → ${audit.end_date}`,
+    String((audit.matched_data || []).length),
+    String((audit.missing_erp_data || []).length),
+    String((audit.missing_platform_data || []).length),
+  ])
+
+  autoTable(doc, {
+    startY: 34,
+    head: [['Fecha', 'Servicio', 'Periodo', 'Cuadran', 'Faltan ERP', 'Faltan plat.']],
+    body: summaryBody,
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' },
+    margin: { left: 14, right: 14 },
+  })
+
+  const creditTableHead = [['Servicio / periodo', 'Usuario', 'Plataforma', 'ERP', 'Créditos']]
+  const mapCreditRows = (list) =>
+    list.map((row) => [
+      row._source,
+      row.username,
+      row.credits_platform != null ? String(row.credits_platform) : '—',
+      row.credits_erp != null ? String(row.credits_erp) : '—',
+      row.credits != null ? String(row.credits) : '—',
+    ])
+
+  let y = doc.lastAutoTable.finalY + 8
+  doc.setFontSize(11)
+  doc.text(`Cuadran perfectamente (${matched.length})`, 14, y)
+  autoTable(doc, {
+    startY: y + 3,
+    head: creditTableHead,
+    body: mapCreditRows(matched),
+    styles: { fontSize: 7, cellPadding: 1.5 },
+    headStyles: { fillColor: [16, 185, 129], textColor: 255, fontStyle: 'bold' },
+    margin: { left: 14, right: 14 },
+  })
+
+  y = doc.lastAutoTable.finalY + 8
+  doc.text(`Faltan en el sistema (${missingErp.length})`, 14, y)
+  autoTable(doc, {
+    startY: y + 3,
+    head: creditTableHead,
+    body: mapCreditRows(missingErp),
+    styles: { fontSize: 7, cellPadding: 1.5 },
+    headStyles: { fillColor: [239, 68, 68], textColor: 255, fontStyle: 'bold' },
+    margin: { left: 14, right: 14 },
+  })
+
+  y = doc.lastAutoTable.finalY + 8
+  if (y > 180) {
+    doc.addPage()
+    y = 14
+  }
+  doc.text(`Faltan en plataforma (${missingPlatform.length})`, 14, y)
+  autoTable(doc, {
+    startY: y + 3,
+    head: creditTableHead,
+    body: mapCreditRows(missingPlatform),
+    styles: { fontSize: 7, cellPadding: 1.5 },
+    headStyles: { fillColor: [245, 158, 11], textColor: 255, fontStyle: 'bold' },
+    margin: { left: 14, right: 14 },
+  })
+
+  doc.save(`${buildConsolidatedExportBaseName(accountName)}.pdf`)
+}
+
 const inputCls =
   'w-full px-3 py-2 text-sm border border-gray-200 rounded-xl text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500'
 
@@ -252,6 +446,14 @@ export default function ReconciliationModal({
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [inventoryTab, setInventoryTab] = useState('new')
+  const [savedAudits, setSavedAudits] = useState([])
+  const [savedLoading, setSavedLoading] = useState(false)
+  const [savedError, setSavedError] = useState('')
+  const [historyDateFrom, setHistoryDateFrom] = useState('')
+  const [historyDateTo, setHistoryDateTo] = useState('')
+  const [saveLoading, setSaveLoading] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -264,6 +466,14 @@ export default function ReconciliationModal({
     setReport(null)
     setError('')
     setLoading(false)
+    setInventoryTab('new')
+    setSavedAudits([])
+    setSavedLoading(false)
+    setSavedError('')
+    setHistoryDateFrom('')
+    setHistoryDateTo('')
+    setSaveLoading(false)
+    setSaveSuccess('')
   }, [open, defaultStartDate, defaultEndDate, accountId, isInventoryAccount])
 
   useEffect(() => {
@@ -370,6 +580,60 @@ export default function ReconciliationModal({
     }
   }, [accountId, startDate, endDate, isInventoryAccount, serviceName, imageFile])
 
+  const loadSavedAudits = useCallback(async () => {
+    if (!accountId || accountId < 1) return
+    setSavedLoading(true)
+    setSavedError('')
+    try {
+      const params = { account_id: accountId }
+      if (historyDateFrom) params.date_from = historyDateFrom
+      if (historyDateTo) params.date_to = historyDateTo
+      const { data } = await api.get('/api/v1/accounting/inventory-audits', { params })
+      setSavedAudits(Array.isArray(data) ? data : [])
+    } catch (err) {
+      setSavedAudits([])
+      setSavedError(getApiErrorMessage(err, { fallback: 'No se pudieron cargar las auditorías guardadas.' }))
+    } finally {
+      setSavedLoading(false)
+    }
+  }, [accountId, historyDateFrom, historyDateTo])
+
+  useEffect(() => {
+    if (!open || !isInventoryAccount || inventoryTab !== 'saved') return
+    loadSavedAudits()
+  }, [open, isInventoryAccount, inventoryTab, loadSavedAudits])
+
+  const handleSaveAudit = useCallback(async () => {
+    if (!isInventoryAccount || !report || report.summary || report.ai_read_success === false) return
+    setSaveLoading(true)
+    setSaveSuccess('')
+    setError('')
+    try {
+      await api.post('/api/v1/accounting/inventory-audits', {
+        account_id: accountId,
+        service_name: report.service_name,
+        start_date: report.start_date,
+        end_date: report.end_date,
+        matched_data: report.matched ?? [],
+        missing_erp_data: report.missing_in_erp ?? [],
+        missing_platform_data: report.missing_in_platform ?? [],
+      })
+      setSaveSuccess('Informe de auditoría guardado correctamente.')
+    } catch (err) {
+      setError(getApiErrorMessage(err, { fallback: 'No se pudo guardar el informe de auditoría.' }))
+    } finally {
+      setSaveLoading(false)
+    }
+  }, [accountId, report, isInventoryAccount])
+
+  const handleExportConsolidatedExcel = useCallback(() => {
+    exportConsolidatedInventoryExcel({ audits: savedAudits, accountName })
+  }, [savedAudits, accountName])
+
+  const handleExportConsolidatedPdf = useCallback(() => {
+    exportConsolidatedInventoryPDF({ audits: savedAudits, accountName })
+  }, [savedAudits, accountName])
+
   const handleExportExcel = useCallback(() => {
     if (!report?.summary) return
     exportToExcel({
@@ -447,7 +711,162 @@ export default function ReconciliationModal({
           </button>
         </div>
 
+        {isInventoryAccount ? (
+          <div className="flex gap-1 px-5 pt-3 shrink-0 border-b border-gray-100 bg-white">
+            <button
+              type="button"
+              onClick={() => setInventoryTab('new')}
+              className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+                inventoryTab === 'new'
+                  ? 'border-emerald-600 text-emerald-800 bg-emerald-50/60'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Nueva auditoría
+            </button>
+            <button
+              type="button"
+              onClick={() => setInventoryTab('saved')}
+              className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+                inventoryTab === 'saved'
+                  ? 'border-blue-600 text-blue-800 bg-blue-50/60'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Auditorías guardadas
+            </button>
+          </div>
+        ) : null}
+
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {isInventoryAccount && inventoryTab === 'saved' ? (
+            <>
+              <div className="rounded-xl border border-gray-200 bg-slate-50/60 p-4 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto] gap-3 items-end">
+                  <div>
+                    <label htmlFor="history-from" className="block text-xs font-medium text-gray-600 mb-1">
+                      Fecha guardado desde
+                    </label>
+                    <input
+                      id="history-from"
+                      type="date"
+                      value={historyDateFrom}
+                      onChange={(e) => setHistoryDateFrom(e.target.value)}
+                      disabled={savedLoading}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="history-to" className="block text-xs font-medium text-gray-600 mb-1">
+                      Fecha guardado hasta
+                    </label>
+                    <input
+                      id="history-to"
+                      type="date"
+                      value={historyDateTo}
+                      onChange={(e) => setHistoryDateTo(e.target.value)}
+                      disabled={savedLoading}
+                      className={inputCls}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadSavedAudits}
+                    disabled={savedLoading}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 h-10"
+                  >
+                    {savedLoading ? <Loader2 size={16} className="animate-spin shrink-0" aria-hidden /> : null}
+                    Actualizar lista
+                  </button>
+                </div>
+                {savedError ? (
+                  <p className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{savedError}</p>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportConsolidatedExcel}
+                  disabled={savedAudits.length === 0 || savedLoading}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-emerald-800 bg-emerald-50 ring-1 ring-emerald-200 hover:bg-emerald-100 disabled:opacity-40 transition-colors"
+                >
+                  <FileSpreadsheet size={16} aria-hidden />
+                  Exportar consolidado Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportConsolidatedPdf}
+                  disabled={savedAudits.length === 0 || savedLoading}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 transition-colors"
+                >
+                  <FileText size={16} aria-hidden />
+                  Exportar consolidado PDF
+                </button>
+              </div>
+
+              {savedLoading ? (
+                <p className="text-sm text-gray-500 text-center py-8 flex items-center justify-center gap-2">
+                  <Loader2 size={16} className="animate-spin" aria-hidden />
+                  Cargando auditorías…
+                </p>
+              ) : savedAudits.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-8">
+                  No hay auditorías guardadas{historyDateFrom || historyDateTo ? ' en este rango' : ''}.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-gray-200">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-slate-50/80">
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          Fecha auditoría
+                        </th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          Servicio
+                        </th>
+                        <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          Rango de fechas
+                        </th>
+                        <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          Cuadran
+                        </th>
+                        <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          Faltan ERP
+                        </th>
+                        <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                          Faltan plat.
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {savedAudits.map((audit) => (
+                        <tr key={audit.id} className="hover:bg-slate-50/50">
+                          <td className="px-3 py-2.5 whitespace-nowrap text-gray-900">
+                            {formatAuditCreatedAt(audit.created_at)}
+                          </td>
+                          <td className="px-3 py-2.5 font-medium text-gray-900">{audit.service_name}</td>
+                          <td className="px-3 py-2.5 text-gray-700 tabular-nums">
+                            {audit.start_date} → {audit.end_date}
+                          </td>
+                          <td className="px-3 py-2.5 text-center tabular-nums text-emerald-700">
+                            {(audit.matched_data || []).length}
+                          </td>
+                          <td className="px-3 py-2.5 text-center tabular-nums text-red-700">
+                            {(audit.missing_erp_data || []).length}
+                          </td>
+                          <td className="px-3 py-2.5 text-center tabular-nums text-amber-700">
+                            {(audit.missing_platform_data || []).length}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
           <div className="rounded-xl border border-gray-200 bg-slate-50/60 p-4">
             <div
               className={`grid grid-cols-1 gap-3 items-end ${isInventoryAccount ? 'sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]' : 'sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]'}`}
@@ -634,6 +1053,23 @@ export default function ReconciliationModal({
                       />
                     </div>
                   </section>
+
+                  <div className="pt-2 space-y-3 border-t border-gray-100">
+                    {saveSuccess ? (
+                      <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                        {saveSuccess}
+                      </p>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={handleSaveAudit}
+                      disabled={saveLoading || loading}
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-colors"
+                    >
+                      {saveLoading ? <Loader2 size={16} className="animate-spin shrink-0" aria-hidden /> : null}
+                      💾 Guardar informe de auditoría
+                    </button>
+                  </div>
                 </>
               )}
             </>
@@ -780,6 +1216,8 @@ export default function ReconciliationModal({
                   : 'Selecciona un rango de fechas y pulsa «Generar cuadre» para ver el reporte.'}
               </p>
             )
+          )}
+            </>
           )}
         </div>
       </div>
