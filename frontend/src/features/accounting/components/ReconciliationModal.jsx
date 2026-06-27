@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CheckSquare, FileSpreadsheet, FileText, ImagePlus, Loader2, Upload, X } from 'lucide-react'
+import { CheckSquare, FileSpreadsheet, FileText, ImagePlus, Loader2, X } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
@@ -203,6 +203,118 @@ function buildConsolidatedExportBaseName(accountName) {
   const name = sanitizeFilePart(accountName)
   const today = todayIsoDateEcuador()
   return `Auditorias_Inventario_${name}_${today}`
+}
+
+function buildSingleAuditExportBaseName(audit, accountName) {
+  const name = sanitizeFilePart(accountName || audit?.account_name)
+  const svc = sanitizeFilePart(audit?.service_name)
+  const start = audit?.start_date ?? 'inicio'
+  const end = audit?.end_date ?? 'fin'
+  return `Auditoria_${name}_${svc}_${start}_al_${end}`
+}
+
+function mapInventoryCreditRowForExport(row) {
+  return [
+    row.username ?? '—',
+    row.credits_platform != null ? row.credits_platform : '',
+    row.credits_erp != null ? row.credits_erp : '',
+    row.credits != null ? row.credits : '',
+  ]
+}
+
+function exportSingleInventoryAuditExcel({ audit, accountName }) {
+  if (!audit) return
+
+  const head = ['Usuario', 'Plataforma', 'ERP', 'Créditos']
+  const meta = [
+    ['Auditoría de inventario'],
+    ['Cuenta', accountName || audit.account_name || '—'],
+    ['Servicio', audit.service_name],
+    ['Periodo', `${audit.start_date} al ${audit.end_date}`],
+    ['Filas leídas (IA)', audit.platform_rows_extracted ?? 0],
+    [],
+  ]
+
+  const mkRows = (rows) => [head, ...(Array.isArray(rows) ? rows : []).map(mapInventoryCreditRowForExport)]
+
+  const wb = XLSX.utils.book_new()
+
+  const wsMatched = XLSX.utils.aoa_to_sheet([...meta, ['✅ Cuadran perfectamente'], ...mkRows(audit.matched)])
+  const wsErp = XLSX.utils.aoa_to_sheet([...meta, ['⚠️ Faltan en el sistema'], ...mkRows(audit.missing_in_erp)])
+  const wsPlatform = XLSX.utils.aoa_to_sheet([
+    ...meta,
+    ['❓ Faltan en plataforma'],
+    ...mkRows(audit.missing_in_platform),
+  ])
+
+  wsMatched['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]
+  wsErp['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]
+  wsPlatform['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 12 }, { wch: 12 }]
+
+  XLSX.utils.book_append_sheet(wb, wsMatched, 'Cuadran')
+  XLSX.utils.book_append_sheet(wb, wsErp, 'Faltan ERP')
+  XLSX.utils.book_append_sheet(wb, wsPlatform, 'Faltan plataforma')
+  XLSX.writeFile(wb, `${buildSingleAuditExportBaseName(audit, accountName)}.xlsx`)
+}
+
+function exportSingleInventoryAuditPDF({ audit, accountName }) {
+  if (!audit) return
+
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  const displayName = accountName || audit.account_name || '—'
+  const creditHead = [['Usuario', 'Plataforma', 'ERP', 'Créditos']]
+  const mapBody = (rows) =>
+    (Array.isArray(rows) ? rows : []).map((row) =>
+      mapInventoryCreditRowForExport(row).map((v) => (v === '' ? '—' : String(v))),
+    )
+
+  doc.setFontSize(16)
+  doc.text('Auditoría de inventario', 14, 14)
+  doc.setFontSize(10)
+  doc.text(`Cuenta: ${displayName}`, 14, 22)
+  doc.text(`Servicio: ${audit.service_name}`, 14, 28)
+  doc.text(`Periodo: ${audit.start_date} al ${audit.end_date}`, 14, 34)
+  doc.text(`Filas leídas (IA): ${audit.platform_rows_extracted ?? 0}`, 14, 40)
+
+  let y = 48
+  doc.setFontSize(11)
+  doc.text(`Cuadran perfectamente (${(audit.matched || []).length})`, 14, y)
+  autoTable(doc, {
+    startY: y + 3,
+    head: creditHead,
+    body: mapBody(audit.matched),
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [16, 185, 129], textColor: 255, fontStyle: 'bold' },
+    margin: { left: 14, right: 14 },
+  })
+
+  y = doc.lastAutoTable.finalY + 8
+  doc.text(`Faltan en el sistema (${(audit.missing_in_erp || []).length})`, 14, y)
+  autoTable(doc, {
+    startY: y + 3,
+    head: creditHead,
+    body: mapBody(audit.missing_in_erp),
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [239, 68, 68], textColor: 255, fontStyle: 'bold' },
+    margin: { left: 14, right: 14 },
+  })
+
+  y = doc.lastAutoTable.finalY + 8
+  if (y > 180) {
+    doc.addPage()
+    y = 14
+  }
+  doc.text(`Faltan en plataforma (${(audit.missing_in_platform || []).length})`, 14, y)
+  autoTable(doc, {
+    startY: y + 3,
+    head: creditHead,
+    body: mapBody(audit.missing_in_platform),
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [245, 158, 11], textColor: 255, fontStyle: 'bold' },
+    margin: { left: 14, right: 14 },
+  })
+
+  doc.save(`${buildSingleAuditExportBaseName(audit, accountName)}.pdf`)
 }
 
 function exportConsolidatedInventoryExcel({ audits, accountName }) {
@@ -440,8 +552,8 @@ export default function ReconciliationModal({
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [serviceName, setServiceName] = useState(INVENTORY_SERVICE_OPTIONS[0].value)
-  const [imageFile, setImageFile] = useState(null)
-  const [imagePreview, setImagePreview] = useState('')
+  const [imageFiles, setImageFiles] = useState([])
+  const [imagePreviews, setImagePreviews] = useState([])
   const [dragActive, setDragActive] = useState(false)
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -460,8 +572,8 @@ export default function ReconciliationModal({
     setStartDate(defaultStartDate || monthStartIso())
     setEndDate(defaultEndDate || todayIsoDateEcuador())
     setServiceName(INVENTORY_SERVICE_OPTIONS[0].value)
-    setImageFile(null)
-    setImagePreview('')
+    setImageFiles([])
+    setImagePreviews([])
     setDragActive(false)
     setReport(null)
     setError('')
@@ -478,47 +590,77 @@ export default function ReconciliationModal({
 
   useEffect(() => {
     return () => {
-      if (imagePreview?.startsWith('blob:')) {
-        URL.revokeObjectURL(imagePreview)
-      }
+      imagePreviews.forEach((url) => {
+        if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
+      })
     }
-  }, [imagePreview])
+  }, [imagePreviews])
 
-  const setSelectedImage = useCallback((file) => {
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setError('Selecciona un archivo de imagen (JPG, PNG o WebP).')
-      return
-    }
-    if (file.size > 12 * 1024 * 1024) {
-      setError('La imagen supera el tamaño máximo de 12 MB.')
-      return
-    }
-    setError('')
-    setImageFile(file)
-    setImagePreview((prev) => {
-      if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev)
-      return URL.createObjectURL(file)
+  const revokePreviewUrls = useCallback((urls) => {
+    urls.forEach((url) => {
+      if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
     })
   }, [])
 
+  const addImages = useCallback(
+    (fileList) => {
+      if (!fileList?.length) return
+      const validFiles = []
+      const newPreviews = []
+      let rejected = false
+
+      for (const file of Array.from(fileList)) {
+        if (!file.type.startsWith('image/')) {
+          rejected = true
+          continue
+        }
+        if (file.size > 12 * 1024 * 1024) {
+          rejected = true
+          continue
+        }
+        validFiles.push(file)
+        newPreviews.push(URL.createObjectURL(file))
+      }
+
+      if (rejected && validFiles.length === 0) {
+        setError('Selecciona imágenes JPG, PNG o WebP de hasta 12 MB cada una.')
+        return
+      }
+      if (validFiles.length === 0) return
+
+      if (rejected) {
+        setError('Algunos archivos se omitieron por formato o tamaño no válido.')
+      } else {
+        setError('')
+      }
+
+      setImageFiles((prev) => [...prev, ...validFiles])
+      setImagePreviews((prev) => [...prev, ...newPreviews])
+    },
+    [],
+  )
+
+  const clearImages = useCallback(() => {
+    revokePreviewUrls(imagePreviews)
+    setImageFiles([])
+    setImagePreviews([])
+  }, [imagePreviews, revokePreviewUrls])
+
   const handleFileInputChange = useCallback(
     (e) => {
-      const file = e.target.files?.[0]
-      if (file) setSelectedImage(file)
+      addImages(e.target.files)
       e.target.value = ''
     },
-    [setSelectedImage],
+    [addImages],
   )
 
   const handleDrop = useCallback(
     (e) => {
       e.preventDefault()
       setDragActive(false)
-      const file = e.dataTransfer.files?.[0]
-      if (file) setSelectedImage(file)
+      addImages(e.dataTransfer.files)
     },
-    [setSelectedImage],
+    [addImages],
   )
 
   const generateReport = useCallback(async () => {
@@ -537,8 +679,8 @@ export default function ReconciliationModal({
         setError('Selecciona el servicio a conciliar.')
         return
       }
-      if (!imageFile) {
-        setError('Sube la captura de pantalla de la plataforma IPTV.')
+      if (imageFiles.length === 0) {
+        setError('Sube al menos una captura de pantalla de la plataforma IPTV.')
         return
       }
     }
@@ -551,7 +693,9 @@ export default function ReconciliationModal({
         formData.append('start_date', startDate)
         formData.append('end_date', endDate)
         formData.append('service_name', serviceName.trim())
-        formData.append('file', imageFile)
+        for (const file of imageFiles) {
+          formData.append('files', file)
+        }
         const { data } = await api.post(
           `/api/v1/accounting/accounts/${accountId}/inventory-reconciliation`,
           formData,
@@ -578,7 +722,7 @@ export default function ReconciliationModal({
     } finally {
       setLoading(false)
     }
-  }, [accountId, startDate, endDate, isInventoryAccount, serviceName, imageFile])
+  }, [accountId, startDate, endDate, isInventoryAccount, serviceName, imageFiles])
 
   const loadSavedAudits = useCallback(async () => {
     if (!accountId || accountId < 1) return
@@ -625,6 +769,16 @@ export default function ReconciliationModal({
       setSaveLoading(false)
     }
   }, [accountId, report, isInventoryAccount])
+
+  const handleExportSingleAuditExcel = useCallback(() => {
+    if (!isInventoryAccount || !report || report.summary) return
+    exportSingleInventoryAuditExcel({ audit: report, accountName })
+  }, [report, accountName, isInventoryAccount])
+
+  const handleExportSingleAuditPdf = useCallback(() => {
+    if (!isInventoryAccount || !report || report.summary) return
+    exportSingleInventoryAuditPDF({ audit: report, accountName })
+  }, [report, accountName, isInventoryAccount])
 
   const handleExportConsolidatedExcel = useCallback(() => {
     exportConsolidatedInventoryExcel({ audits: savedAudits, accountName })
@@ -936,6 +1090,7 @@ export default function ReconciliationModal({
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   accept="image/jpeg,image/png,image/webp,image/gif"
                   className="sr-only"
                   onChange={handleFileInputChange}
@@ -960,27 +1115,41 @@ export default function ReconciliationModal({
                       : 'border-gray-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/30'
                   }`}
                 >
-                  {imagePreview ? (
-                    <img
-                      src={imagePreview}
-                      alt="Vista previa de la captura IPTV"
-                      className="max-h-40 rounded-lg object-contain shadow-sm"
-                    />
+                  {imagePreviews.length > 0 ? (
+                    <div className="flex flex-col items-center gap-2 w-full">
+                      <div className="flex flex-wrap justify-center gap-2 max-h-32 overflow-y-auto w-full">
+                        {imagePreviews.map((src, idx) => (
+                          <img
+                            key={`${src}-${idx}`}
+                            src={src}
+                            alt={`Vista previa ${idx + 1}`}
+                            className="h-16 w-16 rounded-lg object-cover shadow-sm border border-gray-200"
+                          />
+                        ))}
+                      </div>
+                      <p className="text-sm font-medium text-emerald-800">
+                        {imageFiles.length} {imageFiles.length === 1 ? 'imagen seleccionada' : 'imágenes seleccionadas'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          clearImages()
+                        }}
+                        className="text-xs text-gray-500 hover:text-red-600 underline"
+                      >
+                        Quitar todas
+                      </button>
+                    </div>
                   ) : (
                     <>
                       <ImagePlus size={28} className="text-emerald-600" aria-hidden />
                       <p className="text-sm text-gray-700 text-center">
-                        Arrastra la imagen aquí o haz clic para seleccionar
+                        Arrastra una o varias imágenes aquí o haz clic para seleccionar
                       </p>
-                      <p className="text-xs text-gray-500">JPG, PNG o WebP · máx. 12 MB</p>
+                      <p className="text-xs text-gray-500">JPG, PNG o WebP · máx. 12 MB por imagen</p>
                     </>
                   )}
-                  {imageFile ? (
-                    <p className="text-xs text-emerald-800 font-medium flex items-center gap-1">
-                      <Upload size={14} aria-hidden />
-                      {imageFile.name}
-                    </p>
-                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1010,6 +1179,41 @@ export default function ReconciliationModal({
                       Filas leídas:{' '}
                       <strong className="text-gray-700 tabular-nums">{inventoryReport.platform_rows_extracted ?? 0}</strong>
                     </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {saveSuccess ? (
+                      <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                        {saveSuccess}
+                      </p>
+                    ) : null}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSaveAudit}
+                        disabled={saveLoading || loading}
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-colors"
+                      >
+                        {saveLoading ? <Loader2 size={16} className="animate-spin shrink-0" aria-hidden /> : null}
+                        💾 Guardar Auditoría
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleExportSingleAuditExcel}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-emerald-800 bg-emerald-50 ring-1 ring-emerald-200 hover:bg-emerald-100 transition-colors"
+                      >
+                        <FileSpreadsheet size={16} aria-hidden />
+                        📊 Exportar Excel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleExportSingleAuditPdf}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 transition-colors"
+                      >
+                        <FileText size={16} aria-hidden />
+                        📄 Exportar PDF
+                      </button>
+                    </div>
                   </div>
 
                   <section className="space-y-2">
@@ -1053,23 +1257,6 @@ export default function ReconciliationModal({
                       />
                     </div>
                   </section>
-
-                  <div className="pt-2 space-y-3 border-t border-gray-100">
-                    {saveSuccess ? (
-                      <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-                        {saveSuccess}
-                      </p>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={handleSaveAudit}
-                      disabled={saveLoading || loading}
-                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-colors"
-                    >
-                      {saveLoading ? <Loader2 size={16} className="animate-spin shrink-0" aria-hidden /> : null}
-                      💾 Guardar informe de auditoría
-                    </button>
-                  </div>
                 </>
               )}
             </>

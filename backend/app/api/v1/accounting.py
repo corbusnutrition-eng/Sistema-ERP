@@ -104,19 +104,28 @@ async def post_inventory_reconciliation(
     start_date: date = Form(..., description="Fecha inicio (YYYY-MM-DD)."),
     end_date: date = Form(..., description="Fecha fin (YYYY-MM-DD)."),
     service_name: str = Form(..., description="Servicio IPTV (ej. FLUJO TV, STELLA TV)."),
-    file: UploadFile = File(..., description="Captura de la tabla de consumos del proveedor."),
+    files: list[UploadFile] = File(..., description="Capturas de la tabla de consumos del proveedor."),
 ) -> InventoryReconciliationAuditResponse:
-    """Auditoría de inventario: extrae consumos de imagen (OpenAI Vision) y cruza con el ERP."""
-    image_bytes = await file.read()
-    media_type = file.content_type or "image/png"
+    """Auditoría de inventario: extrae consumos de imágenes (OpenAI Vision) y cruza con el ERP."""
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sube al menos una imagen.",
+        )
+
+    images: list[tuple[bytes, str]] = []
+    for upload in files:
+        image_bytes = await upload.read()
+        media_type = upload.content_type or "image/png"
+        images.append((image_bytes, media_type))
+
     return await run_inventory_reconciliation_audit(
         db,
         account_id,
         start_date=start_date,
         end_date=end_date,
         service_name=service_name,
-        image_bytes=image_bytes,
-        media_type=media_type,
+        images=images,
     )
 
 

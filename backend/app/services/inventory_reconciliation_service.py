@@ -24,9 +24,12 @@ from app.schemas.chart_accounts import (
 logger = logging.getLogger(__name__)
 
 _INVENTORY_VISION_PROMPT = (
-    "Actúa como un extractor de datos. Analiza esta imagen de una tabla de consumos. "
-    "Extrae las filas y devuelve ÚNICAMENTE un arreglo JSON válido donde cada objeto tenga "
+    "Actúa como un extractor de datos. Analiza las imágenes adjuntas de tablas de consumos "
+    "(pueden ser varias capturas del mismo lote). Extrae TODAS las filas de TODAS las imágenes "
+    "y devuelve ÚNICAMENTE un arreglo JSON válido donde cada objeto tenga "
     "'username' (columna Nombre) y 'credits' (columna Comprar créditos, como entero). "
+    "Combina los resultados en un solo arreglo sin duplicar filas idénticas; si el mismo usuario "
+    "aparece en varias imágenes, suma sus créditos en un único objeto. "
     "No incluyas markdown ni texto extra."
 )
 
@@ -34,6 +37,27 @@ _ALLOWED_IMAGE_TYPES = frozenset(
     {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
 )
 _MAX_IMAGE_BYTES = 12 * 1024 * 1024
+_MAX_IMAGES = 20
+
+
+def _normalize_image_content_type(media_type: str) -> str:
+    return (media_type or "image/png").split(";")[0].strip().lower()
+
+
+def _validate_image_payload(image_bytes: bytes, media_type: str, *, index: Optional[int] = None) -> str:
+    label = f" imagen {index}" if index is not None else ""
+    if len(image_bytes) > _MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"La{label} supera el tamaño máximo permitido (12 MB).",
+        )
+    ct = _normalize_image_content_type(media_type)
+    if ct not in _ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Formato de{label} no soportado. Usa JPG, PNG o WebP.",
+        )
+    return ct
 
 
 def _norm_username(raw: Optional[str]) -> str:
@@ -174,7 +198,15 @@ def compare_inventory_credits(
     return matched, missing_in_erp, missing_in_platform
 
 
-async def extract_platform_credits_from_image(image_bytes: bytes, media_type: str) -> list[dict[str, Any]]:
+async def extract_platform_credits_from_images(
+    images: list[tuple[bytes, str]],
+) -> list[dict[str, Any]]:
+    if not images:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sube al menos una imagen.",
+        )
+
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(
@@ -190,8 +222,23 @@ async def extract_platform_credits_from_image(image_bytes: bytes, media_type: st
             detail="La librería openai no está instalada en el servidor.",
         ) from exc
 
-    b64 = base64.b64encode(image_bytes).decode()
-    data_url = f"data:{media_type};base64,{b64}"
+    content: list[dict[str, Any]] = []
+    for image_bytes, media_type in images:
+        ct = _normalize_image_content_type(media_type)
+        b64 = base64.b64encode(image_bytes).decode()
+        data_url = f"data:{ct};base64,{b64}"
+        content.append({"type": "image_url", "image_url": {"url": data_url, "detail": "high"}})
+
+    n = len(images)
+    content.append(
+        {
+            "type": "text",
+            "text": (
+                f"Extrae todas las filas visibles de las {n} imagen(es) y devuelve un único arreglo JSON "
+                "combinado con todos los consumos."
+            ),
+        }
+    )
 
     client = AsyncOpenAI(api_key=api_key)
     try:
@@ -200,20 +247,14 @@ async def extract_platform_credits_from_image(image_bytes: bytes, media_type: st
             max_tokens=4096,
             messages=[
                 {"role": "system", "content": _INVENTORY_VISION_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
-                        {"type": "text", "text": "Extrae todas las filas visibles de la tabla."},
-                    ],
-                },
+                {"role": "user", "content": content},
             ],
         )
     except Exception as exc:
         logger.exception("OpenAI inventory vision failed")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"No se pudo analizar la imagen con IA: {exc}",
+            detail=f"No se pudo analizar las imágenes con IA: {exc}",
         ) from exc
 
     raw = (resp.choices[0].message.content or "").strip()
@@ -227,7 +268,7 @@ async def extract_platform_credits_from_image(image_bytes: bytes, media_type: st
         logger.warning("OpenAI inventory vision returned non-JSON: %r", raw[:500])
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="La IA no pudo devolver un JSON válido. Intenta con una captura más nítida.",
+            detail="La IA no pudo devolver un JSON válido. Intenta con capturas más nítidas.",
         ) from exc
 
     return _parse_platform_rows(parsed)
@@ -240,13 +281,23 @@ async def run_inventory_reconciliation_audit(
     start_date: date,
     end_date: date,
     service_name: str,
-    image_bytes: bytes,
-    media_type: str,
+    images: list[tuple[bytes, str]],
 ) -> InventoryReconciliationAuditResponse:
     if start_date > end_date:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="La fecha inicio debe ser anterior o igual a la fecha fin.",
+        )
+
+    if not images:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sube al menos una imagen.",
+        )
+    if len(images) > _MAX_IMAGES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Máximo {_MAX_IMAGES} imágenes por auditoría.",
         )
 
     acc = db.get(Account, account_id)
@@ -262,23 +313,15 @@ async def run_inventory_reconciliation_audit(
     if not svc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica el servicio a conciliar.")
 
-    if len(image_bytes) > _MAX_IMAGE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="La imagen supera el tamaño máximo permitido (12 MB).",
-        )
-
-    ct = (media_type or "image/png").split(";")[0].strip().lower()
-    if ct not in _ALLOWED_IMAGE_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Formato de imagen no soportado. Usa JPG, PNG o WebP.",
-        )
+    normalized_images: list[tuple[bytes, str]] = []
+    for idx, (image_bytes, media_type) in enumerate(images, start=1):
+        ct = _validate_image_payload(image_bytes, media_type, index=idx)
+        normalized_images.append((image_bytes, ct))
 
     ai_error: Optional[str] = None
     platform_rows: list[dict[str, Any]] = []
     try:
-        platform_rows = await extract_platform_credits_from_image(image_bytes, ct)
+        platform_rows = await extract_platform_credits_from_images(normalized_images)
     except HTTPException:
         raise
     except ValueError as exc:
