@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CheckSquare, Loader2, X } from 'lucide-react'
+import { CheckSquare, FileSpreadsheet, FileText, Loader2, X } from 'lucide-react'
+import { jsPDF } from 'jspdf'
+import autoTable from 'jspdf-autotable'
+import * as XLSX from 'xlsx'
 import api from '../../../api/axios'
 import { getApiErrorMessage } from '../../../lib/apiErrors'
 import { formatSaleLedgerDateParts } from '../../sales/saleTableHelpers'
@@ -17,6 +20,12 @@ function formatMoney(n, currency) {
   } catch {
     return `${Number(n || 0).toFixed(2)} ${currency}`
   }
+}
+
+function formatMoneyPlain(n, currency) {
+  const num = Number(n)
+  if (!Number.isFinite(num)) return '—'
+  return `${num.toFixed(2)} ${currency || 'USD'}`
 }
 
 function verificationStatusLabel(value) {
@@ -38,6 +47,130 @@ function monthStartIso() {
   const today = todayIsoDateEcuador()
   const [y, m] = today.split('-')
   return `${y}-${m}-01`
+}
+
+function sanitizeFilePart(value) {
+  return (
+    String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 60) || 'Cuenta'
+  )
+}
+
+function buildExportBaseName(summary, accountName) {
+  const name = sanitizeFilePart(accountName || summary?.account_name)
+  const start = summary?.start_date ?? 'inicio'
+  const end = summary?.end_date ?? 'fin'
+  return `Conciliacion_${name}_${start}_al_${end}`
+}
+
+function beneficiaryExportLabel(tx) {
+  const name = String(tx?.client_name ?? '').trim() || '—'
+  const reason = String(tx?.transaction_reason ?? '').trim()
+  return reason ? `${name} — ${reason}` : name
+}
+
+function mapTransactionsForExport(transactions) {
+  return (Array.isArray(transactions) ? transactions : []).map((tx) => {
+    const { dateLine } = formatSaleLedgerDateParts(tx.occurred_at)
+    return {
+      fecha: dateLine,
+      referencia: tx.reference_number || '—',
+      beneficiario: beneficiaryExportLabel(tx),
+      deposito: tx.deposit != null ? Number(tx.deposit) : null,
+      pago: tx.payment != null ? Number(tx.payment) : null,
+      estado: verificationStatusLabel(tx.verification_status),
+    }
+  })
+}
+
+function exportToExcel({ summary, transactions, accountName, reportCurrency }) {
+  if (!summary) return
+
+  const rows = [
+    ['Conciliación bancaria'],
+    ['Cuenta', accountName || summary.account_name || '—'],
+    ['Periodo', `${summary.start_date} al ${summary.end_date}`],
+    ['Moneda', reportCurrency],
+    [],
+    ['Resumen del cuadre'],
+    ['Total confirmado', Number(summary.total_confirmed)],
+    ['Interbancario pendiente', Number(summary.total_interbank)],
+    ['Pagos / retiros', Number(summary.total_payments)],
+    ['Total a cuadrar', Number(summary.total_to_reconcile)],
+    ['Depósitos totales', Number(summary.total_deposits)],
+    ['No efectivas', Number(summary.total_no_effective)],
+    [],
+    ['Fecha', 'Referencia', 'Beneficiario', 'Depósito', 'Pago', 'Estado'],
+  ]
+
+  for (const tx of mapTransactionsForExport(transactions)) {
+    rows.push([
+      tx.fecha,
+      tx.referencia,
+      tx.beneficiario,
+      tx.deposito ?? '',
+      tx.pago ?? '',
+      tx.estado,
+    ])
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+  ws['!cols'] = [{ wch: 14 }, { wch: 16 }, { wch: 36 }, { wch: 14 }, { wch: 14 }, { wch: 18 }]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Conciliacion')
+  XLSX.writeFile(wb, `${buildExportBaseName(summary, accountName)}.xlsx`)
+}
+
+function exportToPDF({ summary, transactions, accountName, reportCurrency }) {
+  if (!summary) return
+
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  const displayName = accountName || summary.account_name || '—'
+
+  doc.setFontSize(16)
+  doc.text('Conciliación bancaria', 14, 14)
+  doc.setFontSize(10)
+  doc.text(`Cuenta: ${displayName}`, 14, 22)
+  doc.text(`Periodo: ${summary.start_date} al ${summary.end_date}`, 14, 28)
+  doc.text(`Moneda: ${reportCurrency}`, 14, 34)
+
+  doc.setFontSize(9)
+  doc.text(`Total confirmado: ${formatMoney(summary.total_confirmed, reportCurrency)}`, 14, 42)
+  doc.text(`Interbancario pendiente: ${formatMoney(summary.total_interbank, reportCurrency)}`, 14, 47)
+  doc.text(`Pagos / retiros: ${formatMoney(summary.total_payments, reportCurrency)}`, 14, 52)
+  doc.text(`Total a cuadrar: ${formatMoney(summary.total_to_reconcile, reportCurrency)}`, 14, 57)
+
+  const body = mapTransactionsForExport(transactions).map((tx) => [
+    tx.fecha,
+    tx.referencia,
+    tx.beneficiario,
+    tx.deposito != null ? formatMoneyPlain(tx.deposito, reportCurrency) : '—',
+    tx.pago != null ? formatMoneyPlain(tx.pago, reportCurrency) : '—',
+    tx.estado,
+  ])
+
+  autoTable(doc, {
+    startY: 64,
+    head: [['Fecha', 'Referencia', 'Beneficiario', 'Depósito', 'Pago', 'Estado']],
+    body,
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [16, 185, 129], textColor: 255, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: 28 },
+      1: { cellWidth: 28 },
+      2: { cellWidth: 72 },
+      3: { halign: 'right', cellWidth: 28 },
+      4: { halign: 'right', cellWidth: 28 },
+      5: { halign: 'center', cellWidth: 28 },
+    },
+    margin: { left: 14, right: 14 },
+  })
+
+  doc.save(`${buildExportBaseName(summary, accountName)}.pdf`)
 }
 
 const inputCls =
@@ -102,6 +235,26 @@ export default function ReconciliationModal({
       setLoading(false)
     }
   }, [accountId, startDate, endDate])
+
+  const handleExportExcel = useCallback(() => {
+    if (!report?.summary) return
+    exportToExcel({
+      summary: report.summary,
+      transactions: report.transactions,
+      accountName,
+      reportCurrency: report.summary.currency || currency,
+    })
+  }, [report, accountName, currency])
+
+  const handleExportPdf = useCallback(() => {
+    if (!report?.summary) return
+    exportToPDF({
+      summary: report.summary,
+      transactions: report.transactions,
+      accountName,
+      reportCurrency: report.summary.currency || currency,
+    })
+  }, [report, accountName, currency])
 
   if (!open) return null
 
@@ -184,6 +337,25 @@ export default function ReconciliationModal({
 
           {summary ? (
             <>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-emerald-800 bg-emerald-50 ring-1 ring-emerald-200 hover:bg-emerald-100 transition-colors"
+                >
+                  <FileSpreadsheet size={16} aria-hidden />
+                  Exportar Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 transition-colors"
+                >
+                  <FileText size={16} aria-hidden />
+                  Exportar PDF
+                </button>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-4">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Total confirmado</p>
