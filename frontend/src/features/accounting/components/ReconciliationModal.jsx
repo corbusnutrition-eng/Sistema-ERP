@@ -646,6 +646,15 @@ export default function ReconciliationModal({
     setImagePreviews([])
   }, [imagePreviews, revokePreviewUrls])
 
+  const removeImageAtIndex = useCallback((index) => {
+    setImagePreviews((prev) => {
+      const url = prev[index]
+      if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
+      return prev.filter((_, i) => i !== index)
+    })
+    setImageFiles((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
   const handleFileInputChange = useCallback(
     (e) => {
       addImages(e.target.files)
@@ -1116,15 +1125,33 @@ export default function ReconciliationModal({
                   }`}
                 >
                   {imagePreviews.length > 0 ? (
-                    <div className="flex flex-col items-center gap-2 w-full">
-                      <div className="flex flex-wrap justify-center gap-2 max-h-32 overflow-y-auto w-full">
+                    <div
+                      className="flex flex-col items-center gap-3 w-full"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      role="presentation"
+                    >
+                      <div className="flex flex-wrap justify-center gap-3 max-h-48 overflow-y-auto w-full px-1 py-1">
                         {imagePreviews.map((src, idx) => (
-                          <img
-                            key={`${src}-${idx}`}
-                            src={src}
-                            alt={`Vista previa ${idx + 1}`}
-                            className="h-16 w-16 rounded-lg object-cover shadow-sm border border-gray-200"
-                          />
+                          <div key={`${src}-${idx}`} className="relative shrink-0">
+                            <img
+                              src={src}
+                              alt={`Vista previa ${idx + 1}`}
+                              title={imageFiles[idx]?.name || `Imagen ${idx + 1}`}
+                              className="h-24 w-24 rounded-xl object-cover shadow-sm border border-gray-200 bg-gray-50"
+                            />
+                            <button
+                              type="button"
+                              aria-label={`Quitar imagen ${idx + 1}`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                removeImageAtIndex(idx)
+                              }}
+                              className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-white shadow-md ring-2 ring-white hover:bg-red-700 transition-colors"
+                            >
+                              <X size={12} strokeWidth={3} aria-hidden />
+                            </button>
+                          </div>
                         ))}
                       </div>
                       <p className="text-sm font-medium text-emerald-800">
@@ -1139,6 +1166,16 @@ export default function ReconciliationModal({
                         className="text-xs text-gray-500 hover:text-red-600 underline"
                       >
                         Quitar todas
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          fileInputRef.current?.click()
+                        }}
+                        className="text-xs text-emerald-700 hover:text-emerald-900 underline"
+                      >
+                        Agregar más imágenes
                       </button>
                     </div>
                   ) : (
