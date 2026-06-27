@@ -26,6 +26,18 @@ export const LEDGER_VERIFICATION_OPTIONS = Object.freeze([
   },
 ])
 
+export const LEDGER_VERIFICATION_CONFIRMED = 'confirmed'
+
+/** PIN requerido para revertir o cambiar una transacción ya confirmada. */
+export const LEDGER_UNCONFIRM_PIN = '301985'
+
+export function verificationStatusLabel(value) {
+  if (value == null || value === '') return '—'
+  const v = String(value).trim().toLowerCase()
+  const opt = LEDGER_VERIFICATION_OPTIONS.find((o) => o.value === v)
+  return opt?.label ?? String(value)
+}
+
 export const BANK_VERIFICATION_COLUMN = Object.freeze({
   id: 'bank_verification',
   label: 'VERIFICACIÓN BANCARIA',

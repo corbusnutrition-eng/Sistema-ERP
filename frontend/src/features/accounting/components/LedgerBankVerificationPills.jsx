@@ -29,7 +29,10 @@ export default function LedgerBankVerificationPills({
             type="button"
             disabled={disabled || saving || lineId == null}
             title={opt.label}
-            onClick={() => onSelect?.(lineId, opt.value)}
+            onClick={() => {
+              if (isActive) return
+              onSelect?.(lineId, opt.value)
+            }}
             className={`w-full flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold ring-1 transition-all
               ${isActive ? opt.activeClass : opt.idleClass}
               ${dimmed ? 'opacity-45' : ''}

@@ -25,6 +25,7 @@ import { toDatetimeLocalEcuador } from '../../utils/datetime'
 import RefundModal from './components/RefundModal'
 import LedgerTransactionDetailModal from './components/LedgerTransactionDetailModal'
 import PendingInterbankModal from './components/PendingInterbankModal'
+import LedgerVerificationConfirmModal from './components/LedgerVerificationConfirmModal'
 import LedgerBankVerificationPills from './components/LedgerBankVerificationPills'
 import {
   BANK_VERIFICATION_COLUMN,
@@ -221,6 +222,7 @@ export default function AccountHistoryPage() {
   const [addTxnMenuOpen, setAddTxnMenuOpen] = useState(false)
   const [refundModalOpen, setRefundModalOpen] = useState(false)
   const [pendingInterbankOpen, setPendingInterbankOpen] = useState(false)
+  const [verificationConfirm, setVerificationConfirm] = useState(null)
   const [detailModal, setDetailModal] = useState(null)
   const [savingVerificationId, setSavingVerificationId] = useState(null)
 
@@ -423,11 +425,31 @@ export default function AccountHistoryPage() {
         ),
       )
       await loadHistory({ silent: true })
+      setVerificationConfirm(null)
     } catch (err) {
       window.alert(getApiErrorMessage(err, 'No se pudo guardar la verificación bancaria.'))
     } finally {
       setSavingVerificationId(null)
     }
+  }
+
+  function requestVerificationChange(lineId, nextStatus) {
+    if (lineId == null) return
+    const next = String(nextStatus ?? '').trim().toLowerCase()
+    if (!next) return
+    const line = lines.find((row) => row.ledger_transaction_id === lineId)
+    const current = line?.verification_status ? String(line.verification_status).trim().toLowerCase() : null
+    if (current === next) return
+    setVerificationConfirm({
+      lineId,
+      currentStatus: current,
+      nextStatus: next,
+    })
+  }
+
+  async function applyPendingVerificationChange() {
+    if (!verificationConfirm) return
+    await setLineVerificationStatus(verificationConfirm.lineId, verificationConfirm.nextStatus)
   }
 
   function openRow(line) {
@@ -1102,7 +1124,7 @@ export default function AccountHistoryPage() {
                                   lineId={line.ledger_transaction_id}
                                   currentStatus={line.verification_status}
                                   saving={savingVerificationId === line.ledger_transaction_id}
-                                  onSelect={setLineVerificationStatus}
+                                  onSelect={requestVerificationChange}
                                 />
                               ) : (
                                 <span className="text-gray-300 text-xs">—</span>
@@ -1305,7 +1327,19 @@ export default function AccountHistoryPage() {
           transactions={lines}
           currency={currency}
           confirmingLineId={savingVerificationId}
-          onConfirm={(lineId) => setLineVerificationStatus(lineId, 'confirmed')}
+          onConfirm={(lineId) => requestVerificationChange(lineId, 'confirmed')}
+        />
+
+        <LedgerVerificationConfirmModal
+          open={verificationConfirm != null}
+          onClose={() => {
+            if (savingVerificationId != null) return
+            setVerificationConfirm(null)
+          }}
+          currentStatus={verificationConfirm?.currentStatus ?? null}
+          nextStatus={verificationConfirm?.nextStatus ?? null}
+          onConfirm={applyPendingVerificationChange}
+          confirming={savingVerificationId != null}
         />
 
         <LedgerTransactionDetailModal
