@@ -3,7 +3,7 @@ import { AlertTriangle, Loader2, X } from 'lucide-react'
 import {
   LEDGER_UNCONFIRM_PIN,
   LEDGER_VERIFICATION_CONFIRMED,
-  verificationStatusLabel,
+  getFormattedStatusText,
 } from '../ledgerVerificationConstants'
 
 /**
@@ -31,7 +31,7 @@ export default function LedgerVerificationConfirmModal({
   const requiresPin =
     String(currentStatus ?? '').trim().toLowerCase() === LEDGER_VERIFICATION_CONFIRMED
 
-  const nextLabel = verificationStatusLabel(nextStatus)
+  const nextStatusText = getFormattedStatusText(nextStatus)
 
   useEffect(() => {
     if (!open) return
@@ -85,8 +85,8 @@ export default function LedgerVerificationConfirmModal({
 
         <div className="px-5 py-4 space-y-4">
           <p className="text-sm text-gray-700">
-            ¿Estás seguro de cambiar el estado de esta transacción a{' '}
-            <span className="font-semibold text-gray-900">{nextLabel}</span>?
+            ¿Estás seguro de marcar la transacción como{' '}
+            <span className="font-semibold text-gray-900">{nextStatusText}</span>?
           </p>
 
           {requiresPin ? (

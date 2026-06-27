@@ -38,6 +38,31 @@ export function verificationStatusLabel(value) {
   return opt?.label ?? String(value)
 }
 
+/** Texto natural en femenino/minúscula para copy de confirmación («marcar como …»). */
+const FORMATTED_STATUS_BY_VALUE = Object.freeze({
+  confirmed: 'confirmada',
+  not_found: 'no efectiva',
+  interbank: 'interbancaria',
+  wrong_account: 'cuenta incorrecta',
+})
+
+const FORMATTED_STATUS_BY_LABEL = Object.freeze({
+  confirmado: 'confirmada',
+  'no efectiva': 'no efectiva',
+  interbancaria: 'interbancaria',
+  'cuenta incorrecta': 'cuenta incorrecta',
+})
+
+export function getFormattedStatusText(status) {
+  if (status == null || status === '') return '—'
+  const raw = String(status).trim()
+  const byValue = FORMATTED_STATUS_BY_VALUE[raw.toLowerCase()]
+  if (byValue) return byValue
+  const byLabel = FORMATTED_STATUS_BY_LABEL[raw.toLowerCase()]
+  if (byLabel) return byLabel
+  return raw.toLowerCase()
+}
+
 export const BANK_VERIFICATION_COLUMN = Object.freeze({
   id: 'bank_verification',
   label: 'VERIFICACIÓN BANCARIA',
