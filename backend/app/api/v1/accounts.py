@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, time, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,6 +25,7 @@ from app.models.client import Client
 from app.models.client_payment import ClientPayment
 from app.models.journal_entry import JournalEntry, JournalEntryLine, JournalReferenceType
 from app.models.sale import Sale
+from app.models.screen_stock import ScreenStock
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.ledger_verification import LEDGER_VERIFICATION_CONFIRMED, normalize_ledger_verification_status
 from app.services.accounting_engine import TRANSFER_REFERENCE_TYPE, post_account_transfer
@@ -224,10 +225,61 @@ def _verified_at_for_line(line: JournalEntryLine):
     return getattr(line, "verified_at", None)
 
 
+def _is_inventory_ledger_account(acc: Account) -> bool:
+    dt = (acc.detail_type or "").strip().lower()
+    return dt == "inventario"
+
+
+def _credits_qty_for_ledger_entry(db: Session, entry: JournalEntry, sale: Sale) -> Optional[int]:
+    """Unidades/créditos de inventario asociados a venta o COGS (solo salidas de inventario)."""
+    ref_type = (entry.reference_type or "").strip().lower()
+    if ref_type not in (
+        JournalReferenceType.venta_cogs.value,
+        JournalReferenceType.venta.value,
+    ):
+        return None
+
+    ch = (sale.inventory_channel or "").strip().lower()
+    if ch == "screen_stock":
+        units = int(sale.inventory_screen_units or 0)
+        if units > 0:
+            return units
+        count = (
+            db.query(func.count(ScreenStock.id))
+            .filter(ScreenStock.sale_id == int(sale.id))
+            .scalar()
+        )
+        if count and int(count) > 0:
+            return int(count)
+        if sale.screen_stock_id:
+            return 1
+        return None
+
+    from app.services.client_follow_up_service import sale_normal_credits_quantity
+
+    qty = sale_normal_credits_quantity(sale)
+    if qty > 0.0001:
+        return int(round(qty))
+
+    if ref_type == JournalReferenceType.venta_cogs.value:
+        try:
+            from app.services.sale_cogs import compute_sale_cogs_breakdown
+
+            breakdown = compute_sale_cogs_breakdown(db, sale)
+            total_q = sum((ln.quantity for ln in breakdown.lines), Decimal("0"))
+            if total_q > Decimal("0.0001"):
+                return int(total_q.to_integral_value(rounding=ROUND_HALF_UP))
+        except Exception:
+            pass
+    return None
+
+
 def _journal_reference_label(entry: JournalEntry) -> str:
     ref_type = (entry.reference_type or "").strip()
     ref_id = entry.reference_id
     if ref_type == JournalReferenceType.venta.value and ref_id is not None:
+        return f"{int(ref_id):04d}"
+    if ref_type == JournalReferenceType.venta_cogs.value and ref_id is not None:
         return f"{int(ref_id):04d}"
     if ref_type == JournalReferenceType.recarga.value and ref_id is not None:
         return _wallet_recharge_reference(int(ref_id))
@@ -245,6 +297,8 @@ def _journal_reference_label(entry: JournalEntry) -> str:
 
 def _journal_line_kind(acc: Account, signed: Decimal, ref_type: str) -> str:
     rt = (ref_type or "").strip().lower()
+    if rt == JournalReferenceType.venta_cogs.value:
+        return "Costo de ventas"
     if rt == TRANSFER_REFERENCE_TYPE:
         return "Transferencia"
     if rt in (JournalReferenceType.venta.value, JournalReferenceType.recarga.value):
@@ -288,6 +342,7 @@ def _history_line_from_journal_line(
     wallet_recharge: Optional[WalletRechargeRequest] = None,
     cur_code: str,
     running_balance: Decimal,
+    credits_qty: Optional[int] = None,
 ) -> AccountHistoryEntry:
     dr = Decimal(str(line.debit)).quantize(Decimal("0.0001"))
     cr = Decimal(str(line.credit)).quantize(Decimal("0.0001"))
@@ -336,6 +391,7 @@ def _history_line_from_journal_line(
             receipt_url=None,
             verification_status=verification_status,
             verified_at=verified_at,
+            credits_qty=credits_qty,
             transaction_reason="Transferencia entre cuentas",
         )
 
@@ -381,6 +437,46 @@ def _history_line_from_journal_line(
             receipt_url=receipt_url,
             verification_status=verification_status,
             verified_at=verified_at,
+            credits_qty=credits_qty,
+            transaction_reason=line_kind,
+        )
+
+    if ref_type == JournalReferenceType.venta_cogs.value and entry.reference_id is not None:
+        cli = sale.client if sale is not None else None
+        client_name = cli.display_name() if cli is not None else (desc_raw[:80] or peer_name or "—")
+        notes_val = sale.notes if sale is not None else None
+        cid = sale.client_id if sale is not None else None
+        iptv_u = _sale_iptv_username(sale, cli)
+        st = sale.status.value if sale is not None else "posted"
+        return AccountHistoryEntry(
+            sale_id=int(entry.reference_id),
+            ledger_transaction_id=line.id,
+            occurred_at=datetime_at_ecuador_midnight(entry.date),
+            reference_number=ref,
+            reference=ref,
+            client_id=cid,
+            client_name=client_name,
+            notes=notes_val or (desc_raw if desc_raw else None),
+            balance_effect=signed,
+            charge_amount=charge,
+            payment_amount=pay_mag,
+            line_kind=line_kind,
+            deposit=charge,
+            payment=pay_mag,
+            deposit_account_id=line.account_id,
+            amount_paid=None,
+            amount_currency=cur_up,
+            transaction_currency=cur_up,
+            exchange_rate=float(line.exchange_rate or 1),
+            local_amount=mo,
+            amount_usd=mo if cur_up == "USD" else Decimal("0"),
+            status=st,
+            running_balance=running_balance,
+            iptv_username=iptv_u,
+            receipt_url=None,
+            verification_status=verification_status,
+            verified_at=verified_at,
+            credits_qty=credits_qty,
             transaction_reason=line_kind,
         )
 
@@ -433,6 +529,7 @@ def _history_line_from_journal_line(
             receipt_url=cp_receipt,
             verification_status=verification_status,
             verified_at=verified_at,
+            credits_qty=credits_qty,
             transaction_reason=line_kind,
         )
 
@@ -496,6 +593,7 @@ def _history_line_from_journal_line(
             receipt_url=wr_receipt,
             verification_status=verification_status,
             verified_at=verified_at,
+            credits_qty=credits_qty,
             transaction_reason=line_kind,
         )
 
@@ -529,6 +627,7 @@ def _history_line_from_journal_line(
         receipt_url=None,
         verification_status=verification_status,
         verified_at=verified_at,
+        credits_qty=credits_qty,
         transaction_reason=label,
     )
 
@@ -579,7 +678,9 @@ def _build_account_journal_ledger(
     sale_ids = {
         int(e.reference_id)
         for e in entries.values()
-        if e.reference_type == JournalReferenceType.venta.value and e.reference_id is not None
+        if e.reference_type
+        in (JournalReferenceType.venta.value, JournalReferenceType.venta_cogs.value)
+        and e.reference_id is not None
     }
     sales_by_id: dict[int, Sale] = {}
     if sale_ids:
@@ -649,7 +750,9 @@ def _build_account_journal_ledger(
         )
         sale = (
             sales_by_id.get(int(entry.reference_id))
-            if entry.reference_type == JournalReferenceType.venta.value and entry.reference_id is not None
+            if entry.reference_type
+            in (JournalReferenceType.venta.value, JournalReferenceType.venta_cogs.value)
+            and entry.reference_id is not None
             else None
         )
         client_payment = (
@@ -668,6 +771,9 @@ def _build_account_journal_ledger(
         running += signed
         if _verification_status_for_line(line) == LEDGER_VERIFICATION_CONFIRMED:
             confirmed_running += signed
+        credits_qty = None
+        if _is_inventory_ledger_account(acc) and sale is not None:
+            credits_qty = _credits_qty_for_ledger_entry(db, entry, sale)
         lines.append(
             _history_line_from_journal_line(
                 line,
@@ -679,6 +785,7 @@ def _build_account_journal_ledger(
                 wallet_recharge=wallet_recharge,
                 cur_code=cur_code,
                 running_balance=running,
+                credits_qty=credits_qty,
             ),
         )
 
@@ -690,6 +797,7 @@ def _build_account_journal_ledger(
         currency=cur_code,
         ledger_display_mode=display_mode,
         show_bank_verification=is_liquid_deposit_account(acc),
+        show_inventory_credits=_is_inventory_ledger_account(acc),
         opening_balance=ob,
         closing_balance=running,
         confirmed_balance=confirmed_running,

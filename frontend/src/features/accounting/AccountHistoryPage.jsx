@@ -93,6 +93,20 @@ const AR_LEDGER_COLUMN_CONFIG = [
 
 const ITEMS_PER_PAGE = 10
 
+const INVENTORY_CREDITS_COLUMN = Object.freeze({
+  id: 'credits_qty',
+  label: 'CRÉDITOS ACTIVADOS',
+  defaultWidth: 132,
+  minWidth: 108,
+  maxWidth: 180,
+})
+
+function insertColumnAfter(columns, afterId, column) {
+  const idx = columns.findIndex((c) => c.id === afterId)
+  if (idx < 0) return [...columns, column]
+  return [...columns.slice(0, idx + 1), column, ...columns.slice(idx + 1)]
+}
+
 function ResizableLedgerTh({ column, width, onColumnResize, children }) {
   const { id, minWidth, maxWidth } = column
   const headerJustify = column.alignHeader === 'right' ? 'justify-end' : ''
@@ -329,11 +343,16 @@ export default function AccountHistoryPage() {
   const currency = meta?.currency || 'USD'
   const ledgerMode = meta?.ledger_display_mode === 'ar_register' ? 'ar_register' : 'cash_register'
   const showBankVerification = Boolean(meta?.show_bank_verification)
+  const showInventoryCredits = Boolean(meta?.show_inventory_credits)
   const columnConfig = useMemo(() => {
     const base = ledgerMode === 'ar_register' ? AR_LEDGER_COLUMN_CONFIG : CASH_LEDGER_COLUMN_CONFIG
-    if (!showBankVerification) return base
-    return [...base, BANK_VERIFICATION_COLUMN]
-  }, [ledgerMode, showBankVerification])
+    let cols = base
+    if (showInventoryCredits && ledgerMode === 'cash_register') {
+      cols = insertColumnAfter(cols, 'notes', INVENTORY_CREDITS_COLUMN)
+    }
+    if (!showBankVerification) return cols
+    return [...cols, BANK_VERIFICATION_COLUMN]
+  }, [ledgerMode, showBankVerification, showInventoryCredits])
   const colCount = columnConfig.length
 
   useEffect(() => {
@@ -1050,6 +1069,21 @@ export default function AccountHistoryPage() {
                               <span className="block truncate text-gray-600" title={(line.notes || '').trim() || undefined}>
                                 {line.notes || '—'}
                               </span>
+                            </td>
+                          )
+                        case 'credits_qty':
+                          return (
+                            <td key={col.id} style={{ width: w }} className="px-3 py-2.5 align-top text-center min-w-0">
+                              {line.credits_qty != null && Number(line.credits_qty) > 0 ? (
+                                <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-900 ring-1 ring-indigo-200 tabular-nums">
+                                  {Number(line.credits_qty).toLocaleString('es-CO')}
+                                  <span className="font-semibold text-indigo-700/90">
+                                    {Number(line.credits_qty) === 1 ? 'crédito' : 'créditos'}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className="text-gray-300 text-xs">—</span>
+                              )}
                             </td>
                           )
                         case 'deposit':

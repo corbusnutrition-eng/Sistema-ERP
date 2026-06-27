@@ -246,6 +246,10 @@ class AccountHistoryEntry(BaseModel):
         default=None,
         description="Fecha/hora UTC en que se marcó como confirmada; null si no aplica.",
     )
+    credits_qty: Optional[int] = Field(
+        default=None,
+        description="Créditos/unidades de inventario activados en la venta (cuenta inventario).",
+    )
 
 
 class AccountHistoryResponse(BaseModel):
@@ -261,6 +265,10 @@ class AccountHistoryResponse(BaseModel):
     show_bank_verification: bool = Field(
         default=False,
         description="True si la cuenta es Efectivo y equivalentes (UI de verificación bancaria).",
+    )
+    show_inventory_credits: bool = Field(
+        default=False,
+        description="True si la cuenta es Inventario (UI columna créditos activados).",
     )
     opening_balance: Decimal
     closing_balance: Decimal

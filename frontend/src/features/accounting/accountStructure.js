@@ -180,6 +180,12 @@ export function isLiquidDepositChartAccount(account) {
   return lp.length > 0
 }
 
+export function isInventoryChartAccount(account) {
+  if (!account || account.account_type !== 'asset') return false
+  const dt = normalizeDetailType(account.detail_type)
+  return dt === 'Inventario' || String(account.detail_type ?? '').trim().toLowerCase() === 'inventario'
+}
+
 export function sortPaymentMethodNames(list) {
   return [...(Array.isArray(list) ? list : [])]
     .filter((m) => m?.is_active !== false)
