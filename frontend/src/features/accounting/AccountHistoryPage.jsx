@@ -25,6 +25,7 @@ import { toDatetimeLocalEcuador } from '../../utils/datetime'
 import RefundModal from './components/RefundModal'
 import LedgerTransactionDetailModal from './components/LedgerTransactionDetailModal'
 import PendingInterbankModal from './components/PendingInterbankModal'
+import ReconciliationModal from './components/ReconciliationModal'
 import LedgerVerificationConfirmModal from './components/LedgerVerificationConfirmModal'
 import LedgerBankVerificationPills from './components/LedgerBankVerificationPills'
 import {
@@ -228,6 +229,7 @@ export default function AccountHistoryPage() {
   const [addTxnMenuOpen, setAddTxnMenuOpen] = useState(false)
   const [refundModalOpen, setRefundModalOpen] = useState(false)
   const [pendingInterbankOpen, setPendingInterbankOpen] = useState(false)
+  const [reconciliationOpen, setReconciliationOpen] = useState(false)
   const [verificationConfirm, setVerificationConfirm] = useState(null)
   const [detailModal, setDetailModal] = useState(null)
   const [savingVerificationId, setSavingVerificationId] = useState(null)
@@ -724,7 +726,7 @@ export default function AccountHistoryPage() {
             <div className="flex flex-wrap justify-end gap-2">
               <button
                 type="button"
-                onClick={() => window.alert('Conciliar: próximamente.')}
+                onClick={() => setReconciliationOpen(true)}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition-colors"
               >
                 <CheckSquare size={16} />
@@ -1347,6 +1349,16 @@ export default function AccountHistoryPage() {
           currency={currency}
           confirmingLineId={savingVerificationId}
           onRequestStatusChange={requestVerificationChange}
+        />
+
+        <ReconciliationModal
+          open={reconciliationOpen}
+          onClose={() => setReconciliationOpen(false)}
+          accountId={accountId}
+          accountName={meta?.account_name ?? selectedAccount?.name ?? ''}
+          currency={currency}
+          defaultStartDate={pendingDateFrom || dateFrom}
+          defaultEndDate={pendingDateTo || dateTo}
         />
 
         <LedgerVerificationConfirmModal

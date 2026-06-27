@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.account_constants import is_liquid_deposit_account
+from app.api.v1.accounts import _build_account_reconciliation
 from app.api.v1.dependencies import require_permission
 from app.database import get_db
 from app.ledger_verification import LEDGER_VERIFICATION_CONFIRMED, normalize_ledger_verification_status
@@ -17,13 +19,18 @@ from app.models.account import Account
 from app.models.expense import Expense
 from app.models.journal_entry import JournalEntryLine
 from app.models.sale import Sale
-from app.permissions import ACCOUNTING_CHART_VIEW, ACCOUNTING_RECONCILE_EDIT
-from app.schemas.chart_accounts import LedgerVerificationResponse, LedgerVerificationUpdate
+from app.permissions import ACCOUNTING_CHART_VIEW, ACCOUNTING_RECONCILE_EDIT, ACCOUNTING_RECONCILE_VIEW
+from app.schemas.chart_accounts import (
+    AccountReconciliationResponse,
+    LedgerVerificationResponse,
+    LedgerVerificationUpdate,
+)
 
 router = APIRouter(prefix="/accounting", tags=["accounting"])
 
 DbDep = Annotated[Session, Depends(get_db)]
 AccountingChartViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_CHART_VIEW))]
+ReconcileViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECONCILE_VIEW))]
 ReconcileEditDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECONCILE_EDIT))]
 
 
@@ -46,6 +53,34 @@ def get_balance(db: DbDep, _: AccountingChartViewDep) -> BalanceResponse:
         total_expenses=total_expenses,
         net_profit=total_income - total_expenses,
     )
+
+
+@router.get(
+    "/accounts/{account_id}/reconciliation",
+    response_model=AccountReconciliationResponse,
+)
+def get_account_reconciliation(
+    account_id: int,
+    db: DbDep,
+    _: ReconcileViewDep,
+    start_date: date = Query(..., description="Fecha inicio (YYYY-MM-DD, inclusive)."),
+    end_date: date = Query(..., description="Fecha fin (YYYY-MM-DD, inclusive)."),
+) -> AccountReconciliationResponse:
+    """Reporte de cuadre bancario por rango de fechas (fecha del asiento contable)."""
+    if start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La fecha inicio debe ser anterior o igual a la fecha fin.",
+        )
+    acc = db.get(Account, account_id)
+    if acc is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cuenta no encontrada.")
+    if not is_liquid_deposit_account(acc):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La conciliación bancaria solo aplica a cuentas de Efectivo y equivalentes.",
+        )
+    return _build_account_reconciliation(db, account_id, start_date=start_date, end_date=end_date)
 
 
 @router.patch("/ledger/{line_id}/verify", response_model=LedgerVerificationResponse)

@@ -32,6 +32,7 @@ from app.timezone_utils import datetime_at_ecuador_midnight
 from app.schemas.chart_accounts import (
     AccountHistoryEntry,
     AccountHistoryResponse,
+    AccountReconciliationResponse,
     AccountTransferCreate,
     AccountTransferResponse,
     ChartAccountCreate,
@@ -43,6 +44,8 @@ from app.schemas.chart_accounts import (
     LedgerTransactionDetailResponse,
     LedgerVerificationResponse,
     LedgerVerificationUpdate,
+    ReconciliationSummary,
+    ReconciliationTransaction,
 )
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -692,6 +695,91 @@ def _build_account_journal_ledger(
         confirmed_balance=confirmed_running,
         lines=lines,
     )
+
+
+def _decimal_ledger_amount(raw) -> Decimal:
+    if raw is None:
+        return Decimal("0")
+    try:
+        return Decimal(str(raw)).quantize(Decimal("0.0001"))
+    except Exception:
+        return Decimal("0")
+
+
+def _history_entry_deposit(row: AccountHistoryEntry) -> Decimal:
+    return _decimal_ledger_amount(row.charge_amount if row.charge_amount is not None else row.deposit)
+
+
+def _history_entry_payment(row: AccountHistoryEntry) -> Decimal:
+    return _decimal_ledger_amount(row.payment_amount if row.payment_amount is not None else row.payment)
+
+
+def _build_account_reconciliation(
+    db: Session,
+    account_id: int,
+    *,
+    start_date: date,
+    end_date: date,
+) -> AccountReconciliationResponse:
+    """Cuadre bancario por rango de fechas (fecha del asiento, no verified_at)."""
+    history = _build_account_journal_ledger(db, account_id, date_from=start_date, date_to=end_date)
+
+    total_deposits = Decimal("0")
+    total_payments = Decimal("0")
+    total_confirmed = Decimal("0")
+    total_interbank = Decimal("0")
+    total_no_effective = Decimal("0")
+    transactions: list[ReconciliationTransaction] = []
+
+    for row in history.lines:
+        dep = _history_entry_deposit(row)
+        pay = _history_entry_payment(row)
+        if dep > 0:
+            total_deposits += dep
+            vs = (row.verification_status or "").strip().lower()
+            if vs == LEDGER_VERIFICATION_CONFIRMED:
+                total_confirmed += dep
+            elif vs == "interbank":
+                total_interbank += dep
+            elif vs == "not_found":
+                total_no_effective += dep
+        if pay > 0:
+            total_payments += pay
+
+        lid = row.ledger_transaction_id
+        if lid is None:
+            continue
+        transactions.append(
+            ReconciliationTransaction(
+                ledger_transaction_id=int(lid),
+                occurred_at=row.occurred_at,
+                reference_number=row.reference_number or row.reference,
+                client_name=row.client_name,
+                transaction_reason=row.transaction_reason,
+                deposit=dep if dep > 0 else None,
+                payment=pay if pay > 0 else None,
+                verification_status=row.verification_status,
+                verified_at=row.verified_at,
+            )
+        )
+
+    total_to_reconcile = (total_confirmed + total_interbank - total_payments).quantize(Decimal("0.0001"))
+
+    summary = ReconciliationSummary(
+        account_id=history.account_id,
+        account_name=history.account_name,
+        currency=history.currency,
+        start_date=start_date,
+        end_date=end_date,
+        total_deposits=total_deposits.quantize(Decimal("0.0001")),
+        total_payments=total_payments.quantize(Decimal("0.0001")),
+        total_confirmed=total_confirmed.quantize(Decimal("0.0001")),
+        total_interbank=total_interbank.quantize(Decimal("0.0001")),
+        total_no_effective=total_no_effective.quantize(Decimal("0.0001")),
+        total_to_reconcile=total_to_reconcile,
+    )
+
+    return AccountReconciliationResponse(summary=summary, transactions=transactions)
 
 
 def _ledger_origin_label(ref_type: str) -> str:

@@ -325,3 +325,40 @@ class LedgerTransactionDetailResponse(BaseModel):
     debit: Decimal
     credit: Decimal
     journal_lines: list[LedgerJournalLineDetail]
+
+
+class ReconciliationSummary(BaseModel):
+    account_id: int
+    account_name: str
+    currency: str
+    start_date: date
+    end_date: date
+    total_deposits: Decimal = Field(default=Decimal("0"), description="Suma de ingresos/depósitos en el rango.")
+    total_payments: Decimal = Field(default=Decimal("0"), description="Suma de egresos/pagos en el rango.")
+    total_confirmed: Decimal = Field(default=Decimal("0"), description="Depósitos con verification_status=confirmed.")
+    total_interbank: Decimal = Field(default=Decimal("0"), description="Depósitos con verification_status=interbank.")
+    total_no_effective: Decimal = Field(
+        default=Decimal("0"),
+        description="Depósitos con verification_status=not_found.",
+    )
+    total_to_reconcile: Decimal = Field(
+        default=Decimal("0"),
+        description="Confirmado + interbancario pendiente − pagos (cuadre con el banco).",
+    )
+
+
+class ReconciliationTransaction(BaseModel):
+    ledger_transaction_id: int
+    occurred_at: datetime
+    reference_number: Optional[str] = None
+    client_name: str
+    transaction_reason: Optional[str] = None
+    deposit: Optional[Decimal] = None
+    payment: Optional[Decimal] = None
+    verification_status: Optional[str] = None
+    verified_at: Optional[datetime] = None
+
+
+class AccountReconciliationResponse(BaseModel):
+    summary: ReconciliationSummary
+    transactions: list[ReconciliationTransaction]
