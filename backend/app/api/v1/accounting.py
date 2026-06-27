@@ -23,11 +23,14 @@ from app.models.sale import Sale
 from app.permissions import (
     ACCOUNTING_CHART_VIEW,
     ACCOUNTING_RECONCILE_CREATE,
+    ACCOUNTING_RECONCILE_DELETE,
     ACCOUNTING_RECONCILE_EDIT,
     ACCOUNTING_RECONCILE_VIEW,
 )
 from app.schemas.chart_accounts import (
     AccountReconciliationResponse,
+    InventoryAuditBulkDeleteRequest,
+    InventoryAuditBulkDeleteResponse,
     InventoryAuditReportCreate,
     InventoryAuditReportResponse,
     InventoryReconciliationAuditResponse,
@@ -42,6 +45,7 @@ DbDep = Annotated[Session, Depends(get_db)]
 AccountingChartViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_CHART_VIEW))]
 ReconcileViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECONCILE_VIEW))]
 ReconcileEditDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECONCILE_EDIT))]
+ReconcileDeleteDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECONCILE_DELETE))]
 
 
 class BalanceResponse(BaseModel):
@@ -196,6 +200,49 @@ def list_inventory_audit_reports(
 
     rows = q.order_by(InventoryAuditReport.created_at.desc()).all()
     return [_inventory_audit_report_to_schema(r, r.account.name if r.account else None) for r in rows]
+
+
+@router.post(
+    "/inventory-audits/bulk-delete",
+    response_model=InventoryAuditBulkDeleteResponse,
+)
+def bulk_delete_inventory_audit_reports(
+    body: InventoryAuditBulkDeleteRequest,
+    db: DbDep,
+    _: ReconcileDeleteDep,
+) -> InventoryAuditBulkDeleteResponse:
+    """Elimina varios reportes de auditoría de inventario."""
+    ids = sorted({int(i) for i in body.ids if int(i) > 0})
+    if not ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Indica al menos un id válido.",
+        )
+
+    deleted_count = (
+        db.query(InventoryAuditReport)
+        .filter(InventoryAuditReport.id.in_(ids))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return InventoryAuditBulkDeleteResponse(deleted_count=int(deleted_count or 0))
+
+
+@router.delete(
+    "/inventory-audits/{audit_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_inventory_audit_report(
+    audit_id: int,
+    db: DbDep,
+    _: ReconcileDeleteDep,
+) -> None:
+    """Elimina un reporte de auditoría de inventario."""
+    row = db.get(InventoryAuditReport, audit_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reporte no encontrado.")
+    db.delete(row)
+    db.commit()
 
 
 def _inventory_audit_report_to_schema(

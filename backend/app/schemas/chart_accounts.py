@@ -420,3 +420,11 @@ class InventoryAuditReportResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class InventoryAuditBulkDeleteRequest(BaseModel):
+    ids: list[int] = Field(..., min_length=1)
+
+
+class InventoryAuditBulkDeleteResponse(BaseModel):
+    deleted_count: int

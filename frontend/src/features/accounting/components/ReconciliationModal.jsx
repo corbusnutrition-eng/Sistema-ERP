@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { CheckSquare, FileSpreadsheet, FileText, ImagePlus, Loader2, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { CheckSquare, FileSpreadsheet, FileText, ImagePlus, Loader2, Trash2, X } from 'lucide-react'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
@@ -199,6 +199,60 @@ function flattenAuditRows(audits, field) {
   return out
 }
 
+function normInventoryUsername(raw) {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+function mergeUnifiedCreditRows(rows) {
+  const map = new Map()
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = normInventoryUsername(row.username)
+    if (!key) continue
+
+    const prev = map.get(key) || {
+      username: row.username,
+      credits: 0,
+      credits_platform: 0,
+      credits_erp: 0,
+      hasPlatform: false,
+      hasErp: false,
+    }
+
+    prev.credits += Number(row.credits) || 0
+    if (row.credits_platform != null && row.credits_platform !== '') {
+      prev.credits_platform += Number(row.credits_platform) || 0
+      prev.hasPlatform = true
+    }
+    if (row.credits_erp != null && row.credits_erp !== '') {
+      prev.credits_erp += Number(row.credits_erp) || 0
+      prev.hasErp = true
+    }
+    if (row.username) prev.username = row.username
+    map.set(key, prev)
+  }
+
+  return Array.from(map.values())
+    .map(({ hasPlatform, hasErp, ...row }) => ({
+      username: row.username,
+      credits: row.credits,
+      credits_platform: hasPlatform ? row.credits_platform : null,
+      credits_erp: hasErp ? row.credits_erp : null,
+    }))
+    .sort((a, b) => String(a.username).localeCompare(String(b.username), 'es'))
+}
+
+function buildUnifiedConsolidatedRows(audits) {
+  return {
+    matched: mergeUnifiedCreditRows(flattenAuditRows(audits, 'matched_data')),
+    missingErp: mergeUnifiedCreditRows(flattenAuditRows(audits, 'missing_erp_data')),
+    missingPlatform: mergeUnifiedCreditRows(flattenAuditRows(audits, 'missing_platform_data')),
+  }
+}
+
 function buildConsolidatedExportBaseName(accountName) {
   const name = sanitizeFilePart(accountName)
   const today = todayIsoDateEcuador()
@@ -320,14 +374,12 @@ function exportSingleInventoryAuditPDF({ audit, accountName }) {
 function exportConsolidatedInventoryExcel({ audits, accountName }) {
   if (!Array.isArray(audits) || audits.length === 0) return
 
-  const matched = flattenAuditRows(audits, 'matched_data')
-  const missingErp = flattenAuditRows(audits, 'missing_erp_data')
-  const missingPlatform = flattenAuditRows(audits, 'missing_platform_data')
+  const unified = buildUnifiedConsolidatedRows(audits)
 
   const rows = [
     ['Auditorías de inventario — reporte consolidado'],
     ['Cuenta', accountName || '—'],
-    ['Total auditorías', audits.length],
+    ['Total auditorías seleccionadas', audits.length],
     [],
     ['Resumen por auditoría'],
     ['Fecha guardado', 'Servicio', 'Periodo', 'Cuadran', 'Faltan ERP', 'Faltan plataforma'],
@@ -346,12 +398,11 @@ function exportConsolidatedInventoryExcel({ audits, accountName }) {
 
   rows.push(
     [],
-    ['✅ Cuadran perfectamente (consolidado)'],
-    ['Servicio / periodo', 'Usuario', 'Plataforma', 'ERP', 'Créditos'],
+    ['✅ Cuadran perfectamente (unificado por usuario)'],
+    ['Usuario', 'Plataforma', 'ERP', 'Créditos'],
   )
-  for (const row of matched) {
+  for (const row of unified.matched) {
     rows.push([
-      row._source,
       row.username,
       row.credits_platform ?? '',
       row.credits_erp ?? '',
@@ -361,12 +412,11 @@ function exportConsolidatedInventoryExcel({ audits, accountName }) {
 
   rows.push(
     [],
-    ['⚠️ Faltan en el sistema (consolidado)'],
-    ['Servicio / periodo', 'Usuario', 'Plataforma', 'ERP', 'Créditos'],
+    ['⚠️ Faltan en el sistema (unificado por usuario)'],
+    ['Usuario', 'Plataforma', 'ERP', 'Créditos'],
   )
-  for (const row of missingErp) {
+  for (const row of unified.missingErp) {
     rows.push([
-      row._source,
       row.username,
       row.credits_platform ?? '',
       row.credits_erp ?? '',
@@ -376,12 +426,11 @@ function exportConsolidatedInventoryExcel({ audits, accountName }) {
 
   rows.push(
     [],
-    ['❓ Faltan en plataforma (consolidado)'],
-    ['Servicio / periodo', 'Usuario', 'Plataforma', 'ERP', 'Créditos'],
+    ['❓ Faltan en plataforma (unificado por usuario)'],
+    ['Usuario', 'Plataforma', 'ERP', 'Créditos'],
   )
-  for (const row of missingPlatform) {
+  for (const row of unified.missingPlatform) {
     rows.push([
-      row._source,
       row.username,
       row.credits_platform ?? '',
       row.credits_erp ?? '',
@@ -399,16 +448,14 @@ function exportConsolidatedInventoryExcel({ audits, accountName }) {
 function exportConsolidatedInventoryPDF({ audits, accountName }) {
   if (!Array.isArray(audits) || audits.length === 0) return
 
-  const matched = flattenAuditRows(audits, 'matched_data')
-  const missingErp = flattenAuditRows(audits, 'missing_erp_data')
-  const missingPlatform = flattenAuditRows(audits, 'missing_platform_data')
+  const unified = buildUnifiedConsolidatedRows(audits)
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   doc.setFontSize(16)
   doc.text('Auditorías de inventario — consolidado', 14, 14)
   doc.setFontSize(10)
   doc.text(`Cuenta: ${accountName || '—'}`, 14, 22)
-  doc.text(`Total auditorías: ${audits.length}`, 14, 28)
+  doc.text(`Total auditorías seleccionadas: ${audits.length}`, 14, 28)
 
   const summaryBody = audits.map((audit) => [
     formatAuditCreatedAt(audit.created_at),
@@ -428,10 +475,9 @@ function exportConsolidatedInventoryPDF({ audits, accountName }) {
     margin: { left: 14, right: 14 },
   })
 
-  const creditTableHead = [['Servicio / periodo', 'Usuario', 'Plataforma', 'ERP', 'Créditos']]
+  const creditTableHead = [['Usuario', 'Plataforma', 'ERP', 'Créditos']]
   const mapCreditRows = (list) =>
     list.map((row) => [
-      row._source,
       row.username,
       row.credits_platform != null ? String(row.credits_platform) : '—',
       row.credits_erp != null ? String(row.credits_erp) : '—',
@@ -440,22 +486,22 @@ function exportConsolidatedInventoryPDF({ audits, accountName }) {
 
   let y = doc.lastAutoTable.finalY + 8
   doc.setFontSize(11)
-  doc.text(`Cuadran perfectamente (${matched.length})`, 14, y)
+  doc.text(`Cuadran perfectamente — unificado (${unified.matched.length})`, 14, y)
   autoTable(doc, {
     startY: y + 3,
     head: creditTableHead,
-    body: mapCreditRows(matched),
+    body: mapCreditRows(unified.matched),
     styles: { fontSize: 7, cellPadding: 1.5 },
     headStyles: { fillColor: [16, 185, 129], textColor: 255, fontStyle: 'bold' },
     margin: { left: 14, right: 14 },
   })
 
   y = doc.lastAutoTable.finalY + 8
-  doc.text(`Faltan en el sistema (${missingErp.length})`, 14, y)
+  doc.text(`Faltan en el sistema — unificado (${unified.missingErp.length})`, 14, y)
   autoTable(doc, {
     startY: y + 3,
     head: creditTableHead,
-    body: mapCreditRows(missingErp),
+    body: mapCreditRows(unified.missingErp),
     styles: { fontSize: 7, cellPadding: 1.5 },
     headStyles: { fillColor: [239, 68, 68], textColor: 255, fontStyle: 'bold' },
     margin: { left: 14, right: 14 },
@@ -466,11 +512,11 @@ function exportConsolidatedInventoryPDF({ audits, accountName }) {
     doc.addPage()
     y = 14
   }
-  doc.text(`Faltan en plataforma (${missingPlatform.length})`, 14, y)
+  doc.text(`Faltan en plataforma — unificado (${unified.missingPlatform.length})`, 14, y)
   autoTable(doc, {
     startY: y + 3,
     head: creditTableHead,
-    body: mapCreditRows(missingPlatform),
+    body: mapCreditRows(unified.missingPlatform),
     styles: { fontSize: 7, cellPadding: 1.5 },
     headStyles: { fillColor: [245, 158, 11], textColor: 255, fontStyle: 'bold' },
     margin: { left: 14, right: 14 },
@@ -566,6 +612,9 @@ export default function ReconciliationModal({
   const [historyDateTo, setHistoryDateTo] = useState('')
   const [saveLoading, setSaveLoading] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState('')
+  const [selectedAuditIds, setSelectedAuditIds] = useState([])
+  const [deleteConfirm, setDeleteConfirm] = useState(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -586,6 +635,9 @@ export default function ReconciliationModal({
     setHistoryDateTo('')
     setSaveLoading(false)
     setSaveSuccess('')
+    setSelectedAuditIds([])
+    setDeleteConfirm(null)
+    setDeleteLoading(false)
   }, [open, defaultStartDate, defaultEndDate, accountId, isInventoryAccount])
 
   useEffect(() => {
@@ -742,7 +794,9 @@ export default function ReconciliationModal({
       if (historyDateFrom) params.date_from = historyDateFrom
       if (historyDateTo) params.date_to = historyDateTo
       const { data } = await api.get('/api/v1/accounting/inventory-audits', { params })
-      setSavedAudits(Array.isArray(data) ? data : [])
+      const list = Array.isArray(data) ? data : []
+      setSavedAudits(list)
+      setSelectedAuditIds((prev) => prev.filter((id) => list.some((audit) => audit.id === id)))
     } catch (err) {
       setSavedAudits([])
       setSavedError(getApiErrorMessage(err, { fallback: 'No se pudieron cargar las auditorías guardadas.' }))
@@ -755,6 +809,57 @@ export default function ReconciliationModal({
     if (!open || !isInventoryAccount || inventoryTab !== 'saved') return
     loadSavedAudits()
   }, [open, isInventoryAccount, inventoryTab, loadSavedAudits])
+
+  const selectedAudits = useMemo(
+    () => savedAudits.filter((audit) => selectedAuditIds.includes(audit.id)),
+    [savedAudits, selectedAuditIds],
+  )
+
+  const allVisibleSelected =
+    savedAudits.length > 0 && savedAudits.every((audit) => selectedAuditIds.includes(audit.id))
+  const someVisibleSelected = savedAudits.some((audit) => selectedAuditIds.includes(audit.id))
+
+  const toggleAuditSelection = useCallback((auditId) => {
+    setSelectedAuditIds((prev) =>
+      prev.includes(auditId) ? prev.filter((id) => id !== auditId) : [...prev, auditId],
+    )
+  }, [])
+
+  const toggleSelectAllVisible = useCallback(() => {
+    const visibleIds = savedAudits.map((audit) => audit.id)
+    if (allVisibleSelected) {
+      setSelectedAuditIds((prev) => prev.filter((id) => !visibleIds.includes(id)))
+      return
+    }
+    setSelectedAuditIds((prev) => [...new Set([...prev, ...visibleIds])])
+  }, [savedAudits, allVisibleSelected])
+
+  const requestDeleteAudits = useCallback((ids) => {
+    const uniqueIds = [...new Set((Array.isArray(ids) ? ids : []).filter((id) => Number.isFinite(Number(id))))]
+    if (uniqueIds.length === 0) return
+    setDeleteConfirm({ ids: uniqueIds })
+  }, [])
+
+  const confirmDeleteAudits = useCallback(async () => {
+    if (!deleteConfirm?.ids?.length) return
+    setDeleteLoading(true)
+    setSavedError('')
+    try {
+      const ids = deleteConfirm.ids
+      if (ids.length === 1) {
+        await api.delete(`/api/v1/accounting/inventory-audits/${ids[0]}`)
+      } else {
+        await api.post('/api/v1/accounting/inventory-audits/bulk-delete', { ids })
+      }
+      setSelectedAuditIds((prev) => prev.filter((id) => !ids.includes(id)))
+      setDeleteConfirm(null)
+      await loadSavedAudits()
+    } catch (err) {
+      setSavedError(getApiErrorMessage(err, { fallback: 'No se pudieron eliminar las auditorías.' }))
+    } finally {
+      setDeleteLoading(false)
+    }
+  }, [deleteConfirm, loadSavedAudits])
 
   const handleSaveAudit = useCallback(async () => {
     if (!isInventoryAccount || !report || report.summary || report.ai_read_success === false) return
@@ -790,12 +895,12 @@ export default function ReconciliationModal({
   }, [report, accountName, isInventoryAccount])
 
   const handleExportConsolidatedExcel = useCallback(() => {
-    exportConsolidatedInventoryExcel({ audits: savedAudits, accountName })
-  }, [savedAudits, accountName])
+    exportConsolidatedInventoryExcel({ audits: selectedAudits, accountName })
+  }, [selectedAudits, accountName])
 
   const handleExportConsolidatedPdf = useCallback(() => {
-    exportConsolidatedInventoryPDF({ audits: savedAudits, accountName })
-  }, [savedAudits, accountName])
+    exportConsolidatedInventoryPDF({ audits: selectedAudits, accountName })
+  }, [selectedAudits, accountName])
 
   const handleExportExcel = useCallback(() => {
     if (!report?.summary) return
@@ -947,25 +1052,40 @@ export default function ReconciliationModal({
                 ) : null}
               </div>
 
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={handleExportConsolidatedExcel}
-                  disabled={savedAudits.length === 0 || savedLoading}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-emerald-800 bg-emerald-50 ring-1 ring-emerald-200 hover:bg-emerald-100 disabled:opacity-40 transition-colors"
-                >
-                  <FileSpreadsheet size={16} aria-hidden />
-                  Exportar consolidado Excel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExportConsolidatedPdf}
-                  disabled={savedAudits.length === 0 || savedLoading}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 transition-colors"
-                >
-                  <FileText size={16} aria-hidden />
-                  Exportar consolidado PDF
-                </button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {selectedAuditIds.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => requestDeleteAudits(selectedAuditIds)}
+                    disabled={savedLoading || deleteLoading}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-red-700 bg-red-50 ring-1 ring-red-200 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                  >
+                    <Trash2 size={16} aria-hidden />
+                    Eliminar seleccionados ({selectedAuditIds.length})
+                  </button>
+                ) : (
+                  <span className="text-xs text-gray-400">Selecciona auditorías para exportar o eliminar</span>
+                )}
+                <div className="flex flex-wrap items-center gap-2 ml-auto">
+                  <button
+                    type="button"
+                    onClick={handleExportConsolidatedExcel}
+                    disabled={selectedAuditIds.length === 0 || savedLoading}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-emerald-800 bg-emerald-50 ring-1 ring-emerald-200 hover:bg-emerald-100 disabled:opacity-40 transition-colors"
+                  >
+                    <FileSpreadsheet size={16} aria-hidden />
+                    Exportar consolidado Excel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportConsolidatedPdf}
+                    disabled={selectedAuditIds.length === 0 || savedLoading}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 transition-colors"
+                  >
+                    <FileText size={16} aria-hidden />
+                    Exportar consolidado PDF
+                  </button>
+                </div>
               </div>
 
               {savedLoading ? (
@@ -982,6 +1102,19 @@ export default function ReconciliationModal({
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-100 bg-slate-50/80">
+                        <th className="px-3 py-2.5 text-center w-10">
+                          <input
+                            type="checkbox"
+                            aria-label="Seleccionar todas las auditorías visibles"
+                            checked={allVisibleSelected}
+                            ref={(el) => {
+                              if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected
+                            }}
+                            onChange={toggleSelectAllVisible}
+                            disabled={savedLoading || savedAudits.length === 0}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500/30"
+                          />
+                        </th>
                         <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                           Fecha auditoría
                         </th>
@@ -1000,11 +1133,27 @@ export default function ReconciliationModal({
                         <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                           Faltan plat.
                         </th>
+                        <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-600 w-12">
+                          <span className="sr-only">Eliminar</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {savedAudits.map((audit) => (
-                        <tr key={audit.id} className="hover:bg-slate-50/50">
+                        <tr
+                          key={audit.id}
+                          className={`hover:bg-slate-50/50 ${selectedAuditIds.includes(audit.id) ? 'bg-blue-50/40' : ''}`}
+                        >
+                          <td className="px-3 py-2.5 text-center">
+                            <input
+                              type="checkbox"
+                              aria-label={`Seleccionar auditoría ${audit.service_name}`}
+                              checked={selectedAuditIds.includes(audit.id)}
+                              onChange={() => toggleAuditSelection(audit.id)}
+                              disabled={savedLoading}
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500/30"
+                            />
+                          </td>
                           <td className="px-3 py-2.5 whitespace-nowrap text-gray-900">
                             {formatAuditCreatedAt(audit.created_at)}
                           </td>
@@ -1020,6 +1169,17 @@ export default function ReconciliationModal({
                           </td>
                           <td className="px-3 py-2.5 text-center tabular-nums text-amber-700">
                             {(audit.missing_platform_data || []).length}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <button
+                              type="button"
+                              aria-label={`Eliminar auditoría ${audit.service_name}`}
+                              onClick={() => requestDeleteAudits([audit.id])}
+                              disabled={savedLoading || deleteLoading}
+                              className="inline-flex items-center justify-center p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 transition-colors"
+                            >
+                              <Trash2 size={16} aria-hidden />
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -1445,6 +1605,54 @@ export default function ReconciliationModal({
           )}
         </div>
       </div>
+
+      {deleteConfirm ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/50"
+            aria-label="Cerrar confirmación"
+            onClick={() => {
+              if (deleteLoading) return
+              setDeleteConfirm(null)
+            }}
+          />
+          <div
+            role="alertdialog"
+            aria-labelledby="delete-audits-title"
+            aria-describedby="delete-audits-desc"
+            className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl border border-gray-100 p-5"
+          >
+            <h3 id="delete-audits-title" className="text-base font-semibold text-gray-900">
+              Confirmar eliminación
+            </h3>
+            <p id="delete-audits-desc" className="mt-2 text-sm text-gray-600">
+              ¿Estás seguro de eliminar {deleteConfirm.ids.length}{' '}
+              {deleteConfirm.ids.length === 1 ? 'reporte' : 'reportes'} de auditoría? Esta acción borrará el
+              historial y no se puede deshacer.
+            </p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirm(null)}
+                disabled={deleteLoading}
+                className="px-4 py-2 rounded-xl text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteAudits}
+                disabled={deleteLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-40"
+              >
+                {deleteLoading ? <Loader2 size={16} className="animate-spin" aria-hidden /> : null}
+                Aceptar / Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
