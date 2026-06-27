@@ -180,6 +180,12 @@ function ledgerReceiptIsPdf(urlPath) {
   return String(urlPath).toLowerCase().split('?')[0].endsWith('.pdf')
 }
 
+function formatVerifiedAtLabel(iso) {
+  const { dateLine, timeLine } = formatSaleLedgerDateParts(iso)
+  if (!iso || dateLine === '—') return ''
+  return timeLine ? `${dateLine}, ${timeLine}` : dateLine
+}
+
 const inputCls =
   'w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500'
 
@@ -417,10 +423,11 @@ export default function AccountHistoryPage() {
         verification_status: verificationStatus,
       })
       const next = data?.verification_status ?? verificationStatus
+      const verifiedAt = data?.verified_at ?? null
       setLines((prev) =>
         prev.map((row) =>
           row.ledger_transaction_id === lineId ?
-            { ...row, verification_status: next }
+            { ...row, verification_status: next, verified_at: verifiedAt }
           : row,
         ),
       )
@@ -946,6 +953,10 @@ export default function AccountHistoryPage() {
                           : `row-${line.reference_number ?? line.occurred_at}`
                     const { dateLine, timeLine } = formatSaleLedgerDateParts(line.occurred_at)
                     const refDisplay = ledgerReferenceDisplay(line)
+                    const isConfirmedLine =
+                      String(line.verification_status ?? '').toLowerCase() === 'confirmed'
+                    const verifiedAtLabel =
+                      isConfirmedLine && line.verified_at ? formatVerifiedAtLabel(line.verified_at) : ''
                     const receiptHref = line.receipt_url ? receiptAbsoluteUrl(line.receipt_url) : null
                     const reasonText = line.transaction_reason || '—'
                     const kindLabel = (line.line_kind || '').trim() || reasonText
@@ -967,6 +978,14 @@ export default function AccountHistoryPage() {
                                 <div className="text-sm text-gray-900 leading-snug truncate">{dateLine}</div>
                                 {timeLine ? (
                                   <div className="text-xs text-gray-400 mt-0.5 truncate tabular-nums">{timeLine}</div>
+                                ) : null}
+                                {verifiedAtLabel ? (
+                                  <div
+                                    className="text-xs text-emerald-600 mt-0.5 truncate tabular-nums"
+                                    title={`Confirmado: ${verifiedAtLabel}`}
+                                  >
+                                    Confirmado: {verifiedAtLabel}
+                                  </div>
                                 ) : null}
                               </div>
                             </td>
@@ -1327,7 +1346,7 @@ export default function AccountHistoryPage() {
           transactions={lines}
           currency={currency}
           confirmingLineId={savingVerificationId}
-          onConfirm={(lineId) => requestVerificationChange(lineId, 'confirmed')}
+          onRequestStatusChange={requestVerificationChange}
         />
 
         <LedgerVerificationConfirmModal

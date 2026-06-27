@@ -242,6 +242,10 @@ class AccountHistoryEntry(BaseModel):
         default=None,
         description="Verificación bancaria: confirmed | not_found | interbank | wrong_account.",
     )
+    verified_at: Optional[datetime] = Field(
+        default=None,
+        description="Fecha/hora UTC en que se marcó como confirmada; null si no aplica.",
+    )
 
 
 class AccountHistoryResponse(BaseModel):
@@ -277,6 +281,7 @@ class LedgerVerificationUpdate(BaseModel):
 class LedgerVerificationResponse(BaseModel):
     line_id: int
     verification_status: Optional[str] = None
+    verified_at: Optional[datetime] = None
 
 
 class LedgerJournalLineDetail(BaseModel):

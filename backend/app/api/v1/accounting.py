@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.account_constants import is_liquid_deposit_account
 from app.api.v1.dependencies import require_permission
 from app.database import get_db
-from app.ledger_verification import normalize_ledger_verification_status
+from app.ledger_verification import LEDGER_VERIFICATION_CONFIRMED, normalize_ledger_verification_status
+from app.timezone_utils import now_utc
 from app.models.account import Account
 from app.models.expense import Expense
 from app.models.journal_entry import JournalEntryLine
@@ -79,6 +80,10 @@ def patch_ledger_line_verification(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     line.verification_status = normalized
+    if normalized == LEDGER_VERIFICATION_CONFIRMED:
+        line.verified_at = now_utc()
+    else:
+        line.verified_at = None
     db.add(line)
     db.commit()
     db.refresh(line)
@@ -86,6 +91,7 @@ def patch_ledger_line_verification(
     return LedgerVerificationResponse(
         line_id=int(line.id),
         verification_status=_verification_status_out(line),
+        verified_at=getattr(line, "verified_at", None),
     )
 
 

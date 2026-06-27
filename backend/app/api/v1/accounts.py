@@ -217,6 +217,10 @@ def _verification_status_for_line(line: JournalEntryLine) -> Optional[str]:
         return None
 
 
+def _verified_at_for_line(line: JournalEntryLine):
+    return getattr(line, "verified_at", None)
+
+
 def _journal_reference_label(entry: JournalEntry) -> str:
     ref_type = (entry.reference_type or "").strip()
     ref_id = entry.reference_id
@@ -295,6 +299,7 @@ def _history_line_from_journal_line(
     peer_name = peer.name if peer is not None else None
     line_kind = _journal_line_kind(line_account, signed, ref_type)
     verification_status = _verification_status_for_line(line)
+    verified_at = _verified_at_for_line(line)
 
     if ref_type == TRANSFER_REFERENCE_TYPE:
         peer_nm = peer_name or "—"
@@ -327,6 +332,7 @@ def _history_line_from_journal_line(
             iptv_username=None,
             receipt_url=None,
             verification_status=verification_status,
+            verified_at=verified_at,
             transaction_reason="Transferencia entre cuentas",
         )
 
@@ -371,6 +377,7 @@ def _history_line_from_journal_line(
             iptv_username=iptv_u,
             receipt_url=receipt_url,
             verification_status=verification_status,
+            verified_at=verified_at,
             transaction_reason=line_kind,
         )
 
@@ -422,6 +429,7 @@ def _history_line_from_journal_line(
             iptv_username=iptv_u,
             receipt_url=cp_receipt,
             verification_status=verification_status,
+            verified_at=verified_at,
             transaction_reason=line_kind,
         )
 
@@ -484,6 +492,7 @@ def _history_line_from_journal_line(
             iptv_username=iptv_u,
             receipt_url=wr_receipt,
             verification_status=verification_status,
+            verified_at=verified_at,
             transaction_reason=line_kind,
         )
 
@@ -516,6 +525,7 @@ def _history_line_from_journal_line(
         iptv_username=None,
         receipt_url=None,
         verification_status=verification_status,
+        verified_at=verified_at,
         transaction_reason=label,
     )
 

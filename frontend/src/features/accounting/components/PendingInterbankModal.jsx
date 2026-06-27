@@ -37,7 +37,7 @@ function pendingAmount(line) {
  * @param {() => void} onClose
  * @param {Array} transactions — líneas del libro mayor de la cuenta
  * @param {string} [currency]
- * @param {(lineId: number) => void | Promise<void>} onConfirm
+ * @param {(lineId: number, nextStatus: string) => void} onRequestStatusChange
  * @param {number | null} [confirmingLineId]
  */
 export default function PendingInterbankModal({
@@ -45,7 +45,7 @@ export default function PendingInterbankModal({
   onClose,
   transactions = [],
   currency = 'USD',
-  onConfirm,
+  onRequestStatusChange,
   confirmingLineId = null,
 }) {
   const pendingTxs = useMemo(
@@ -57,6 +57,8 @@ export default function PendingInterbankModal({
   )
 
   if (!open) return null
+
+  const rowBusy = confirmingLineId != null
 
   return (
     <div className="fixed inset-0 z-[85] flex items-center justify-center p-4 sm:p-6">
@@ -112,7 +114,7 @@ export default function PendingInterbankModal({
                     <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                       Monto
                     </th>
-                    <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600 w-[8.5rem]">
+                    <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600 min-w-[11rem]">
                       Acción
                     </th>
                   </tr>
@@ -143,16 +145,26 @@ export default function PendingInterbankModal({
                         <td className="px-4 py-3 align-top text-right tabular-nums font-medium text-gray-900 whitespace-nowrap">
                           {amt != null ? formatMoney(amt, currency) : '—'}
                         </td>
-                        <td className="px-4 py-3 align-top text-right">
-                          <button
-                            type="button"
-                            disabled={lineId == null || saving || confirmingLineId != null}
-                            onClick={() => onConfirm?.(lineId)}
-                            className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                          >
-                            {saving ? <Loader2 size={13} className="animate-spin shrink-0" aria-hidden /> : null}
-                            ✅ Confirmar
-                          </button>
+                        <td className="px-4 py-3 align-top">
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              disabled={lineId == null || saving || rowBusy}
+                              onClick={() => onRequestStatusChange?.(lineId, 'not_found')}
+                              className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              No efectiva
+                            </button>
+                            <button
+                              type="button"
+                              disabled={lineId == null || saving || rowBusy}
+                              onClick={() => onRequestStatusChange?.(lineId, 'confirmed')}
+                              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                            >
+                              {saving ? <Loader2 size={13} className="animate-spin shrink-0" aria-hidden /> : null}
+                              ✅ Confirmar
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )

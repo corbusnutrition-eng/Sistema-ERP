@@ -72,6 +72,8 @@ class JournalEntryLine(Base):
     is_bank_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     #: Estado de verificación bancaria inline: confirmed | not_found | interbank | wrong_account.
     verification_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    #: Momento UTC en que se marcó como confirmada (null si no está confirmada).
+    verified_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     journal_entry: Mapped["JournalEntry"] = relationship(back_populates="lines")
     account: Mapped["Account"] = relationship(
