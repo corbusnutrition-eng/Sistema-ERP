@@ -1035,6 +1035,39 @@ function portalAccountsForMethod(tree, methodId) {
   return Array.isArray(node?.deposit_accounts) ? node.deposit_accounts : []
 }
 
+/** Resuelve IDs numéricos de método/cuenta para el POST del portal (misma lógica que la UI). */
+function resolvePortalPaymentSelection({
+  tree,
+  formMethod,
+  storedMethod,
+  formAccount,
+  storedAccount,
+}) {
+  const methods = portalParentMethods(tree)
+  const methodStr =
+    String(formMethod || storedMethod || '').trim() ||
+    (methods.length === 1 ? String(methods[0].id) : '')
+  let depStr = String(formAccount || storedAccount || '').trim()
+  const accounts = portalAccountsForMethod(tree, methodStr)
+  if (!depStr && accounts.length === 1 && accounts[0]?.id != null) {
+    depStr = String(accounts[0].id)
+  }
+  const selectedAccount = accounts.find((d) => String(d.id) === depStr) || null
+  const pmStr =
+    methodStr ||
+    (selectedAccount?.payment_method_id != null ? String(selectedAccount.payment_method_id) : '') ||
+    ''
+  const paymentMethodId = Number(pmStr)
+  const depositAccountId = Number(depStr)
+  return {
+    paymentMethodId: Number.isFinite(paymentMethodId) && paymentMethodId > 0 ? paymentMethodId : null,
+    depositAccountId: Number.isFinite(depositAccountId) && depositAccountId > 0 ? depositAccountId : null,
+    selectedAccount,
+    accounts,
+    methods,
+  }
+}
+
 /** @deprecated Usar buildPortalPaymentTree + portalParentMethods */
 function resolvePortalPaymentMethods(assignedGlobal, rowMethods) {
   if (Array.isArray(assignedGlobal) && assignedGlobal.length > 0) {
@@ -3742,6 +3775,40 @@ function ClientPortalPageInner() {
       }
       return next
     })
+    setRechargeFormById((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const r of newOrderWalletRecharges) {
+        const rid = Number(r?.id)
+        if (!Number.isFinite(rid)) continue
+        const k = String(rid)
+        const curForm = rechargePayFormFromMap(prev, rid)
+        const cur =
+          r.recharge_currency && String(r.recharge_currency).trim().length >= 3
+            ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
+            : 'USD'
+        const tree = buildPortalPaymentTree(
+          data,
+          r?.allowed_payment_methods,
+          r?.allowed_deposit_accounts,
+          cur,
+          r?.payment_methods_tree,
+        )
+        const methods = portalParentMethods(tree)
+        const methodId = curForm.method || methods[0]?.id
+        const accs = portalAccountsForMethod(tree, methodId)
+        const patch = {}
+        if (!curForm.method && methodId != null) patch.method = String(methodId)
+        if (!curForm.account && accs.length === 1 && accs[0]?.id != null) {
+          patch.account = String(accs[0].id)
+        }
+        if (Object.keys(patch).length) {
+          next[k] = { ...curForm, ...patch }
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
   }, [newOrderWalletRecharges, data])
 
   /** Si la cuenta guardada no pertenece al método seleccionado, limpiarla (evita envíos inconsistentes). */
@@ -4610,7 +4677,6 @@ function ClientPortalPageInner() {
       }
 
       const form = rechargePayFormFromMap(rechargeFormById, rid)
-      const effectiveMethod = form.method || payMethodByRecharge[rid] || ''
       const receiptList = [...(receiptFilesByRecharge[rid] || [])].slice(0, 1).filter(Boolean)
       const cur =
         row?.recharge_currency && String(row.recharge_currency).trim().length >= 3
@@ -4623,29 +4689,34 @@ function ClientPortalPageInner() {
         cur,
         row?.payment_methods_tree,
       )
-      const pmList = portalParentMethods(payTree)
-      const depList = portalAccountsForMethod(payTree, effectiveMethod)
+      const paySel = resolvePortalPaymentSelection({
+        tree: payTree,
+        formMethod: form.method,
+        storedMethod: payMethodByRecharge[rid],
+        formAccount: form.account,
+        storedAccount: payAccountByRecharge[rid],
+      })
+      const { paymentMethodId, depositAccountId, selectedAccount: selAcc, accounts: depList, methods: pmList } =
+        paySel
 
-      if (!effectiveMethod) {
+      if (!paymentMethodId) {
         patchRechargePayForm(setRechargeFormById, rid, { error: 'Elige un método de pago.' })
         return
       }
-      const depId = form.account || payAccountByRecharge[rid] || (depList[0]?.id != null ? String(depList[0].id) : '')
-      if (!depId) {
+      if (!depositAccountId) {
         patchRechargePayForm(setRechargeFormById, rid, { error: 'Elige la cuenta donde realizaste el depósito.' })
         return
       }
       const allowedPmIds = new Set(pmList.map((m) => Number(m.id)))
-      if (allowedPmIds.size && !allowedPmIds.has(Number(effectiveMethod))) {
+      if (allowedPmIds.size && !allowedPmIds.has(paymentMethodId)) {
         patchRechargePayForm(setRechargeFormById, rid, { error: 'Método de pago no permitido para esta recarga.' })
         return
       }
       const allowedAccIds = new Set(depList.map((a) => Number(a.id)))
-      if (allowedAccIds.size && !allowedAccIds.has(Number(depId))) {
+      if (allowedAccIds.size && !allowedAccIds.has(depositAccountId)) {
         patchRechargePayForm(setRechargeFormById, rid, { error: 'Cuenta de depósito no permitida para esta recarga.' })
         return
       }
-      const selAcc = depList.find((d) => String(d.id) === String(depId))
       const amt = parseFloat(String(form.amount).trim().replace(',', '.'))
       const illegible = isIllegibleReceiptAi(form.aiResult) && !form.isManuallyEdited
       const featMm = portalCurrencyMismatchMessage(form.aiResult?.extracted_currency, selAcc?.currency)
@@ -4681,8 +4752,8 @@ function ClientPortalPageInner() {
       try {
         const fd = new FormData()
         fd.append('file', receiptList[0])
-        fd.append('payment_method_id', String(effectiveMethod))
-        fd.append('deposit_account_id', depId)
+        fd.append('payment_method_id', String(paymentMethodId))
+        fd.append('deposit_account_id', String(depositAccountId))
         fd.append('paid_amount', String(form.isManuallyEdited ? amt : illegible ? 0 : amt))
         fd.append('id_erp', String(rid))
         const featCreditAvail = portalCreditForCurrency(data, creditRowsDisplay, cur)

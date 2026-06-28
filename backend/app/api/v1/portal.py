@@ -976,12 +976,55 @@ def _portal_wallet_recharge_deposit_pick_ids_ordered(db: Session, req: WalletRec
     return ordered
 
 
+def _portal_wallet_recharge_client_allowed_ids(
+    db: Session,
+    client: Client,
+    req: WalletRechargeRequest,
+) -> tuple[list[int], list[int]]:
+    """IDs de método/cuenta alineados con lo que el portal muestra (CRM granular o solicitud)."""
+    from app.services.client_currency_service import get_client_currency
+    from app.services.client_payment_method_service import (
+        client_has_custom_payment_account_prefs,
+        get_client_assigned_payment_methods_with_accounts,
+    )
+
+    recharge_cur = normalize_currency_code(
+        getattr(req, "recharge_currency", None),
+        get_client_currency(client),
+    )
+    if client_has_custom_payment_account_prefs(db, int(client.id)):
+        nested = get_client_assigned_payment_methods_with_accounts(
+            db,
+            int(client.id),
+            currency=recharge_cur,
+        )
+        if nested:
+            pm_ids = sorted({int(m.id) for m in nested if m.deposit_accounts})
+            dep_ids: list[int] = []
+            seen_dep: set[int] = set()
+            for method in nested:
+                for dep in method.deposit_accounts:
+                    did = int(dep.id)
+                    if did in seen_dep:
+                        continue
+                    seen_dep.add(did)
+                    dep_ids.append(did)
+            return pm_ids, dep_ids
+
+    raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else None
+    pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm)
+    pm_ids = sorted({int(p.id) for p in pm_picks})
+    dep_ids = _portal_wallet_recharge_deposit_pick_ids_ordered(db, req)
+    return pm_ids, dep_ids
+
+
 def _validate_wallet_recharge_deposit_account(
     db: Session,
+    client: Client,
     req: WalletRechargeRequest,
     deposit_account_id: Optional[int],
 ) -> None:
-    allowed_ids = _portal_wallet_recharge_deposit_pick_ids_ordered(db, req)
+    _, allowed_ids = _portal_wallet_recharge_client_allowed_ids(db, client, req)
     if not allowed_ids:
         if deposit_account_id is not None:
             raise HTTPException(
@@ -1233,18 +1276,14 @@ def _portal_wallet_recharge_method_picks(db: Session, raw_ids: Optional[list]) -
 
 def _validate_wallet_recharge_declared_payment_method(
     db: Session,
+    client: Client,
     req: WalletRechargeRequest,
     payment_method_id: Optional[int],
+    *,
+    deposit_account_id: Optional[int] = None,
 ) -> None:
-    raw = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else []
-    allowed: list[int] = []
-    for x in raw:
-        try:
-            allowed.append(int(x))
-        except (TypeError, ValueError):
-            continue
-    allowed_unique = sorted({i for i in allowed if i > 0})
-    if not allowed_unique:
+    allowed_pm_ids, allowed_dep_ids = _portal_wallet_recharge_client_allowed_ids(db, client, req)
+    if not allowed_pm_ids:
         return
     if payment_method_id is None:
         raise HTTPException(
@@ -1252,17 +1291,24 @@ def _validate_wallet_recharge_declared_payment_method(
             detail="Indica el método de pago que utilizaste para esta recarga.",
         )
     pid = int(payment_method_id)
-    if pid not in allowed_unique:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El método de pago seleccionado no está habilitado para esta solicitud.",
-        )
     pm_row = db.get(PaymentMethod, pid)
     if pm_row is None or not bool(pm_row.is_active):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Método de pago inválido o inactivo.",
         )
+    if pid in allowed_pm_ids:
+        return
+    # Respaldo: cuenta válida del portal vinculada al método declarado (p. ej. árbol CRM vs JSON de solicitud).
+    if deposit_account_id is not None and int(deposit_account_id) in set(allowed_dep_ids):
+        from app.services.client_payment_method_service import _account_belongs_to_payment_method
+
+        if _account_belongs_to_payment_method(db, pm_row, int(deposit_account_id)):
+            return
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="El método de pago seleccionado no está habilitado para esta solicitud.",
+    )
 
 
 # ── Wallet recharge (BaaS) ────────────────────────────────────────────────────
@@ -1913,8 +1959,14 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
             detail="No hay saldo pendiente en esta solicitud o no admite nuevos comprobantes.",
         )
 
-    _validate_wallet_recharge_declared_payment_method(db, req, payment_method_id)
-    _validate_wallet_recharge_deposit_account(db, req, deposit_account_id)
+    _validate_wallet_recharge_declared_payment_method(
+        db,
+        client,
+        req,
+        payment_method_id,
+        deposit_account_id=deposit_account_id,
+    )
+    _validate_wallet_recharge_deposit_account(db, client, req, deposit_account_id)
 
     from app.services.client_payment_method_service import (
         validate_client_portal_deposit_account_id,
