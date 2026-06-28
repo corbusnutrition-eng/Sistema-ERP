@@ -20,6 +20,7 @@ import {
 import { calculateExpirationStats } from '../inventory/screenPackageExpiration'
 import CodigosRetiroWidget, { RETIRO_ERP_ERROR_MESSAGE } from './CodigosRetiroWidget'
 import PortalPaymentSubmittedSuccessCard from './PortalPaymentSubmittedSuccessCard'
+import NetworkTreeView from './NetworkTreeView'
 import MiniDashboard from './MiniDashboard'
 import {
   extractRetiroMonto,
@@ -1997,6 +1998,9 @@ function ClientPortalPageInner() {
   const [subClients, setSubClients] = useState([])
   const [subClientsLoading, setSubClientsLoading] = useState(false)
   const [subClientsErr, setSubClientsErr] = useState(null)
+  const [networkTree, setNetworkTree] = useState(null)
+  const [networkTreeLoading, setNetworkTreeLoading] = useState(false)
+  const [networkTreeErr, setNetworkTreeErr] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [activeFilter, setActiveFilter] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
@@ -2206,6 +2210,29 @@ function ClientPortalPageInner() {
       setSubClientsLoading(false)
     }
   }, [api, token])
+
+  const loadNetworkTree = useCallback(async () => {
+    if (!token) return
+    setNetworkTreeLoading(true)
+    setNetworkTreeErr(null)
+    try {
+      const { data } = await api.get(`/api/v1/portal/${encodeURIComponent(token)}/network-tree`)
+      setNetworkTree(data ?? null)
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      setNetworkTreeErr(typeof d === 'string' ? d : 'No se pudo cargar el árbol de tu red.')
+      setNetworkTree(null)
+    } finally {
+      setNetworkTreeLoading(false)
+    }
+  }, [api, token])
+
+  const refreshResellerNetwork = useCallback(async () => {
+    await loadSubClients()
+    if (activeFilter === 'team') {
+      await loadNetworkTree()
+    }
+  }, [activeFilter, loadNetworkTree, loadSubClients])
 
   const loadPortalNotifications = useCallback(async () => {
     if (!token) return
@@ -2864,6 +2891,12 @@ function ClientPortalPageInner() {
     void loadSubClients()
     return undefined
   }, [isResellerNetworkOpen, token, loadSubClients])
+
+  useEffect(() => {
+    if (!isResellerNetworkOpen || !token || activeFilter !== 'team') return undefined
+    void loadNetworkTree()
+    return undefined
+  }, [activeFilter, isResellerNetworkOpen, loadNetworkTree, token])
 
   useEffect(() => {
     if (!isTrackedPurchasesOpen || !token) return undefined
@@ -7600,44 +7633,42 @@ function ClientPortalPageInner() {
         >
           {isResellerNetworkOpen ? (
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void openCreateSubClientModal()}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-violet-400/40 bg-violet-500/20 px-4 py-2.5 text-sm font-bold text-violet-50 transition hover:bg-violet-500/30"
-                >
-                  <Plus size={16} aria-hidden />
-                  Crear Sub-cliente
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void loadSubClients()}
-                  disabled={subClientsLoading}
-                  className="rounded-lg border border-slate-500/40 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800/50 disabled:opacity-45"
-                >
-                  Actualizar lista
-                </button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void openCreateSubClientModal()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-violet-400/40 bg-violet-500/20 px-4 py-2.5 text-sm font-bold text-violet-50 transition hover:bg-violet-500/30"
+                  >
+                    <Plus size={16} aria-hidden />
+                    Crear Sub-cliente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void refreshResellerNetwork()}
+                    disabled={subClientsLoading || networkTreeLoading}
+                    className="rounded-lg border border-slate-500/40 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800/50 disabled:opacity-45"
+                  >
+                    Actualizar lista
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={openContactModal}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-950/30 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-900/40"
+                  className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-950/30 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-900/40"
                 >
                   <Phone size={14} aria-hidden />
                   Contacto
                 </button>
               </div>
 
-              {subClientsLoading ? (
+              {subClientsLoading && activeFilter !== 'team' ? (
                 <p className="m-0 flex items-center gap-2 text-sm text-slate-300">
                   <Loader2 size={16} className="animate-spin" />
                   Cargando red…
                 </p>
-              ) : subClientsErr ? (
+              ) : subClientsErr && activeFilter !== 'team' ? (
                 <p className="m-0 text-sm text-red-200">{subClientsErr}</p>
-              ) : subClients.length === 0 ? (
-                <p className="m-0 text-sm text-slate-400/85">
-                  Aún no tienes sub-clientes. Crea el primero para revender pantallas con tu propia red.
-                </p>
               ) : (
                 <div className="rounded-xl border border-slate-600/40">
                   <div className="flex flex-wrap items-center gap-2 border-b border-slate-600/35 px-3 py-3">
@@ -7668,7 +7699,36 @@ function ClientPortalPageInner() {
                         </span>
                       ) : null}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveFilter('team')}
+                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                        activeFilter === 'team'
+                          ? 'border border-violet-400/50 bg-violet-500/25 text-violet-50'
+                          : 'border border-slate-600/50 bg-slate-900/50 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      Mi Equipo
+                    </button>
                   </div>
+
+                  {activeFilter === 'team' ? (
+                    networkTreeLoading ? (
+                      <p className="m-0 flex items-center gap-2 px-3 py-6 text-sm text-slate-300">
+                        <Loader2 size={16} className="animate-spin" />
+                        Cargando árbol de red…
+                      </p>
+                    ) : networkTreeErr ? (
+                      <p className="m-0 px-3 py-4 text-sm text-red-200">{networkTreeErr}</p>
+                    ) : (
+                      <NetworkTreeView tree={networkTree} />
+                    )
+                  ) : subClients.length === 0 ? (
+                    <p className="m-0 px-3 pb-4 text-sm text-slate-400/85">
+                      Aún no tienes sub-clientes. Crea el primero para revender pantallas con tu propia red.
+                    </p>
+                  ) : (
+                    <>
                   <div className="relative mb-4 px-3 pt-3">
                     <Search
                       size={16}
@@ -7817,6 +7877,8 @@ function ClientPortalPageInner() {
                       Siguiente
                     </button>
                   </div>
+                    </>
+                  )}
                     </>
                   )}
                 </div>
