@@ -82,6 +82,7 @@ from app.schemas.portal_public import (
     PortalPaymentSubmitResponse,
     PortalSalePaymentBrief,
     PortalAssignPricesRequest,
+    PortalNetworkDashboard,
     PortalSubClientBrief,
     PortalSubClientCreate,
     PortalSubClientDeleteResponse,
@@ -110,7 +111,6 @@ from app.services.baas_commission_cascade_service import BAAS_COMMISSION_LEDGER_
 from app.services.client_reseller_service import (
     TX_BAAS_TRANSFER_IN,
     TX_BAAS_TRANSFER_OUT,
-    build_distributor_tree_node,
     create_subclient_with_prices,
     get_direct_subclient,
     list_parent_selling_packages,
@@ -121,7 +121,7 @@ from app.services.client_reseller_service import (
     update_subclient_for_parent,
     upsert_subclient_product_prices,
 )
-from app.schemas.distributors import DistributorTreeNode
+from app.services.portal_network_dashboard_service import build_portal_network_dashboard
 from app.schemas.client_product_prices import ClientProductPriceItem
 from app.services.client_payment_service import (
     compute_client_credit_summary,
@@ -1492,12 +1492,12 @@ def portal_list_sub_clients(portal_token: uuid_pkg.UUID, db: DbDep) -> list[Port
     return [_portal_subclient_brief(r) for r in rows]
 
 
-@router.get("/{portal_token}/network-tree", response_model=DistributorTreeNode)
-def portal_network_tree(portal_token: uuid_pkg.UUID, db: DbDep) -> DistributorTreeNode:
-    """Árbol genealógico BaaS completo del titular del portal y todos sus descendientes."""
+@router.get("/{portal_token}/network-tree", response_model=PortalNetworkDashboard)
+def portal_network_tree(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalNetworkDashboard:
+    """Dashboard de red BaaS: árbol genealógico recursivo, KPIs y conteo por nivel."""
     root = _portal_client_from_token(db, portal_token)
-    tree = build_distributor_tree_node(db, root)
-    return DistributorTreeNode(**tree)
+    payload = build_portal_network_dashboard(db, root)
+    return PortalNetworkDashboard(**payload)
 
 
 @router.patch(

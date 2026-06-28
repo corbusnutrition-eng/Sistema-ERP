@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.schemas.client_product_prices import PortalAssignedPackagePrice
+from app.schemas.distributors import DistributorTreeNode
 
 
 class PortalCheckoutLinePublic(BaseModel):
@@ -286,6 +287,31 @@ class PortalWalletRechargeItem(BaseModel):
         default=0.0,
         description="Excedente acumulado enviado a saldo a favor CxC por esta solicitud.",
     )
+
+
+class PortalNetworkLevelCount(BaseModel):
+    level: int = Field(..., ge=1, description="Profundidad en el árbol (raíz = 1).")
+    count: int = Field(..., ge=0, description="Distribuidores en ese nivel.")
+
+
+class PortalNetworkMetrics(BaseModel):
+    total_network_count: int = Field(..., ge=0, description="Descendientes totales (sin contar la raíz).")
+    active_clients_count: int = Field(..., ge=0, description="Descendientes con estado Activo.")
+    total_network_balance: float = Field(default=0.0, ge=0, description="Suma de saldos BaaS en toda la red.")
+    total_commissions: float = Field(
+        default=0.0,
+        ge=0,
+        description="Comisiones de red acumuladas en el mes calendario actual.",
+    )
+    currency: str = Field(default="USD", max_length=10)
+
+
+class PortalNetworkDashboard(BaseModel):
+    """Dashboard de red del portal: árbol genealógico + métricas globales."""
+
+    tree: DistributorTreeNode
+    metrics: PortalNetworkMetrics
+    level_counts: list[PortalNetworkLevelCount] = Field(default_factory=list)
 
 
 class PortalSubClientBrief(BaseModel):

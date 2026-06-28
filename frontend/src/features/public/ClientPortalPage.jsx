@@ -20,7 +20,7 @@ import {
 import { calculateExpirationStats } from '../inventory/screenPackageExpiration'
 import CodigosRetiroWidget, { RETIRO_ERP_ERROR_MESSAGE } from './CodigosRetiroWidget'
 import PortalPaymentSubmittedSuccessCard from './PortalPaymentSubmittedSuccessCard'
-import NetworkTreeView from './NetworkTreeView'
+import NetworkDashboard from './NetworkDashboard'
 import MiniDashboard from './MiniDashboard'
 import {
   extractRetiroMonto,
@@ -1998,7 +1998,7 @@ function ClientPortalPageInner() {
   const [subClients, setSubClients] = useState([])
   const [subClientsLoading, setSubClientsLoading] = useState(false)
   const [subClientsErr, setSubClientsErr] = useState(null)
-  const [networkTree, setNetworkTree] = useState(null)
+  const [networkDashboard, setNetworkDashboard] = useState(null)
   const [networkTreeLoading, setNetworkTreeLoading] = useState(false)
   const [networkTreeErr, setNetworkTreeErr] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
@@ -2217,11 +2217,11 @@ function ClientPortalPageInner() {
     setNetworkTreeErr(null)
     try {
       const { data } = await api.get(`/api/v1/portal/${encodeURIComponent(token)}/network-tree`)
-      setNetworkTree(data ?? null)
+      setNetworkDashboard(data ?? null)
     } catch (err) {
       const d = err?.response?.data?.detail
       setNetworkTreeErr(typeof d === 'string' ? d : 'No se pudo cargar el árbol de tu red.')
-      setNetworkTree(null)
+      setNetworkDashboard(null)
     } finally {
       setNetworkTreeLoading(false)
     }
@@ -7713,16 +7713,13 @@ function ClientPortalPageInner() {
                   </div>
 
                   {activeFilter === 'team' ? (
-                    networkTreeLoading ? (
-                      <p className="m-0 flex items-center gap-2 px-3 py-6 text-sm text-slate-300">
-                        <Loader2 size={16} className="animate-spin" />
-                        Cargando árbol de red…
-                      </p>
-                    ) : networkTreeErr ? (
-                      <p className="m-0 px-3 py-4 text-sm text-red-200">{networkTreeErr}</p>
-                    ) : (
-                      <NetworkTreeView tree={networkTree} />
-                    )
+                    <NetworkDashboard
+                      dashboard={networkDashboard}
+                      loading={networkTreeLoading}
+                      error={networkTreeErr}
+                      onRefresh={loadNetworkTree}
+                      className="px-1 pb-2 pt-2"
+                    />
                   ) : subClients.length === 0 ? (
                     <p className="m-0 px-3 pb-4 text-sm text-slate-400/85">
                       Aún no tienes sub-clientes. Crea el primero para revender pantallas con tu propia red.
