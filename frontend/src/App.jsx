@@ -1,7 +1,12 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ModalProvider } from './context/ModalContext'
 import { AuthProvider, useAuth } from './context/AuthContext'
-import { PERMS, hasAnyPermissionPrefix } from './lib/permissions'
+import { PERMS, hasAnyPermissionPrefix, hasAnyBaasPermission, hasPermission as checkPermission } from './lib/permissions'
+import {
+  getPrimaryAssignedAccountPath,
+  isRestrictedLedgerUser,
+  resolvePostLoginPath,
+} from './lib/permissionMatrix'
 import { InventoryDataProvider } from './context/InventoryDataContext'
 import MainLayout from './components/layout/MainLayout'
 import Dashboard from './pages/Dashboard'
@@ -77,13 +82,30 @@ function BaasRoute({ children }) {
 }
 
 function DefaultRedirect() {
-  const { user, hasAnyBaasAccess, hasPermission } = useAuth()
-  if (!user) return <Navigate to="/login" replace />
-  if (user.role === 'admin') return <Navigate to="/dashboard" replace />
-  if (hasPermission(PERMS.DASHBOARD_VIEW)) return <Navigate to="/dashboard" replace />
-  if (hasAnyBaasAccess) return <Navigate to="/equipo/distribuidores" replace />
-  if (hasPermission(PERMS.CLIENTS_VIEW)) return <Navigate to="/clientes" replace />
-  return <Navigate to="/login" replace />
+  const { user, permissions } = useAuth()
+  const destination = resolvePostLoginPath(user, {
+    hasPermission: (perm) => checkPermission(user?.role, permissions, perm),
+    hasAnyBaasPermission,
+  })
+  return <Navigate to={destination} replace />
+}
+
+function AccountingHomeRedirect() {
+  const { user } = useAuth()
+  const ledgerPath = getPrimaryAssignedAccountPath(user)
+  if (isRestrictedLedgerUser(user) && ledgerPath) {
+    return <Navigate to={ledgerPath} replace />
+  }
+  return <Navigate to="/contabilidad/plan-de-cuentas" replace />
+}
+
+function DashboardPage() {
+  const { user } = useAuth()
+  const ledgerPath = getPrimaryAssignedAccountPath(user)
+  if (isRestrictedLedgerUser(user) && ledgerPath) {
+    return <Navigate to={ledgerPath} replace />
+  }
+  return <Dashboard />
 }
 
 function AppRoutes() {
@@ -103,9 +125,9 @@ function AppRoutes() {
               <InventoryDataProvider>
                 <MainLayout>
                   <Routes>
-                    <Route path="/dashboard" element={<PermissionRoute permission={PERMS.DASHBOARD_VIEW}><Dashboard /></PermissionRoute>} />
+                    <Route path="/dashboard" element={<PermissionRoute permission={PERMS.DASHBOARD_VIEW}><DashboardPage /></PermissionRoute>} />
                     <Route path="/inventario" element={<PermissionRoute permission={PERMS.INVENTORY_VIEW}><Inventory /></PermissionRoute>} />
-                    <Route path="/contabilidad" element={<PermissionRoute permissionAny="accounting"><Navigate to="/contabilidad/plan-de-cuentas" replace /></PermissionRoute>} />
+                    <Route path="/contabilidad" element={<PermissionRoute permissionAny="accounting"><AccountingHomeRedirect /></PermissionRoute>} />
                     <Route path="/contabilidad/plan-de-cuentas" element={<PermissionRoute permission={PERMS.ACCOUNTING_CHART_VIEW}><ChartOfAccounts /></PermissionRoute>} />
                     <Route path="/contabilidad/cuenta/:id" element={<PermissionRoute permission={PERMS.ACCOUNTING_CHART_VIEW}><AccountHistoryPage /></PermissionRoute>} />
                     <Route path="/contabilidad/conciliar/:accountId" element={<PermissionRoute permission={PERMS.ACCOUNTING_RECONCILE_VIEW}><Conciliar /></PermissionRoute>} />

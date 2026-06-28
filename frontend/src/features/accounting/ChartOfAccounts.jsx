@@ -21,6 +21,11 @@ import {
 } from 'lucide-react'
 import api from '../../api/axios'
 import { getApiErrorMessage } from '../../lib/apiErrors'
+import { useAuth } from '../../context/AuthContext'
+import {
+  getPrimaryAssignedAccountPath,
+  isRestrictedLedgerUser,
+} from '../../lib/permissionMatrix'
 import { ACCOUNT_TYPE_LABELS } from './constants'
 import NuevaCuentaModal from './components/NuevaCuentaModal'
 
@@ -379,6 +384,9 @@ function RowSplitActions({
 
 export default function ChartOfAccounts() {
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const restrictedLedger = isRestrictedLedgerUser(user)
+  const primaryLedgerPath = getPrimaryAssignedAccountPath(user)
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -423,6 +431,12 @@ export default function ChartOfAccounts() {
       [accountId]: !prev[accountId],
     }))
   }, [])
+
+  useEffect(() => {
+    if (restrictedLedger && primaryLedgerPath) {
+      navigate(primaryLedgerPath, { replace: true })
+    }
+  }, [restrictedLedger, primaryLedgerPath, navigate])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -519,14 +533,16 @@ export default function ChartOfAccounts() {
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Actualizar
           </button>
-          <button
-            type="button"
-            onClick={openNewModal}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm"
-          >
-            <Plus size={16} />
-            Nuevo
-          </button>
+          {!restrictedLedger && (
+            <button
+              type="button"
+              onClick={openNewModal}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm"
+            >
+              <Plus size={16} />
+              Nuevo
+            </button>
+          )}
         </div>
       </div>
 
@@ -569,7 +585,13 @@ export default function ChartOfAccounts() {
           <div className="p-8 text-center text-red-500 text-sm">{error}</div>
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-gray-400 text-sm">
-            No hay cuentas todavía. Pulsa <strong>Nuevo</strong> para crear la primera.
+            {restrictedLedger
+              ? 'No hay cuentas asignadas disponibles.'
+              : (
+                <>
+                  No hay cuentas todavía. Pulsa <strong>Nuevo</strong> para crear la primera.
+                </>
+              )}
           </div>
         ) : cuentasFiltradas.length === 0 ? (
           <div className="p-12 text-center text-gray-400 text-sm">

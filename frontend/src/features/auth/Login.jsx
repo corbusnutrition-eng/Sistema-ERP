@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { loginWithEmailPassword, parseAuthErrorDetail } from '../../api/auth'
 import { useAuth } from '../../context/AuthContext'
-import { hasAnyBaasPermission } from '../../lib/permissions'
+import { hasAnyBaasPermission, hasPermission as checkPermission } from '../../lib/permissions'
+import { resolvePostLoginPath } from '../../lib/permissionMatrix'
 
 function LoginSpinner() {
   return (
@@ -43,12 +44,10 @@ export default function Login() {
     try {
       const data = await loginWithEmailPassword(email, password)
       setSession(data.access_token, data.user)
-      let destination = '/clientes'
-      if (data.user.role === 'admin') {
-        destination = '/dashboard'
-      } else if (hasAnyBaasPermission(data.user.role, data.user.permissions)) {
-        destination = '/equipo/distribuidores'
-      }
+      const destination = resolvePostLoginPath(data.user, {
+        hasPermission: (perm) => checkPermission(data.user.role, data.user.permissions, perm),
+        hasAnyBaasPermission,
+      })
       navigate(destination, { replace: true })
     } catch (err) {
       setError(resolveLoginError(err))

@@ -5,6 +5,7 @@ import {
   BAAS_VIEW_NOTIFICATIONS_TAB,
   BAAS_VIEW_REQUESTS_TAB,
   BAAS_VIEW_USERS_TAB,
+  PERMS,
 } from './permissions'
 
 export const ROLE_TEMPLATE_CUSTOM = 'custom'
@@ -14,6 +15,35 @@ export const ROLE_TEMPLATE_ACCOUNT_VERIFIER = 'account_verifier'
 export function isAccountVerifierUser(user) {
   if (!user || user.role === 'admin') return false
   return String(user.role_template || '').trim() === ROLE_TEMPLATE_ACCOUNT_VERIFIER
+}
+
+/** Trabajador/verificador con cuentas asignadas — vista operativa limitada al libro mayor. */
+export function isRestrictedLedgerUser(user) {
+  if (!user || user.role === 'admin') return false
+  if (isAccountVerifierUser(user)) return true
+  const ids = Array.isArray(user.assigned_account_ids) ? user.assigned_account_ids : []
+  return user.role === 'worker' && ids.length > 0
+}
+
+export function getPrimaryAssignedAccountPath(user) {
+  const ids = Array.isArray(user?.assigned_account_ids) ? user.assigned_account_ids : []
+  const first = ids.map((id) => Number(id)).find((id) => Number.isFinite(id) && id > 0)
+  return first ? `/contabilidad/cuenta/${first}` : null
+}
+
+/** Ruta de inicio tras login o acceso a `/`. */
+export function resolvePostLoginPath(user, { hasPermission, hasAnyBaasPermission }) {
+  if (!user) return '/login'
+  if (user.role === 'admin') return '/dashboard'
+
+  const ledgerPath = getPrimaryAssignedAccountPath(user)
+  if (isRestrictedLedgerUser(user) && ledgerPath) return ledgerPath
+
+  if (hasAnyBaasPermission(user.role, user.permissions)) return '/equipo/distribuidores'
+  if (hasPermission?.(PERMS.DASHBOARD_VIEW)) return '/dashboard'
+  if (hasPermission?.(PERMS.CLIENTS_VIEW)) return '/clientes'
+  if (ledgerPath) return ledgerPath
+  return '/clientes'
 }
 
 export function splitFullName(fullName = '') {

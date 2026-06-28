@@ -4,6 +4,10 @@ import { useModal } from '../../context/ModalContext'
 import { useAuth } from '../../context/AuthContext'
 import { PERMS, isNavItemVisible } from '../../lib/permissions'
 import {
+  getPrimaryAssignedAccountPath,
+  isRestrictedLedgerUser,
+} from '../../lib/permissionMatrix'
+import {
   LayoutDashboard,
   Users,
   Tv2,
@@ -302,6 +306,10 @@ export default function Sidebar() {
 
   const navCtx = { role: user?.role, permissions, isAdmin, hasAnyBaasAccess }
 
+  const primaryLedgerPath = getPrimaryAssignedAccountPath(user)
+  const restrictedLedger = isRestrictedLedgerUser(user)
+  const directContabilidadNav = restrictedLedger && primaryLedgerPath
+
   const visibleNavItems = NAV_ITEMS
     .filter((item) => isNavItemVisible(item, navCtx))
     .map((item) =>
@@ -341,14 +349,47 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Quick-create menu */}
-      <CreateMenu collapsed={collapsed} hasPermission={hasPermission} />
+      {/* Quick-create menu — oculto para trabajador/verificador con acceso limitado */}
+      {!restrictedLedger && (
+        <CreateMenu collapsed={collapsed} hasPermission={hasPermission} />
+      )}
 
       {/* Navigation */}
       <nav className="flex-1 py-4 overflow-y-auto flex flex-col justify-between">
         <ul className="space-y-1 px-2">
           {visibleNavItems.map((item) =>
-            item.submenu ? (
+            item.submenu && directContabilidadNav ? (
+              <li key={item.label}>
+                <NavLink
+                  to={primaryLedgerPath}
+                  title={collapsed ? item.label : undefined}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group ${
+                      isActive
+                        ? 'bg-blue-50 text-blue-600'
+                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    }`
+                  }
+                >
+                  {({ isActive }) => {
+                    const Icon = item.icon
+                    return (
+                      <>
+                        <Icon
+                          size={18}
+                          className={`shrink-0 ${
+                            isActive
+                              ? 'text-blue-600'
+                              : 'text-gray-400 group-hover:text-gray-600'
+                          }`}
+                        />
+                        {!collapsed && <span className="truncate">{item.label}</span>}
+                      </>
+                    )
+                  }}
+                </NavLink>
+              </li>
+            ) : item.submenu ? (
               <li key={item.label}>
                 <AccountingDropdown item={item} collapsed={collapsed} />
               </li>
