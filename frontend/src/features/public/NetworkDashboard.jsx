@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Tree from 'react-d3-tree'
 import {
-  CheckCircle2,
   GitBranch,
   Loader2,
   Move,
@@ -20,15 +19,6 @@ const TREE_NODE_SIZE_Y = 150
 const TREE_SIBLING_SEP = 1.12
 const TREE_CANVAS_PADDING_X = 200
 const TREE_CANVAS_PADDING_Y = 160
-
-const NETWORK_BENEFITS = [
-  'Crea subclientes ilimitados',
-  'Transfiere saldo BaaS',
-  'Asigna precios personalizados',
-  'Comparte tu enlace de portal',
-  'Gana comisiones por red',
-  'Control total de tu estructura',
-]
 
 export const NETWORK_LEVEL_THEME = {
   1: {
@@ -451,7 +441,7 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="mx-auto w-full max-w-xl">
         <section className="rounded-2xl border border-slate-700/50 bg-[#0a0f1a]/90 px-4 py-4">
           <h3 className="m-0 mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-300">
             <GitBranch size={14} className="text-violet-300" aria-hidden />
@@ -486,23 +476,6 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
             Total en tu red:{' '}
             <strong className="font-semibold text-violet-200">{totalInNetwork} distribuidores</strong>
           </p>
-        </section>
-
-        <section className="rounded-2xl border border-slate-700/50 bg-[#0a0f1a]/90 px-4 py-4">
-          <h3 className="m-0 mb-3 text-xs font-bold uppercase tracking-[0.12em] text-slate-300">
-            Beneficios de tu red
-          </h3>
-          <ul className="m-0 list-none space-y-2.5 p-0">
-            {NETWORK_BENEFITS.map((item) => (
-              <li key={item} className="flex items-start gap-2 text-sm text-slate-200">
-                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-400" aria-hidden />
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-4 flex justify-end opacity-40" aria-hidden>
-            <GitBranch size={48} className="text-violet-400/80" />
-          </div>
         </section>
       </div>
     </div>
