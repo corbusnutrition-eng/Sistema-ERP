@@ -19,6 +19,7 @@ import {
 } from '../../constants/phoneCountryCodes'
 import { calculateExpirationStats } from '../inventory/screenPackageExpiration'
 import CodigosRetiroWidget, { RETIRO_ERP_ERROR_MESSAGE } from './CodigosRetiroWidget'
+import PortalPaymentSubmittedSuccessCard from './PortalPaymentSubmittedSuccessCard'
 import MiniDashboard from './MiniDashboard'
 import {
   extractRetiroMonto,
@@ -896,6 +897,7 @@ function defaultRechargePayFormState() {
     analyzing: false,
     dragOver: false,
     isManuallyEdited: false,
+    isPaymentSubmitted: false,
   }
 }
 
@@ -1763,6 +1765,7 @@ function ClientPortalPageInner() {
   const [submittingSaleId, setSubmittingSaleId] = useState(null)
   const [submitErrorBySale, setSubmitErrorBySale] = useState({})
   const [successBySale, setSuccessBySale] = useState({})
+  const [paymentSubmittedBySale, setPaymentSubmittedBySale] = useState({})
   const [analyzingBySale, setAnalyzingBySale] = useState({})
   const [aiResultBySale, setAiResultBySale] = useState({})
   const [paidAmountBySale, setPaidAmountBySale] = useState({})
@@ -1780,6 +1783,7 @@ function ClientPortalPageInner() {
     analyzing: false,
     dragOver: false,
     isManuallyEdited: false,
+    isPaymentSubmitted: false,
   })
   const [debtReceiptFiles, setDebtReceiptFiles] = useState([])
   const debtReceiptFilesRef = useRef([])
@@ -1838,7 +1842,7 @@ function ClientPortalPageInner() {
     }))
 
     if (scope === 'debt') {
-      setDebtForm((p) => ({ ...p, error: null, success: false, submitting: false }))
+      setDebtForm((p) => ({ ...p, error: null, success: false, submitting: false, isPaymentSubmitted: false }))
       return
     }
 
@@ -1849,6 +1853,7 @@ function ClientPortalPageInner() {
           error: null,
           success: false,
           submitting: false,
+          isPaymentSubmitted: false,
         })
       }
       return
@@ -1858,6 +1863,7 @@ function ClientPortalPageInner() {
       const sid = Number(scope.slice('sale:'.length))
       if (Number.isFinite(sid)) {
         setSuccessBySale((p) => ({ ...p, [sid]: false }))
+        setPaymentSubmittedBySale((p) => ({ ...p, [sid]: false }))
         setSubmitErrorBySale((p) => ({ ...p, [sid]: null }))
         setSubmittingSaleId((prev) => (prev === sid ? null : prev))
       }
@@ -3405,6 +3411,7 @@ function ClientPortalPageInner() {
       success: false,
       aiResult: null,
       dragOver: false,
+      isPaymentSubmitted: false,
     }))
     return undefined
   }, [currentDebtPayObligation?.key])
@@ -4039,8 +4046,11 @@ function ClientPortalPageInner() {
       const accs = portalAccountsForMethod(salePayTree, pm)
       const needsDep = accs.length > 0
 
-      const postSuccess = async () => {
+      const postSuccess = async ({ markPaymentSubmitted = false } = {}) => {
         setSuccessBySale((p) => ({ ...p, [sid]: true }))
+        if (markPaymentSubmitted) {
+          setPaymentSubmittedBySale((p) => ({ ...p, [sid]: true }))
+        }
         revokeThumbnailList(thumbnailUrlsBySale[sid])
         setThumbnailUrlsBySale((p) =>
           Object.fromEntries(Object.entries(p).filter(([k]) => k !== String(sid))),
@@ -4168,7 +4178,7 @@ function ClientPortalPageInner() {
           illegibleSubmit: illegible,
         })
         await api.post(`/api/v1/portal/${token}/payments`, fd)
-        await postSuccess()
+        await postSuccess({ markPaymentSubmitted: true })
       } catch (err) {
         // Extraer el mensaje real del servidor (detail de FastAPI, o texto plano)
         const serverDetail = err?.response?.data?.detail
@@ -4425,7 +4435,7 @@ function ClientPortalPageInner() {
         return []
       })
       setDebtReceiptFiles([])
-      setDebtForm((p) => ({ ...p, success: true, amount: '', aiResult: null }))
+      setDebtForm((p) => ({ ...p, success: true, isPaymentSubmitted: true, amount: '', aiResult: null }))
       await loadPortal()
     } catch (err) {
       const d = err?.response?.data?.detail
@@ -4778,7 +4788,12 @@ function ClientPortalPageInner() {
           return { ...prev, [rid]: [] }
         })
         setReceiptFilesByRecharge((prev) => ({ ...prev, [rid]: [] }))
-        patchRechargePayForm(setRechargeFormById, rid, { success: true, amount: '', aiResult: null })
+        patchRechargePayForm(setRechargeFormById, rid, {
+          success: true,
+          isPaymentSubmitted: true,
+          amount: '',
+          aiResult: null,
+        })
         await loadWalletRecharges()
         await loadPortal()
       } catch (err) {
@@ -4870,7 +4885,7 @@ function ClientPortalPageInner() {
           }
         }
         setDebtReceiptFiles([])
-        setDebtForm((p) => ({ ...p, success: true, amount: '', aiResult: null }))
+        setDebtForm((p) => ({ ...p, success: true, isPaymentSubmitted: true, amount: '', aiResult: null }))
         setRetiroSuccessByScope({ scope: 'debt', monto, currency: debtCurrency })
         setRetiroErpErrorByScope(null)
         await loadPortal()
@@ -4935,7 +4950,12 @@ function ClientPortalPageInner() {
       patchRechargePayForm(setRechargeFormById, rid, { submitting: true, error: null, success: false })
       try {
         await requestCodigosRetiroInstantActivationCxcWalletRecharge(api, token, rid, selectedMethodId)
-        patchRechargePayForm(setRechargeFormById, rid, { success: true, amount: '', aiResult: null })
+        patchRechargePayForm(setRechargeFormById, rid, {
+          success: true,
+          isPaymentSubmitted: true,
+          amount: '',
+          aiResult: null,
+        })
         setRetiroSuccessByScope({
           scope: retiroScope,
           monto: Number.isFinite(payload?.monto) ? payload.monto : undefined,
@@ -4964,7 +4984,12 @@ function ClientPortalPageInner() {
           error: err,
         })
         if (err?.response?.status === 409) {
-          patchRechargePayForm(setRechargeFormById, rid, { success: true, amount: '', aiResult: null })
+          patchRechargePayForm(setRechargeFormById, rid, {
+          success: true,
+          isPaymentSubmitted: true,
+          amount: '',
+          aiResult: null,
+        })
           setRetiroSuccessByScope({
             scope: retiroScope,
             monto: Number.isFinite(payload?.monto) ? payload.monto : undefined,
@@ -5025,6 +5050,7 @@ function ClientPortalPageInner() {
       try {
         await requestCodigosRetiroInstantActivationCxc(api, token, sid, selectedMethodId)
         setSuccessBySale((p) => ({ ...p, [sid]: true }))
+        setPaymentSubmittedBySale((p) => ({ ...p, [sid]: true }))
         setRetiroSuccessByScope({
           scope: `sale:${sid}`,
           monto: Number.isFinite(payload?.monto) ? payload.monto : undefined,
@@ -5053,6 +5079,7 @@ function ClientPortalPageInner() {
         })
         if (err?.response?.status === 409) {
           setSuccessBySale((p) => ({ ...p, [sid]: true }))
+          setPaymentSubmittedBySale((p) => ({ ...p, [sid]: true }))
           setRetiroSuccessByScope({
             scope: `sale:${sid}`,
             monto: Number.isFinite(payload?.monto) ? payload.monto : undefined,
@@ -5319,6 +5346,10 @@ function ClientPortalPageInner() {
         </p>
       )}
 
+      {debtForm.isPaymentSubmitted ? (
+        <PortalPaymentSubmittedSuccessCard className="mt-1" />
+      ) : (
+        <>
       {showDebtCreditBtn ? (
         <>
           <button
@@ -5421,6 +5452,7 @@ function ClientPortalPageInner() {
           }
           entity={currentDebtPayObligation?.kind === 'recharge' ? 'recharge' : 'sale'}
           onRetiroError={handleRetiroWidgetError}
+          onSuccess={() => setDebtForm((p) => ({ ...p, isPaymentSubmitted: true }))}
           {...buildRetiroWidgetErpProps('debt', {
             isSuccess: debtShowReviewSuccess,
             successMonto:
@@ -5565,11 +5597,6 @@ function ClientPortalPageInner() {
       {debtForm.error && !(isDebtRetiro && retiroErpErrorByScope?.scope === 'debt') ? (
         <p style={{ margin: '0 0 10px', fontSize: 13, color: '#fecaca', textAlign: 'center' }}>{debtForm.error}</p>
       ) : null}
-      {debtShowReviewSuccess && !isDebtRetiro ? (
-        <p style={{ margin: '0 0 10px', fontSize: 13, color: '#86efac', textAlign: 'center' }}>
-          ✅ {PORTAL_REVIEW_SUCCESS_MSG}
-        </p>
-      ) : null}
 
       {debtUxHint && !isDebtRetiro ?
         <p className="mb-3 px-1 text-center text-sm font-medium leading-relaxed text-amber-400">{debtUxHint}</p>
@@ -5588,6 +5615,8 @@ function ClientPortalPageInner() {
         {debtForm.submitting ? 'Enviando…' : 'Enviar comprobante de pago'}
       </button>
       ) : null}
+        </>
+      )}
     </div>
     )
   }
@@ -5838,9 +5867,6 @@ function ClientPortalPageInner() {
             const isFeatPartial = featPaid > 1e-9 && pend > 1e-9
             const showPayForm = portalCanShowPayFormForRecharge(fr)
             const featLastPaymentRejected = portalRechargeLastPaymentRejected(fr)
-            const featPaymentsInReview = portalRechargeHasPaymentsInReview(fr)
-            const featShowReviewBanner =
-              (rechargeForm.success || featPaymentsInReview) && showPayForm
             const rechargeDepResolved =
               rechargeForm.account ||
               payAccountByRecharge[frId] ||
@@ -5968,9 +5994,6 @@ function ClientPortalPageInner() {
                     }}
                     style={{ display: 'flex', flexDirection: 'column', gap: 0 }}
                   >
-                    {featShowReviewBanner ? (
-                      <PortalPaymentsInReviewBanner message="Recibimos tu comprobante. Puedes enviar abonos adicionales mientras quede saldo pendiente." />
-                    ) : null}
                     {featLastPaymentRejected ? <PortalPaymentRejectedBanner /> : null}
                     <PortalNeoOrderSummaryCard
                       headlineAmountFormatted={formatMoney(headlineAmt, cur)}
@@ -6006,6 +6029,10 @@ function ClientPortalPageInner() {
                       footerText={`Referencia #${refStr}`}
                     />
 
+                    {rechargeForm.isPaymentSubmitted ? (
+                      <PortalPaymentSubmittedSuccessCard className="mt-4" />
+                    ) : (
+                      <>
                     {showFeatCreditBtn ? (
                       <>
                         <button
@@ -6143,6 +6170,9 @@ function ClientPortalPageInner() {
                         referenciaExterna={refStr}
                         entity="recharge"
                         onRetiroError={handleRetiroWidgetError}
+                        onSuccess={() =>
+                          patchRechargePayForm(setRechargeFormById, frId, { isPaymentSubmitted: true })
+                        }
                         {...buildRetiroWidgetErpProps(retiroScope, {
                           isSuccess:
                             (retiroSuccessByScope?.scope === retiroScope || rechargeForm.success) &&
@@ -6364,6 +6394,8 @@ function ClientPortalPageInner() {
                       {rechargeForm.submitting ? 'Enviando…' : 'Enviar comprobante de esta recarga'}
                     </button>
                     ) : null}
+                      </>
+                    )}
                   </form>
                 )}
               </div>
@@ -6415,8 +6447,6 @@ function ClientPortalPageInner() {
                 const isSaleRetiro = isCodigosRetiroMethodId(pmList, methodId)
                 const depList = portalAccountsForMethod(salePayTree, methodId)
                 const needsDepositPick = depList.length > 0
-                const showReviewBanner =
-                  (successBySale[sid] || portalSaleHasBlockingPayment(sale)) && saleBalance > 1e-9
                 const canShowPayForm = portalCanShowPayFormForSale(sale)
                 const lastPaymentRejected = portalSaleLastPaymentRejected(sale)
                 void portalClock
@@ -6549,9 +6579,6 @@ function ClientPortalPageInner() {
                         }}
                         style={{ display: 'flex', flexDirection: 'column', gap: 0 }}
                       >
-                        {showReviewBanner ? (
-                          <PortalPaymentsInReviewBanner message="Recibimos tu comprobante. Puedes enviar abonos adicionales mientras quede saldo pendiente." />
-                        ) : null}
                         {lastPaymentRejected ? <PortalPaymentRejectedBanner /> : null}
                         <PortalNeoOrderSummaryCard
                           pricingBreakdownSlot={
@@ -6612,6 +6639,10 @@ function ClientPortalPageInner() {
                           footerText={`Referencia #${String(sid).padStart(4, '0')}`}
                         />
 
+                        {paymentSubmittedBySale[sid] ? (
+                          <PortalPaymentSubmittedSuccessCard className="mt-4" />
+                        ) : (
+                          <>
                         {paysOnlyWithCredit ? (
                           <section
                             style={{
@@ -6749,6 +6780,9 @@ function ClientPortalPageInner() {
                               clientName={clientName}
                               referenciaExterna={sid}
                               onRetiroError={handleRetiroWidgetError}
+                              onSuccess={() =>
+                                setPaymentSubmittedBySale((p) => ({ ...p, [sid]: true }))
+                              }
                               {...buildRetiroWidgetErpProps(`sale:${sid}`, {
                                 isSuccess:
                                   (retiroSuccessByScope?.scope === `sale:${sid}` ||
@@ -7026,6 +7060,8 @@ function ClientPortalPageInner() {
                         >
                           {submittingSaleId === sid ? 'Aplicando…' : 'Pagar con mi Saldo a Favor'}
                         </button>
+                        )}
+                          </>
                         )}
                       </form>
                     )}

@@ -195,6 +195,7 @@ export default function CodigosRetiroWidget({
   erpSuccessCurrency = 'USD',
   onErpRetry = null,
   remountKey = 0,
+  onSuccess = null,
 }) {
   const label = String(clientName ?? '').trim() || 'Cliente'
   const widgetEntity = entity === 'recharge' ? 'recharge' : 'sale'
@@ -292,6 +293,14 @@ export default function CodigosRetiroWidget({
       initialLoadTimeoutRef.current = null
     }
   }, [clearProcessingTimeout])
+
+  const prevErpSuccessRef = useRef(false)
+  useEffect(() => {
+    if (erpIsSuccess && !prevErpSuccessRef.current) {
+      onSuccess?.()
+    }
+    prevErpSuccessRef.current = erpIsSuccess
+  }, [erpIsSuccess, onSuccess])
 
   const markRetiroRejected = useCallback(
     (message) => {
