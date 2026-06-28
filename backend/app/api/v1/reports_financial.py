@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
@@ -254,30 +255,12 @@ def create_expense_journal_entry(payload: ExpenseJournalCreate, db: DbDep, _: Ex
 _TICKETS_DETAILS = frozenset(TICKETS_DETAIL_BY_INCOME.values())
 
 
-@router.get("/profit-and-loss", response_model=ProfitAndLossResponse)
-def get_profit_and_loss(
-    db: DbDep,
-    _: ReportsFinancialViewDep,
-    start_date: date = Query(..., description="Inicio inclusive del periodo."),
-    end_date: date = Query(..., description="Fin inclusive del periodo."),
-) -> ProfitAndLossResponse:
-    """
-    Estado de resultados jerárquico consolidado en **USD**.
-
-    Cada línea del libro mayor se convierte con el ``exchange_rate`` de la transacción origen.
-    """
-    if end_date < start_date:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="end_date debe ser mayor o igual que start_date.",
-        )
-
+def _build_profit_and_loss_report(db: Session, start_date: date, end_date: date) -> ProfitAndLossResponse:
     from app.services.pnl_report import build_pnl_category_trees, sum_pnl_rows
 
     trees = build_pnl_category_trees(db, start_date, end_date)
     ingresos_operativos = sum_pnl_rows(trees["ingresos"])
     otros_ing = sum_pnl_rows(trees["otros_ingresos"])
-    # Misma fuente que la sección «Costo de Ventas» del informe (árbol P&L).
     costos_ventas = sum_pnl_rows(trees["costo_ventas"])
     gastos_operativos = sum_pnl_rows(trees["gastos"])
     otros_gastos_financieros = sum_pnl_rows(trees["otros_gastos_financieros"])
@@ -300,6 +283,61 @@ def get_profit_and_loss(
         gastos_operativos=gastos_operativos,
         otros_gastos_financieros=otros_gastos_financieros,
         utilidad_neta=utilidad_neta,
+    )
+
+
+@router.get("/profit-and-loss", response_model=None)
+def get_profit_and_loss(
+    db: DbDep,
+    _: ReportsFinancialViewDep,
+    start_date: date = Query(..., description="Inicio inclusive del periodo."),
+    end_date: date = Query(..., description="Fin inclusive del periodo."),
+    format: Literal["json", "excel", "pdf"] = Query(
+        "json",
+        description="Formato de respuesta: json (default), excel o pdf.",
+    ),
+):
+    """
+    Estado de resultados jerárquico consolidado en **USD**.
+
+    Cada línea del libro mayor se convierte con el ``exchange_rate`` de la transacción origen.
+    """
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="end_date debe ser mayor o igual que start_date.",
+        )
+
+    report = _build_profit_and_loss_report(db, start_date, end_date)
+
+    if format == "json":
+        return report
+
+    from app.services.pnl_export import (
+        build_pnl_excel_bytes,
+        build_pnl_pdf_bytes,
+        pnl_export_filename,
+    )
+
+    try:
+        if format == "excel":
+            content = build_pnl_excel_bytes(report)
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = pnl_export_filename(report, "xlsx")
+        else:
+            content = build_pnl_pdf_bytes(report)
+            media_type = "application/pdf"
+            filename = pnl_export_filename(report, "pdf")
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return StreamingResponse(
+        iter([content]),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

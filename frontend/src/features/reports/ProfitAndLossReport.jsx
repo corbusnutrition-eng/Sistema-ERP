@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart3, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import { BarChart3, ChevronDown, ChevronRight, FileSpreadsheet, FileText, Loader2 } from 'lucide-react'
 import api from '../../api/axios'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import { todayIsoDateEcuador } from '../../utils/datetime'
@@ -73,6 +73,13 @@ const PRESETS = [
 ]
 
 const DISPLAY_CURRENCY = 'USD'
+
+function buildPnlExportFilename(start, end, ext) {
+  if (start.slice(0, 7) === end.slice(0, 7)) {
+    return `Perdidas_Ganancias_${start.slice(0, 7)}.${ext}`
+  }
+  return `Perdidas_Ganancias_${start}_${end}.${ext}`
+}
 
 const CATEGORY_BLOCKS = [
   { key: 'Ingresos', totalLabel: 'Total ingresos' },
@@ -210,6 +217,7 @@ export default function ProfitAndLossReport() {
   const [customFrom, setCustomFrom] = useState(() => rangeForPreset('this_month').start)
   const [customTo, setCustomTo] = useState(() => rangeForPreset('this_month').end)
   const [loading, setLoading] = useState(false)
+  const [exportLoading, setExportLoading] = useState(null)
   const [error, setError] = useState('')
   const [data, setData] = useState(null)
 
@@ -232,6 +240,50 @@ export default function ProfitAndLossReport() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function downloadPnlExport(format) {
+    setExportLoading(format)
+    setError('')
+    try {
+      const params = {
+        start_date: activeRange.start,
+        end_date: activeRange.end,
+        format,
+      }
+      const response = await api.get('/api/v1/reports/profit-and-loss', {
+        params,
+        responseType: 'blob',
+      })
+      const ext = format === 'excel' ? 'xlsx' : 'pdf'
+      let filename = buildPnlExportFilename(activeRange.start, activeRange.end, ext)
+      const disposition = response.headers?.['content-disposition']
+      if (disposition) {
+        const match = /filename="?([^";]+)"?/.exec(disposition)
+        if (match?.[1]) filename = match[1]
+      }
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', filename)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      setError(typeof d === 'string' ? d : 'No se pudo exportar el informe.')
+    } finally {
+      setExportLoading(null)
+    }
+  }
+
+  function handleExportExcel() {
+    void downloadPnlExport('excel')
+  }
+
+  function handleExportPdf() {
+    void downloadPnlExport('pdf')
   }
 
   const presetSelectOptions = useMemo(
@@ -306,15 +358,43 @@ export default function ProfitAndLossReport() {
               </label>
             </>
           )}
-          <button
-            type="button"
-            onClick={runReport}
-            disabled={loading}
-            className="h-10 px-5 rounded-md bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 disabled:opacity-50 inline-flex items-center gap-2"
-          >
-            {loading ? <Loader2 className="animate-spin" size={16} /> : null}
-            Ejecutar informe
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={runReport}
+              disabled={loading || exportLoading != null}
+              className="h-10 px-5 rounded-md bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 disabled:opacity-50 inline-flex items-center gap-2"
+            >
+              {loading ? <Loader2 className="animate-spin" size={16} /> : null}
+              Ejecutar informe
+            </button>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={loading || exportLoading != null}
+              className="h-10 px-4 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-800 text-sm font-semibold hover:bg-emerald-100 disabled:opacity-50 inline-flex items-center gap-2"
+            >
+              {exportLoading === 'excel' ? (
+                <Loader2 className="animate-spin" size={16} />
+              ) : (
+                <FileSpreadsheet size={16} className="text-emerald-600" aria-hidden />
+              )}
+              Descargar Excel
+            </button>
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={loading || exportLoading != null}
+              className="h-10 px-4 rounded-md border border-red-200 bg-red-50 text-red-800 text-sm font-semibold hover:bg-red-100 disabled:opacity-50 inline-flex items-center gap-2"
+            >
+              {exportLoading === 'pdf' ? (
+                <Loader2 className="animate-spin" size={16} />
+              ) : (
+                <FileText size={16} className="text-red-600" aria-hidden />
+              )}
+              Descargar PDF
+            </button>
+          </div>
         </div>
         {preset !== 'custom' && (
           <p className="text-xs text-gray-500">
