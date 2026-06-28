@@ -2,7 +2,7 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, Search, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
 import PortalAccordionSortableList from './PortalAccordionSortableList'
 import {
   filterVisiblePortalAccordionOrder,
@@ -7278,10 +7278,18 @@ function ClientPortalPageInner() {
                       const hasAssignedPrice = Number.isFinite(unitPrice) && unitPrice > 0
                       const stock = Number(p?.free_stock ?? 0)
                       const isOutOfStock = stock <= 0
+                      const maxQty = isOutOfStock ? 1 : Math.max(1, Math.min(200, stock))
                       const qty = Math.max(
                         1,
-                        Math.min(200, parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1),
+                        Math.min(maxQty, parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1),
                       )
+                      const setPurchaseQty = (next) => {
+                        const clamped = Math.max(1, Math.min(maxQty, next))
+                        setAutoPurchaseQtyByPackageId((prev) => ({
+                          ...prev,
+                          [String(pkgId)]: String(clamped),
+                        }))
+                      }
                       const lineTotal = hasAssignedPrice ? unitPrice * qty : NaN
                       const canAfford =
                         hasAssignedPrice &&
@@ -7299,7 +7307,7 @@ function ClientPortalPageInner() {
                           </p>
 
                           {hasAssignedPrice ? (
-                            <div className="flex w-full flex-row items-center justify-between gap-2">
+                            <div className="flex w-full flex-row items-start justify-between gap-3">
                               <div className="flex min-w-0 flex-col gap-1">
                                 <p className="m-0 text-xs leading-snug text-slate-300/80">
                                   Stock:{' '}
@@ -7319,25 +7327,33 @@ function ClientPortalPageInner() {
                                 </p>
                               </div>
 
-                              <div className="flex shrink-0 flex-row items-center gap-2">
-                                <label className="flex flex-col items-center gap-0.5 text-[11px] text-slate-300">
-                                  Cant.
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={200}
-                                    value={qty}
-                                    disabled={isOutOfStock || purchaseLocked}
-                                    onChange={(e) => {
-                                      const v = e.target.value
-                                      setAutoPurchaseQtyByPackageId((prev) => ({
-                                        ...prev,
-                                        [String(pkgId)]: v,
-                                      }))
-                                    }}
-                                    className="min-h-[40px] w-14 rounded-lg border border-violet-400/35 bg-slate-900/70 px-1.5 py-1.5 text-sm text-violet-50 tabular-nums touch-manipulation"
-                                  />
-                                </label>
+                              <div className="flex w-[8.75rem] shrink-0 flex-col items-center gap-2 sm:w-36">
+                                <div className="flex w-full flex-col items-center gap-1">
+                                  <span className="text-[11px] font-medium text-slate-400">Cantidad</span>
+                                  <div className="flex w-full items-center justify-between rounded-xl bg-[#1A1F36] p-1">
+                                    <button
+                                      type="button"
+                                      disabled={isOutOfStock || purchaseLocked || qty <= 1}
+                                      onClick={() => setPurchaseQty(qty - 1)}
+                                      aria-label="Disminuir cantidad"
+                                      className="inline-flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg px-2 text-lg font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 touch-manipulation"
+                                    >
+                                      −
+                                    </button>
+                                    <span className="w-8 text-center text-sm font-semibold tabular-nums text-white">
+                                      {qty}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      disabled={isOutOfStock || purchaseLocked || qty >= maxQty}
+                                      onClick={() => setPurchaseQty(qty + 1)}
+                                      aria-label="Aumentar cantidad"
+                                      className="inline-flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg px-2 text-lg font-medium text-gray-400 transition hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 touch-manipulation"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
                                 <button
                                   type="button"
                                   disabled={isOutOfStock || !canAfford || purchaseLocked}
@@ -7359,11 +7375,12 @@ function ClientPortalPageInner() {
                                   }
                                   className={
                                     isOutOfStock
-                                      ? `${PORTAL_TOUCH_BUTTON_CLASS} !w-auto shrink-0 bg-gray-500 px-3 text-xs font-bold opacity-60 cursor-not-allowed sm:px-4 sm:text-sm`
-                                      : `${PORTAL_TOUCH_BUTTON_PRIMARY_CLASS} !w-auto shrink-0 px-3 text-xs font-bold sm:px-4 sm:text-sm`
+                                      ? 'inline-flex w-full min-h-[44px] items-center justify-center gap-2 rounded-2xl bg-gray-500 px-4 py-2 text-sm font-bold text-white opacity-60 cursor-not-allowed touch-manipulation'
+                                      : 'inline-flex w-full min-h-[44px] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-purple-600 to-pink-500 px-4 py-2 text-sm font-bold text-white shadow-[0_8px_24px_rgba(168,85,247,0.35)] transition hover:from-purple-500 hover:to-pink-400 disabled:cursor-not-allowed disabled:opacity-50 touch-manipulation'
                                   }
                                 >
                                   {busy ? 'Procesando…' : isOutOfStock ? 'Agotado' : 'Comprar'}
+                                  {!busy && !isOutOfStock ? <ShoppingCart size={16} aria-hidden /> : null}
                                 </button>
                               </div>
                             </div>
@@ -7399,7 +7416,10 @@ function ClientPortalPageInner() {
                   if (!Number.isFinite(unitPrice) || unitPrice <= 0) return false
                   const qty = Math.max(
                     1,
-                    Math.min(200, parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1),
+                    Math.min(
+                      Math.max(1, Math.min(200, Number(p?.free_stock ?? 0) || 1)),
+                      parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1,
+                    ),
                   )
                   const total = unitPrice * qty
                   return Number.isFinite(total) && getClientWalletBalance(pCur) + 1e-9 < total
