@@ -961,10 +961,24 @@ function absolutizeMediaUrl(u) {
   return t.startsWith('/') ? `${base}${t}` : `${base}/${t}`
 }
 
+/** Alias de símbolos / etiquetas frecuentes en comprobantes → ISO 4217. */
+const PORTAL_CURRENCY_ALIASES = {
+  $: 'USD',
+  US$: 'USD',
+  U$S: 'USD',
+  USD$: 'USD',
+  '€': 'EUR',
+  '£': 'GBP',
+}
+
 /** Normalización para comparar moneda IA vs cuenta (mismo criterio que backend: hasta 10 chars). */
 function normalizePortalCurrency(c) {
   if (c == null || String(c).trim() === '') return ''
-  return String(c).trim().toUpperCase().slice(0, 10).replace(/\s+/g, '')
+  const raw = String(c).trim().toUpperCase().slice(0, 10).replace(/\s+/g, '')
+  if (PORTAL_CURRENCY_ALIASES[raw]) return PORTAL_CURRENCY_ALIASES[raw]
+  const withSpaces = String(c).trim().toUpperCase().slice(0, 10)
+  if (PORTAL_CURRENCY_ALIASES[withSpaces]) return PORTAL_CURRENCY_ALIASES[withSpaces]
+  return raw
 }
 
 function filterPortalAccountsByCurrency(accounts, currency) {

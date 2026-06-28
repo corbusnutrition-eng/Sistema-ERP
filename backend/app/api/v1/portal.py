@@ -163,7 +163,8 @@ def _portal_commit_wallet_recharge_after_receipt(db: Session, req: WalletRecharg
 
 _RECEIPT_SYSTEM_PROMPT = (
     "Actúa como un extractor de datos de recibos. Analiza la imagen y devuelve ÚNICAMENTE un JSON válido "
-    "con tres campos: 'amount' (el total pagado como número), 'currency' (la moneda) y 'confidence' "
+    "con tres campos: 'amount' (el total pagado como número), 'currency' (código ISO 4217 de la moneda, "
+    "por ejemplo USD, PEN, EUR; si detectas el símbolo '$' devuelve 'USD') y 'confidence' "
     "(un número entero del 0 al 100 indicando qué tan seguro estás de tu lectura, basándote en la nitidez "
     "y legibilidad de la imagen). "
     'Si no puedes leer el comprobante, devuelve {"amount": null, "currency": null, "confidence": 0}.'
@@ -4005,8 +4006,8 @@ async def analyze_receipt(
     raw_cur = result.get("currency")
     if raw_cur is None:
         raw_cur = result.get("extracted_currency")
-    if raw_cur and isinstance(raw_cur, str):
-        extracted_currency = raw_cur.strip().upper()[:10] or None
+    if raw_cur and isinstance(raw_cur, str) and raw_cur.strip():
+        extracted_currency = normalize_currency_code(raw_cur.strip())
 
     confidence: Optional[int] = None
     try:
