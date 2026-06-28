@@ -227,8 +227,8 @@ function KpiCard({ icon: Icon, label, value, hint, accentClass }) {
 
 export default function NetworkDashboard({ dashboard, loading = false, error = null, onRefresh, className = '' }) {
   const containerRef = useRef(null)
-  const [viewportSize, setViewportSize] = useState({ width: 900, height: 520 })
-  const [treeKey, setTreeKey] = useState(0)
+  const [viewportSize, setViewportSize] = useState(null)
+  const [treeLayoutReady, setTreeLayoutReady] = useState(false)
 
   const tree = dashboard?.tree ?? null
   const metrics = dashboard?.metrics ?? null
@@ -237,14 +237,10 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
 
   const rd3Data = useMemo(() => apiNodeToRd3(tree), [tree])
 
-  const canvasDimensions = useMemo(
-    () => computeTreeCanvasDimensions(rd3Data, viewportSize.width, viewportSize.height),
-    [rd3Data, viewportSize.height, viewportSize.width],
-  )
-
-  useEffect(() => {
-    setTreeKey((k) => k + 1)
-  }, [tree?.id])
+  const canvasDimensions = useMemo(() => {
+    if (!viewportSize || !rd3Data) return null
+    return computeTreeCanvasDimensions(rd3Data, viewportSize.width, viewportSize.height)
+  }, [rd3Data, viewportSize])
 
   useEffect(() => {
     const el = containerRef.current
@@ -252,6 +248,7 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
 
     const measure = () => {
       const rect = el.getBoundingClientRect()
+      if (rect.width < 1 || rect.height < 1) return
       setViewportSize({
         width: Math.max(Math.floor(rect.width), 320),
         height: Math.max(Math.floor(rect.height), 500),
@@ -268,10 +265,34 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
     }
   }, [])
 
-  const translate = useMemo(
-    () => ({ x: canvasDimensions.width / 2, y: 72 }),
-    [canvasDimensions.width],
-  )
+  useEffect(() => {
+    if (!rd3Data || !canvasDimensions) {
+      setTreeLayoutReady(false)
+      return undefined
+    }
+
+    setTreeLayoutReady(false)
+    let cancelled = false
+    let outerFrame = 0
+    let innerFrame = 0
+
+    outerFrame = requestAnimationFrame(() => {
+      innerFrame = requestAnimationFrame(() => {
+        if (!cancelled) setTreeLayoutReady(true)
+      })
+    })
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(outerFrame)
+      cancelAnimationFrame(innerFrame)
+    }
+  }, [rd3Data, canvasDimensions?.width, canvasDimensions?.height, tree?.id])
+
+  const translate = useMemo(() => {
+    if (!canvasDimensions) return { x: 0, y: 0 }
+    return { x: canvasDimensions.width / 2, y: 72 }
+  }, [canvasDimensions])
 
   const renderCustomNode = useCallback((props) => <NeonTreeNodeCard {...props} />, [])
 
@@ -412,10 +433,19 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
             overflow: visible;
           }
         `}</style>
-        <div className="absolute inset-0 overflow-hidden">
-          {rd3Data ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-start overflow-hidden pt-8">
+          {!rd3Data ? (
+            <div className="flex min-h-[500px] flex-1 items-center justify-center px-6 pb-20 text-center text-sm text-slate-400">
+              Tu red aún no tiene subdistribuidores. Aparecerán aquí en cascada.
+            </div>
+          ) : !treeLayoutReady || !canvasDimensions ? (
+            <div className="flex min-h-[500px] flex-1 items-center justify-center gap-2 text-sm text-slate-300">
+              <Loader2 size={18} className="animate-spin" aria-hidden />
+              Preparando mapa…
+            </div>
+          ) : (
             <Tree
-              key={treeKey}
+              key={String(tree.id)}
               data={rd3Data}
               orientation="vertical"
               pathFunc="step"
@@ -426,17 +456,13 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
               separation={{ siblings: TREE_SIBLING_SEP, nonSiblings: 1.28 }}
               zoomable
               scaleExtent={{ min: 0.15, max: 2.4 }}
-              zoom={0.78}
+              zoom={1}
               shouldRenderForeignObjects
               renderCustomNodeElement={renderCustomNode}
-              enableLegacyTransitions
-              transitionDuration={280}
+              enableLegacyTransitions={false}
+              transitionDuration={0}
               depthFactor={TREE_DEPTH_FACTOR}
             />
-          ) : (
-            <div className="flex h-full min-h-[500px] items-center justify-center px-6 pb-20 text-center text-sm text-slate-400">
-              Tu red aún no tiene subdistribuidores. Aparecerán aquí en cascada.
-            </div>
           )}
         </div>
       </div>
