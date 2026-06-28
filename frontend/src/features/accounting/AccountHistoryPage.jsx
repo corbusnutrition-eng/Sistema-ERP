@@ -34,6 +34,8 @@ import { receiptAbsoluteUrl } from './ledgerReceiptUtils'
 import {
   BANK_VERIFICATION_COLUMN,
   lineIsBankDeposit,
+  isPendingLedgerVerification,
+  isHistoryLedgerVerification,
 } from './ledgerVerificationConstants'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
@@ -252,6 +254,8 @@ export default function AccountHistoryPage() {
   const [savingVerificationId, setSavingVerificationId] = useState(null)
 
   const [currentPage, setCurrentPage] = useState(1)
+  /** Bandeja verificador / trabajador asignado: pendientes vs historial. */
+  const [verifierViewTab, setVerifierViewTab] = useState('pending')
 
   const onColumnResize = useCallback((columnId, nextWidth) => {
     setColWidths((prev) => ({ ...prev, [columnId]: nextWidth }))
@@ -339,6 +343,7 @@ export default function AccountHistoryPage() {
     setExpandedSaleId(null)
     setEditDraft(null)
     setAddTxnMenuOpen(false)
+    setVerifierViewTab('pending')
   }, [accountId])
 
   useEffect(() => {
@@ -355,6 +360,7 @@ export default function AccountHistoryPage() {
   const currency = meta?.currency || 'USD'
   const ledgerMode = meta?.ledger_display_mode === 'ar_register' ? 'ar_register' : 'cash_register'
   const showBankVerification = Boolean(meta?.show_bank_verification)
+  const showVerifierTabs = isRestrictedLedger && showBankVerification
   const showInventoryCredits = Boolean(meta?.show_inventory_credits)
   const columnConfig = useMemo(() => {
     const base = ledgerMode === 'ar_register' ? AR_LEDGER_COLUMN_CONFIG : CASH_LEDGER_COLUMN_CONFIG
@@ -416,25 +422,50 @@ export default function AccountHistoryPage() {
     [lines],
   )
 
-  const filteredTransactions = filteredWithRunning
-
-  const totalPages = Math.ceil(filteredTransactions.length / ITEMS_PER_PAGE)
-
-  const paginatedData = filteredTransactions.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE,
+  const pendingVerificationLines = useMemo(
+    () => filteredWithRunning.filter(isPendingLedgerVerification),
+    [filteredWithRunning],
   )
+
+  const historyVerificationLines = useMemo(
+    () => filteredWithRunning.filter(isHistoryLedgerVerification),
+    [filteredWithRunning],
+  )
+
+  const tableRows = useMemo(() => {
+    if (!showVerifierTabs) return filteredWithRunning
+    return verifierViewTab === 'history' ? historyVerificationLines : pendingVerificationLines
+  }, [
+    showVerifierTabs,
+    verifierViewTab,
+    filteredWithRunning,
+    historyVerificationLines,
+    pendingVerificationLines,
+  ])
+
+  const historyPaginationEnabled = showVerifierTabs && verifierViewTab === 'history'
+  const standardPaginationEnabled = !showVerifierTabs
+
+  const totalPages = historyPaginationEnabled || standardPaginationEnabled
+    ? Math.ceil(tableRows.length / ITEMS_PER_PAGE)
+    : 1
+
+  const paginatedData =
+    historyPaginationEnabled || standardPaginationEnabled
+      ? tableRows.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
+      : tableRows
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [accountId, pendingDateFrom, pendingDateTo, filterUser, filterReference])
+  }, [accountId, pendingDateFrom, pendingDateTo, filterUser, filterReference, verifierViewTab])
 
   useEffect(() => {
-    const n = filteredTransactions.length
-    const tp = Math.ceil(n / ITEMS_PER_PAGE)
+    const n = tableRows.length
+    const tp =
+      historyPaginationEnabled || standardPaginationEnabled ? Math.ceil(n / ITEMS_PER_PAGE) : 1
     if (tp === 0 && currentPage !== 1) setCurrentPage(1)
     else if (tp > 0 && currentPage > tp) setCurrentPage(tp)
-  }, [filteredTransactions.length, currentPage])
+  }, [tableRows.length, currentPage, historyPaginationEnabled, standardPaginationEnabled])
 
   useEffect(() => {
     setExpandedSaleId(null)
@@ -877,7 +908,52 @@ export default function AccountHistoryPage() {
           <div className="rounded-xl border border-red-200 bg-red-50 text-red-800 text-sm px-4 py-3">{error}</div>
         )}
 
-        <div className="bg-white rounded-2xl ring-1 ring-gray-200 shadow-sm overflow-hidden">
+        {showVerifierTabs ? (
+          <div className="bg-white rounded-t-2xl ring-1 ring-gray-200 shadow-sm border-b border-gray-100">
+            <div className="flex flex-wrap gap-1 p-2 sm:px-4" role="tablist" aria-label="Bandeja de verificación">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={verifierViewTab === 'pending'}
+                onClick={() => setVerifierViewTab('pending')}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+                  verifierViewTab === 'pending'
+                    ? 'bg-amber-100 text-amber-950 ring-1 ring-amber-300'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Pendientes de Verificación
+                {pendingVerificationLines.length > 0 ? (
+                  <span className="inline-flex min-w-[1.25rem] justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white tabular-nums">
+                    {pendingVerificationLines.length}
+                  </span>
+                ) : null}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={verifierViewTab === 'history'}
+                onClick={() => setVerifierViewTab('history')}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+                  verifierViewTab === 'history'
+                    ? 'bg-slate-200 text-slate-900 ring-1 ring-slate-300'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Historial de Verificaciones
+                {historyVerificationLines.length > 0 ? (
+                  <span className="text-[11px] font-medium text-gray-500 tabular-nums">
+                    ({historyVerificationLines.length})
+                  </span>
+                ) : null}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div
+          className={`bg-white ring-1 ring-gray-200 shadow-sm overflow-hidden ${showVerifierTabs ? 'rounded-b-2xl rounded-t-none' : 'rounded-2xl'}`}
+        >
           <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-gray-100 bg-slate-50/60">
             {!isAccountVerifier ? (
             <div ref={addTxnMenuRef} className="relative">
@@ -987,10 +1063,14 @@ export default function AccountHistoryPage() {
                     </td>
                   </tr>
                 )}
-                {!loading && filteredWithRunning.length === 0 && (
+                {!loading && tableRows.length === 0 && (
                   <tr>
                     <td colSpan={colCount} className="px-6 py-14 text-center text-gray-400">
-                      No hay movimientos en este periodo.
+                      {showVerifierTabs && verifierViewTab === 'pending'
+                        ? 'No hay transacciones pendientes de verificación en este periodo.'
+                        : showVerifierTabs && verifierViewTab === 'history'
+                          ? 'Aún no hay verificaciones registradas en este periodo.'
+                          : 'No hay movimientos en este periodo.'}
                     </td>
                   </tr>
                 )}
@@ -1364,17 +1444,18 @@ export default function AccountHistoryPage() {
               </tbody>
             </table>
           </div>
+          {(historyPaginationEnabled || standardPaginationEnabled) && (
           <div className="flex items-center justify-between px-4 py-3 bg-white border-t border-gray-200 sm:px-6 mt-4 rounded-b-lg shadow-sm">
             <div className="text-sm text-gray-500">
               Mostrando{' '}
               <span className="font-medium text-gray-700">
-                {filteredTransactions.length > 0 ? (currentPage - 1) * ITEMS_PER_PAGE + 1 : 0}
+                {tableRows.length > 0 ? (currentPage - 1) * ITEMS_PER_PAGE + 1 : 0}
               </span>{' '}
               a{' '}
               <span className="font-medium text-gray-700">
-                {Math.min(currentPage * ITEMS_PER_PAGE, filteredTransactions.length)}
+                {Math.min(currentPage * ITEMS_PER_PAGE, tableRows.length)}
               </span>{' '}
-              de <span className="font-medium text-gray-700">{filteredTransactions.length}</span> registros
+              de <span className="font-medium text-gray-700">{tableRows.length}</span> registros
             </div>
             <div className="flex space-x-2 text-sm">
               <button
@@ -1395,6 +1476,13 @@ export default function AccountHistoryPage() {
               </button>
             </div>
           </div>
+          )}
+          {showVerifierTabs && verifierViewTab === 'pending' && tableRows.length > 0 ? (
+            <div className="px-4 py-3 bg-white border-t border-gray-200 text-sm text-gray-500">
+              <span className="font-medium text-gray-700 tabular-nums">{tableRows.length}</span>{' '}
+              {tableRows.length === 1 ? 'transacción pendiente' : 'transacciones pendientes'} en este periodo
+            </div>
+          ) : null}
         </div>
 
         {refundModalOpen && <RefundModal clients={clients} onClose={() => setRefundModalOpen(false)} />}

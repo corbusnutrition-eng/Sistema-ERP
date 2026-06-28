@@ -24,7 +24,8 @@ from app.models.journal_entry import JournalEntry, JournalReferenceType, Journal
 from app.models.payment_method import PaymentMethod
 from app.models.sale import Sale, SaleStatus
 from app.models.wallet_recharge_request import WalletRechargeRequest
-from app.timezone_utils import now_ecuador
+from app.ledger_verification import LEDGER_VERIFICATION_CONFIRMED
+from app.timezone_utils import now_ecuador, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -2145,6 +2146,7 @@ def post_account_transfer(
 
     src_line: Optional[JournalEntryLine] = None
     dst_line: Optional[JournalEntryLine] = None
+    transfer_confirmed_at = now_utc()
     for draft in lines:
         row = JournalEntryLine(
             journal_entry_id=entry.id,
@@ -2153,6 +2155,9 @@ def post_account_transfer(
             credit=_q4(draft.credit),
             exchange_rate=_q6(draft.exchange_rate),
         )
+        if draft.account_id == source_account_id:
+            row.verification_status = LEDGER_VERIFICATION_CONFIRMED
+            row.verified_at = transfer_confirmed_at
         db.add(row)
         db.flush()
         if draft.account_id == source_account_id:

@@ -77,3 +77,20 @@ export function lineIsBankDeposit(line) {
   const n = Number(cargo)
   return Number.isFinite(n) && n > 0
 }
+
+export function normalizeLedgerVerificationStatus(raw) {
+  const s = String(raw ?? '').trim().toLowerCase()
+  return s || null
+}
+
+/** Bandeja verificador: sin estado, vacío o interbancaria pendiente de acreditación. */
+export function isPendingLedgerVerification(line) {
+  const s = normalizeLedgerVerificationStatus(line?.verification_status)
+  return s == null || s === 'interbank'
+}
+
+/** Historial verificador: estados cerrados por el operador. */
+export function isHistoryLedgerVerification(line) {
+  const s = normalizeLedgerVerificationStatus(line?.verification_status)
+  return s === 'confirmed' || s === 'not_found' || s === 'wrong_account'
+}
