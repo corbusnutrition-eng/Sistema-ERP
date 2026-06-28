@@ -5,7 +5,7 @@ import {
   canManageLedgerVerification,
   isRestrictedLedgerUser,
 } from '../../../lib/permissionMatrix'
-import { formatSaleLedgerDateParts } from '../../sales/saleTableHelpers'
+import { formatShortDateEcuador } from '../../../utils/datetime'
 
 function formatMoney(n, currency) {
   try {
@@ -18,14 +18,6 @@ function formatMoney(n, currency) {
   } catch {
     return `${Number(n || 0).toFixed(2)} ${currency}`
   }
-}
-
-function pendingPayeeLabel(line) {
-  const name = String(line?.client_name ?? '').trim()
-  if (name) return name
-  const user = String(line?.iptv_username ?? '').trim()
-  if (user) return user
-  return '—'
 }
 
 function pendingAmount(line) {
@@ -84,7 +76,7 @@ export default function PendingInterbankModal({
       <div
         role="dialog"
         aria-labelledby="pending-interbank-title"
-        className="relative w-full max-w-2xl max-h-[min(88vh,720px)] flex flex-col rounded-2xl bg-white shadow-2xl border border-gray-100 overflow-hidden"
+        className="relative w-full max-w-lg max-h-[min(88vh,720px)] flex flex-col rounded-2xl bg-white shadow-2xl border border-gray-100 overflow-hidden"
       >
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-gray-100 shrink-0 bg-amber-50/60">
           <div className="flex items-start gap-3 min-w-0">
@@ -118,81 +110,70 @@ export default function PendingInterbankModal({
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-slate-50/80">
-                    <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                      Fecha
-                    </th>
-                    <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                      Beneficiario / usuario
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                      Monto
-                    </th>
-                    {showActionButtons ? (
-                      <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600 min-w-[11rem]">
-                        Acción
-                      </th>
-                    ) : null}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {pendingTxs.map((line) => {
-                    const lineId = line.ledger_transaction_id
-                    const { dateLine, timeLine } = formatSaleLedgerDateParts(line.occurred_at)
-                    const amt = pendingAmount(line)
-                    const saving = confirmingLineId != null && confirmingLineId === lineId
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col className="w-[30%]" />
+                <col className="w-[26%]" />
+                <col className="w-[44%]" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-gray-100 bg-slate-50/80">
+                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    Fecha
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    Monto
+                  </th>
+                  <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    Acción
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {pendingTxs.map((line) => {
+                  const lineId = line.ledger_transaction_id
+                  const dateLabel = formatShortDateEcuador(line.occurred_at)
+                  const amt = pendingAmount(line)
+                  const saving = confirmingLineId != null && confirmingLineId === lineId
 
-                    return (
-                      <tr key={lineId ?? `${line.occurred_at}-${line.reference_number}`} className="hover:bg-slate-50/50">
-                        <td className="px-4 py-3 align-top whitespace-nowrap">
-                          <div className="text-gray-900">{dateLine}</div>
-                          {timeLine ? <div className="text-xs text-gray-400 tabular-nums">{timeLine}</div> : null}
-                        </td>
-                        <td className="px-4 py-3 align-top min-w-0">
-                          <div className="font-medium text-gray-900 truncate" title={pendingPayeeLabel(line)}>
-                            {pendingPayeeLabel(line)}
-                          </div>
-                          {line.transaction_reason?.trim() ? (
-                            <div className="text-xs text-gray-500 truncate mt-0.5" title={line.transaction_reason}>
-                              {line.transaction_reason}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-3 align-top text-right tabular-nums font-medium text-gray-900 whitespace-nowrap">
-                          {amt != null ? formatMoney(amt, currency) : '—'}
-                        </td>
+                  return (
+                    <tr key={lineId ?? `${line.occurred_at}-${line.reference_number}`} className="hover:bg-slate-50/50">
+                      <td className="px-4 py-3 align-middle whitespace-nowrap text-gray-900">
+                        {dateLabel}
+                      </td>
+                      <td className="px-4 py-3 align-middle text-right tabular-nums font-semibold text-gray-900 whitespace-nowrap">
+                        {amt != null ? formatMoney(amt, currency) : '—'}
+                      </td>
+                      <td className="px-3 py-3 align-middle">
                         {showActionButtons ? (
-                          <td className="px-4 py-3 align-top">
-                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-1.5">
-                              <button
-                                type="button"
-                                disabled={lineId == null || saving || rowBusy}
-                                onClick={() => onRequestStatusChange(lineId, 'not_found')}
-                                className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                              >
-                                No efectiva
-                              </button>
-                              <button
-                                type="button"
-                                disabled={lineId == null || saving || rowBusy}
-                                onClick={() => onRequestStatusChange(lineId, 'confirmed')}
-                                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                              >
-                                {saving ? <Loader2 size={13} className="animate-spin shrink-0" aria-hidden /> : null}
-                                ✅ Confirmar
-                              </button>
-                            </div>
-                          </td>
-                        ) : null}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              disabled={lineId == null || saving || rowBusy}
+                              onClick={() => onRequestStatusChange(lineId, 'not_found')}
+                              className="inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                            >
+                              No efectiva
+                            </button>
+                            <button
+                              type="button"
+                              disabled={lineId == null || saving || rowBusy}
+                              onClick={() => onRequestStatusChange(lineId, 'confirmed')}
+                              className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm whitespace-nowrap"
+                            >
+                              {saving ? <Loader2 size={12} className="animate-spin shrink-0" aria-hidden /> : null}
+                              Confirmar
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="block text-right text-gray-300 text-xs">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           )}
         </div>
 
