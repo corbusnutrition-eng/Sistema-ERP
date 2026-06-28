@@ -78,18 +78,30 @@ export function buildIllegibleCheckSource({
   }
 }
 
-/** True cuando el registro en ERP no tiene monto declarado válido o confidence=0. */
+function declaredAmountFromSource(source) {
+  if (!source) return null
+  const candidates = [
+    source.portal_declared_payment_amount,
+    source.amount,
+    source.amount_applied,
+    source.amount_applied_to_sale,
+  ]
+  for (const raw of candidates) {
+    if (raw == null || raw === '') continue
+    const n = Number(raw)
+    if (Number.isFinite(n)) return n
+  }
+  return null
+}
+
+/** True cuando el registro en ERP no tiene monto declarado válido (> 0). */
 export function isIllegibleDeclaredRecord(source) {
   if (!source) return false
+  const declared = declaredAmountFromSource(source)
+  if (declared != null && declared > 0) return false
   const conf = source.ai_confidence_score
   if (conf != null && Number(conf) === 0) return true
-  let amt = source.portal_declared_payment_amount
-  if (amt == null) amt = source.amount
-  if (amt == null) amt = source.amount_applied
-  if (amt == null) amt = source.amount_applied_to_sale
-  if (amt == null || amt === '') return true
-  const n = Number(amt)
-  return !Number.isFinite(n) || n <= 0
+  return declared == null || declared <= 0
 }
 
 export function IllegibleReceiptAlert({ className = '', layout = 'block' }) {

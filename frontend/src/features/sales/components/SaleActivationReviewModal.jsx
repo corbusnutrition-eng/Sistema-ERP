@@ -175,7 +175,7 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
                 </div>
               )}
 
-                {isPaymentOnly && pendingReceipt && isIllegibleDeclaredRecord(pendingReceipt) ? (
+                {isPaymentOnly && approveBlocked ? (
                   <IllegibleReceiptAlert className="w-full" />
                 ) : null}
 
@@ -204,6 +204,7 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
                   <OcrSecurityBadges
                     is_manually_edited={pendingBank.is_manually_edited}
                     ai_confidence_score={pendingBank.ai_confidence_score}
+                    amount={pendingBank.amount}
                   />
                 </div>
               )}
