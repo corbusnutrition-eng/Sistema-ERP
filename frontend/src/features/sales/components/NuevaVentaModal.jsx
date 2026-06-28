@@ -20,6 +20,7 @@ import TagsManagerPanel from '../../tags/TagsManagerPanel'
 import SaleQBTagsCreatable from './SaleQBTagsCreatable'
 import NuevaVentaInvoiceSection from './NuevaVentaInvoiceSection'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
+import OcrSecurityBadges, { pickOcrSecurityFlags } from '../../../components/OcrSecurityBadges'
 import { calculateExpirationStats } from '../../inventory/screenPackageExpiration'
 import {
   packageCatalogOrderedForSale,
@@ -4336,6 +4337,15 @@ export default function NuevaVentaModal({
                   Corrija aquí si la lectura automática del comprobante fue incorrecta. Al guardar, el monto se
                   aplicará al cobro en revisión.
                 </p>
+                {Array.isArray(pendingReviewPayments) && pendingReviewPayments.length > 0 ? (
+                  <OcrSecurityBadges
+                    className="mt-2"
+                    {...pickOcrSecurityFlags(
+                      pendingReviewPayments.find((p) => p?.receipt_file_url) ||
+                        pendingReviewPayments[0],
+                    )}
+                  />
+                ) : null}
               </>
             ) : (
               <>

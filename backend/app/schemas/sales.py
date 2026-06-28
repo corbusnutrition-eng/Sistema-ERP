@@ -759,6 +759,8 @@ class PendingReviewPaymentOut(BaseModel):
         default=None,
         description="Monto de este pago reservado a esta factura (filas ``payment_allocations`` en revisión).",
     )
+    is_manually_edited: bool = Field(default=False)
+    ai_confidence_score: Optional[int] = Field(default=None, ge=0, le=100)
 
 
 class SaleResponse(BaseModel):
@@ -923,6 +925,8 @@ class PendingBankPaymentBrief(BaseModel):
     receipt_url: Optional[str] = Field(
         default=None, description="Ruta relativa del comprobante (p. ej. /uploads/…)."
     )
+    is_manually_edited: bool = Field(default=False)
+    ai_confidence_score: Optional[int] = Field(default=None, ge=0, le=100)
 
 
 class SalePortalPaymentConsolidated(BaseModel):

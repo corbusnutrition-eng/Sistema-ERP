@@ -160,15 +160,14 @@ def _portal_commit_wallet_recharge_after_receipt(db: Session, req: WalletRecharg
 # ── OpenAI receipt analyzer ───────────────────────────────────────────────────
 
 _RECEIPT_SYSTEM_PROMPT = (
-    "Eres un asistente contable experto. Analiza el comprobante bancario proporcionado. "
-    "Extrae el monto total transferido y la moneda (ej. BOB, USD, EUR). "
-    "Tu respuesta debe ser ÚNICAMENTE un JSON válido con esta estructura exacta: "
-    '{"extracted_amount": 150.0, "extracted_currency": "BOB", "is_readable": true}. '
-    "Si no puedes leer el comprobante o la imagen no es un comprobante bancario, "
-    'devuelve {"extracted_amount": null, "extracted_currency": null, "is_readable": false}.'
+    "Actúa como un extractor de datos de recibos. Analiza la imagen y devuelve ÚNICAMENTE un JSON válido "
+    "con tres campos: 'amount' (el total pagado como número), 'currency' (la moneda) y 'confidence' "
+    "(un número entero del 0 al 100 indicando qué tan seguro estás de tu lectura, basándote en la nitidez "
+    "y legibilidad de la imagen). "
+    'Si no puedes leer el comprobante, devuelve {"amount": null, "currency": null, "confidence": 0}.'
 )
 
-_FALLBACK_RESULT = {"extracted_amount": None, "extracted_currency": None, "is_readable": False}
+_FALLBACK_RESULT = {"amount": None, "currency": None, "confidence": 0}
 
 
 async def _analyze_receipt_with_openai(image_bytes: bytes, media_type: str) -> dict:
@@ -190,9 +189,9 @@ async def _analyze_receipt_with_openai(image_bytes: bytes, media_type: str) -> d
 
     try:
         client = AsyncOpenAI(api_key=api_key)
-        print("DEBUG IA: Enviando solicitud a gpt-4o-mini…")
+        print("DEBUG IA: Enviando solicitud a gpt-4o…")
         resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             max_tokens=256,
             messages=[
                 {"role": "system", "content": _RECEIPT_SYSTEM_PROMPT},
@@ -442,6 +441,23 @@ def _portal_form_bool(raw: Optional[object]) -> bool:
         return raw
     s = str(raw).strip().lower()
     return s in ("1", "true", "yes", "si", "sí", "on")
+
+
+def _portal_allows_zero_declared_amount(ai_confidence_score: Optional[int]) -> bool:
+    return ai_confidence_score is not None and int(ai_confidence_score) == 0
+
+
+def _portal_form_confidence_score(raw: Optional[object]) -> Optional[int]:
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    try:
+        n = int(float(s))
+        return max(0, min(100, n))
+    except (TypeError, ValueError):
+        return None
 
 
 def _portal_wants_credit_balance(*flags: Optional[object]) -> bool:
@@ -1811,6 +1827,8 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
     paid_f: float,
     credit_amount: Optional[float],
     pm_id: Optional[int],
+    is_manually_edited: bool = False,
+    ai_confidence_score: Optional[int] = None,
 ) -> WalletRechargeRequest:
     """
     Abono a deuda ya activada: solo ``ClientPayment`` en revisión + ``in_review``.
@@ -1821,6 +1839,8 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
     req.receipt_url = receipt_url
     req.portal_declared_payment_amount = paid_f
     req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
+    req.is_manually_edited = bool(is_manually_edited)
+    req.ai_confidence_score = ai_confidence_score
 
     req.status = REQ_STATUS_IN_REVIEW
     mark_wallet_recharge_portal_receipt_submitted(req)
@@ -1836,6 +1856,11 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
         declared_amount=paid_f,
         credit_amount=credit_amount,
         always_create_new=True,
+        is_manually_edited=is_manually_edited,
+        ai_confidence_score=ai_confidence_score,
+        allow_zero_declared=bool(
+            paid_f <= 0 and ai_confidence_score is not None and int(ai_confidence_score) == 0
+        ),
     )
     commit_db_or_rollback(db)
     db.refresh(req)
@@ -1857,6 +1882,8 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
     url_request_id_for_id_erp: int,
     id_erp_optional: Optional[str] = None,
     credit_amount: Optional[float] = None,
+    is_manually_edited: bool = False,
+    ai_confidence_score: Optional[int] = None,
 ) -> WalletRechargeRequest:
     """
     Persiste el comprobante del cliente contra una solicitud BaaS (``pending`` / ``partially_paid``).
@@ -1915,7 +1942,10 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
     paid_raw = ((declared_amount_alt or paid_amount_str) or "").strip().replace(",", ".")
 
     def _parse_paid_amount() -> float:
+        allow_zero = _portal_allows_zero_declared_amount(ai_confidence_score)
         if not paid_raw:
+            if allow_zero:
+                return 0.0
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Indica el importe que pagaste según tu comprobante.",
@@ -1927,7 +1957,14 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El importe declarado no es válido.",
             ) from None
+        if amount < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El importe declarado no es válido.",
+            )
         if not (amount > 0):
+            if allow_zero and amount == 0:
+                return 0.0
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El importe declarado debe ser mayor a cero.",
@@ -1950,6 +1987,8 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
             paid_f=paid_f,
             credit_amount=credit_amount,
             pm_id=pm_id,
+            is_manually_edited=is_manually_edited,
+            ai_confidence_score=ai_confidence_score,
         )
 
     if is_retiro_pm and wallet_recharge_codigos_retiro_initial_portal_activation(req, db):
@@ -2016,6 +2055,8 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         paid_f=paid_f,
         credit_amount=credit_amount,
         pm_id=pm_id,
+        is_manually_edited=is_manually_edited,
+        ai_confidence_score=ai_confidence_score,
     )
 
 
@@ -2034,6 +2075,8 @@ async def portal_pay_wallet_recharge(
     pay_with_credit: Annotated[Optional[str], Form()] = None,
     use_credit_balance: Annotated[Optional[str], Form()] = None,
     apply_credit_balance: Annotated[Optional[str], Form()] = None,
+    is_manually_edited: Annotated[Optional[str], Form()] = None,
+    ai_confidence_score: Annotated[Optional[str], Form()] = None,
 ) -> WalletRechargeRequest:
     """El cliente adjunta comprobante (BaaS); la solicitud pasa a ``in_review``.
 
@@ -2096,6 +2139,8 @@ async def portal_pay_wallet_recharge(
         url_request_id_for_id_erp=int(request_id),
         id_erp_optional=id_erp,
         credit_amount=credit_on_receipt if credit_on_receipt > 1e-9 else None,
+        is_manually_edited=_portal_form_bool(is_manually_edited),
+        ai_confidence_score=_portal_form_confidence_score(ai_confidence_score),
     )
     return _portal_commit_wallet_recharge_after_receipt(db, req_out)
 
@@ -2880,9 +2925,12 @@ async def _portal_create_abono_payment(
     paid_amount: float,
     currency: str = "USD",
     notes: Optional[str] = None,
+    is_manually_edited: bool = False,
+    ai_confidence_score: Optional[int] = None,
 ) -> ClientPayment:
     """Crea ClientPayment (abono CxC). El endpoint puede luego vincular allocation a una factura."""
-    if float(paid_amount) <= 0:
+    allow_zero = _portal_allows_zero_declared_amount(ai_confidence_score)
+    if float(paid_amount) <= 0 and not allow_zero:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El monto del abono debe ser mayor a 0.",
@@ -2942,6 +2990,8 @@ async def _portal_create_abono_payment(
         deposit_account_id=int(dep_acc_id),
         status=ClientPaymentStatus.pending_review,
         notes=notes_fixed,
+        is_manually_edited=bool(is_manually_edited),
+        ai_confidence_score=ai_confidence_score,
         created_at=now_ecuador(),
     )
     db.add(payment)
@@ -2973,8 +3023,13 @@ async def portal_submit_payment(
     apply_credit_balance: Annotated[Optional[str], Form()] = None,
     receipt_url: Annotated[Optional[str], Form()] = None,
     codigos_retiro: Annotated[Optional[str], Form()] = None,
+    is_manually_edited: Annotated[Optional[str], Form()] = None,
+    ai_confidence_score: Annotated[Optional[str], Form()] = None,
 ) -> PortalPaymentSubmitResponse:
     client = _portal_client_from_token(db, portal_token)
+
+    manual_edit_flag = _portal_form_bool(is_manually_edited)
+    ai_confidence = _portal_form_confidence_score(ai_confidence_score)
 
     expire_pending_sales_if_needed(db)
 
@@ -3105,7 +3160,8 @@ async def portal_submit_payment(
             payment_method_id=pm_id_ab,
         )
         amt = float(paid_amount or 0)
-        if amt <= 0:
+        allow_zero_abono = _portal_allows_zero_declared_amount(ai_confidence)
+        if amt <= 0 and not allow_zero_abono:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El monto del abono debe ser mayor a 0.",
@@ -3134,6 +3190,8 @@ async def portal_submit_payment(
                 background_tasks=background_tasks,
                 url_request_id_for_id_erp=int(tgt_wr_ab),
                 id_erp_optional=id_erp,
+                is_manually_edited=manual_edit_flag,
+                ai_confidence_score=ai_confidence,
             )
             req_done = _portal_commit_wallet_recharge_after_receipt(db, req_done)
             receipt_out = str(req_done.receipt_url or "").strip() or None
@@ -3155,6 +3213,8 @@ async def portal_submit_payment(
             paid_amount=amt,
             currency=(currency or "USD").strip(),
             notes=notes,
+            is_manually_edited=manual_edit_flag,
+            ai_confidence_score=ai_confidence,
         )
         if tgt_sale_ab is not None:
             from app.services.client_payment_service import (
@@ -3424,15 +3484,18 @@ async def portal_submit_payment(
 
     stored_receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url)
 
+    allow_zero_deposit = _portal_allows_zero_declared_amount(ai_confidence)
     if deposit_part <= Decimal("0"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Indica el importe del depósito (debe ser mayor a 0).",
-        )
+        if not (allow_zero_deposit and stored_receipt_url):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Indica el importe del depósito (debe ser mayor a 0).",
+            )
 
     total_pay = (credit_apply + deposit_part).quantize(Decimal("0.01"))
     if total_pay <= _FP_EPS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Importe de pago inválido.")
+        if not (allow_zero_deposit and stored_receipt_url):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Importe de pago inválido.")
 
     now_ts = now_ecuador()
     now_iso = now_ts.isoformat()
@@ -3473,6 +3536,8 @@ async def portal_submit_payment(
         deposit_account_id=int(deposit_acc_resolved) if deposit_acc_resolved is not None else None,
         status=ClientPaymentStatus.pending_review,
         notes=deposit_notes_final,
+        is_manually_edited=manual_edit_flag,
+        ai_confidence_score=ai_confidence,
         created_at=now_ts,
     )
     db.add(deposit_pay)
@@ -3866,18 +3931,32 @@ async def analyze_receipt(
 
     extracted_amount: Optional[float] = None
     try:
-        raw_amt = result.get("extracted_amount")
+        raw_amt = result.get("amount")
+        if raw_amt is None:
+            raw_amt = result.get("extracted_amount")
         if raw_amt is not None:
             extracted_amount = float(raw_amt)
     except (TypeError, ValueError):
         extracted_amount = None
 
     extracted_currency: Optional[str] = None
-    raw_cur = result.get("extracted_currency")
+    raw_cur = result.get("currency")
+    if raw_cur is None:
+        raw_cur = result.get("extracted_currency")
     if raw_cur and isinstance(raw_cur, str):
         extracted_currency = raw_cur.strip().upper()[:10] or None
 
+    confidence: Optional[int] = None
+    try:
+        raw_conf = result.get("confidence")
+        if raw_conf is not None:
+            confidence = max(0, min(100, int(float(raw_conf))))
+    except (TypeError, ValueError):
+        confidence = None
+
     is_readable: bool = bool(result.get("is_readable", False))
+    if extracted_amount is not None and extracted_amount > 0:
+        is_readable = True
     if extracted_amount is None or extracted_amount <= 0:
         is_readable = False
 
@@ -3892,4 +3971,5 @@ async def analyze_receipt(
         amount_matches=amount_matches,
         expected_amount=expected_amount,
         expected_currency=(expected_currency or "").strip().upper()[:10] or None,
+        confidence=confidence,
     )

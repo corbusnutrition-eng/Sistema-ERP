@@ -35,6 +35,8 @@ import {
   requestCodigosRetiroInstantActivationCxcWalletRecharge,
   paymentMethodNameById,
 } from './codigosRetiroPayment'
+import PortalManualAmountField from './PortalManualAmountField'
+import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
 
 function publicApi() {
   return axios.create({
@@ -893,6 +895,7 @@ function defaultRechargePayFormState() {
     aiResult: null,
     analyzing: false,
     dragOver: false,
+    isManuallyEdited: false,
   }
 }
 
@@ -1096,6 +1099,7 @@ function portalDebtPayMissingHint({
   analyzing,
   paidOk,
   hasBlockingCurrencyError,
+  illegibleWithReceipt = false,
 }) {
   if (submitting) return null
   if (debtPaymentMethodsLen === 0) {
@@ -1111,8 +1115,11 @@ function portalDebtPayMissingHint({
   if (receiptCount === 0) return '⚠️ Sube la foto o el PDF de tu comprobante.'
   if (analyzing) return '⚠️ Esperando a que la IA procese el importe del comprobante…'
   if (hasBlockingCurrencyError) return '⚠️ Corrige el error indicado más arriba antes de enviar.'
+  if (illegibleWithReceipt) {
+    return 'ℹ️ No pudimos leer el monto automáticamente. Puedes enviar el comprobante; un operador lo revisará.'
+  }
   if (!paidOk) {
-    return '⚠️ No pudimos obtener un importe válido desde el recibo; prueba una imagen JPG o PNG más clara.'
+    return '⚠️ No pudimos obtener un importe válido desde el recibo; prueba una imagen JPG o PNG más clara o corrígelo manualmente.'
   }
   return null
 }
@@ -1136,6 +1143,7 @@ function portalNewOrderPayMissingHint({
   isAnalyzing,
   paidOk,
   hasBlockingCurrencyError,
+  illegibleWithReceipt = false,
 }) {
   if (submitting || reservationExpired) return null
   if (!totalPayablePositive) {
@@ -1156,11 +1164,14 @@ function portalNewOrderPayMissingHint({
   if (fileArrLen === 0) return '⚠️ Sube la foto o el PDF de tu comprobante.'
   if (isAnalyzing) return '⚠️ Esperando a que la IA procese el importe del comprobante…'
   if (hasBlockingCurrencyError) return '⚠️ Corrige el error indicado más arriba antes de enviar.'
+  if (illegibleWithReceipt) {
+    return 'ℹ️ No pudimos leer el monto automáticamente. Puedes enviar el comprobante; un operador lo revisará.'
+  }
   if (!paidOk) {
     if (/^application\/pdf$/i.test(firstFileMime || '')) {
       return '⚠️ Con solo PDF la IA no puede leer el importe; sube también una imagen JPG o PNG del mismo comprobante.'
     }
-    return '⚠️ No pudimos detectar un importe en el comprobante. Asegúrate de que la imagen sea nítida.'
+    return '⚠️ No pudimos detectar un importe en el comprobante. Marca la casilla para corregirlo manualmente o envía la imagen para revisión.'
   }
   return null
 }
@@ -1180,6 +1191,7 @@ function mergeReceiptAnalysisResults(parts) {
       amount_matches: null,
       expected_amount: list[0]?.expected_amount ?? null,
       expected_currency: list[0]?.expected_currency ?? null,
+      confidence: list[0]?.confidence ?? null,
       _multi_currency: Boolean(list.some((x) => x?._multi_currency)),
     }
   }
@@ -1203,6 +1215,7 @@ function mergeReceiptAnalysisResults(parts) {
     amount_matches: first.amount_matches ?? null,
     expected_amount: first.expected_amount ?? null,
     expected_currency: first.expected_currency ?? null,
+    confidence: first.confidence ?? null,
   }
 }
 
@@ -1720,6 +1733,7 @@ function ClientPortalPageInner() {
   const [analyzingBySale, setAnalyzingBySale] = useState({})
   const [aiResultBySale, setAiResultBySale] = useState({})
   const [paidAmountBySale, setPaidAmountBySale] = useState({})
+  const [isManuallyEditedBySale, setIsManuallyEditedBySale] = useState({})
 
   // ── Debt payment form (abono CxC) ───────────────────────────────────────────
   const [debtForm, setDebtForm] = useState({
@@ -1732,6 +1746,7 @@ function ClientPortalPageInner() {
     aiResult: null,
     analyzing: false,
     dragOver: false,
+    isManuallyEdited: false,
   })
   const [debtReceiptFiles, setDebtReceiptFiles] = useState([])
   const debtReceiptFilesRef = useRef([])
@@ -3879,6 +3894,7 @@ function ClientPortalPageInner() {
     setSubmitErrorBySale((p) => ({ ...p, [saleId]: null }))
     setAiResultBySale((p) => ({ ...p, [saleId]: null }))
     setPaidAmountBySale((p) => ({ ...p, [saleId]: '' }))
+    setIsManuallyEditedBySale((p) => ({ ...p, [saleId]: false }))
     if (capped.length)
       analyzeReceiptWithAI(saleId, capped, expectedAmount, expectedCurrency)
   }
@@ -4035,13 +4051,29 @@ function ClientPortalPageInner() {
 
       const paidStr = String(paidAmountBySale[sid] ?? '').trim().replace(',', '.')
       const paidParsed = parseFloat(paidStr)
-      if (!Number.isFinite(paidParsed) || paidParsed <= 0) {
+      const manualEdit = Boolean(isManuallyEditedBySale[sid])
+      const aiResult = aiResultBySale[sid]
+      const illegible = isIllegibleReceiptAi(aiResult) && !manualEdit
+
+      if (manualEdit) {
+        if (!Number.isFinite(paidParsed) || paidParsed <= 0) {
+          setSubmitErrorBySale((p) => ({
+            ...p,
+            [sid]: 'Indica un importe válido mayor a cero.',
+          }))
+          return
+        }
+      } else if (illegible) {
+        // Comprobante ilegible: se envía con monto 0 para revisión manual en ERP.
+      } else if (!Number.isFinite(paidParsed) || paidParsed <= 0 || !aiResult?.is_readable) {
         setSubmitErrorBySale((p) => ({
           ...p,
-          [sid]: 'La IA no pudo detectar un importe válido en el comprobante. Sube una imagen JPG o PNG nítida.',
+          [sid]: 'La IA no pudo detectar un importe válido. Sube una imagen más clara o corrígelo manualmente.',
         }))
         return
       }
+
+      const submitAmount = manualEdit ? paidParsed : illegible ? 0 : paidParsed
 
       setSubmittingSaleId(sid)
       setSubmitErrorBySale((p) => ({ ...p, [sid]: null }))
@@ -4058,11 +4090,16 @@ function ClientPortalPageInner() {
         fd.append('payment_method_id', String(pm))
         fd.append('deposit_account_id', depId)
         fd.append('receipt_file', fileList[0])
-        fd.append('paid_amount', String(paidParsed))
+        fd.append('paid_amount', String(submitAmount))
         if (creditApplyPreview > 1e-9) {
           fd.append('apply_credit_balance', '1')
           fd.append('use_credit_balance', '1')
         }
+        appendOcrFormFields(fd, {
+          isManuallyEdited: manualEdit,
+          aiResult,
+          illegibleSubmit: illegible,
+        })
         await api.post(`/api/v1/portal/${token}/payments`, fd)
         await postSuccess()
       } catch (err) {
@@ -4091,6 +4128,8 @@ function ClientPortalPageInner() {
       payAccountBySale,
       payMethodBySale,
       paidAmountBySale,
+      isManuallyEditedBySale,
+      aiResultBySale,
       receiptFilesBySale,
       thumbnailUrlsBySale,
       token,
@@ -4187,7 +4226,7 @@ function ClientPortalPageInner() {
       return capped.map((f) => (/^image\/(jpeg|png)$/i.test(f?.type || '') ? URL.createObjectURL(f) : null))
     })
     setDebtReceiptFiles(capped.length ? capped : [])
-    setDebtForm((p) => ({ ...p, error: null, aiResult: null, amount: '' }))
+    setDebtForm((p) => ({ ...p, error: null, aiResult: null, amount: '', isManuallyEdited: false }))
     if (capped.length)
       analyzeDebtReceiptWithAI(capped, expectedAmount, expectedCurrency)
   }
@@ -4253,7 +4292,8 @@ function ClientPortalPageInner() {
       return
     }
     const selDebt = debtPaymentAccounts.find((d) => String(d.id) === String(depId))
-    const amt = parseFloat(String(amount).trim())
+    const amt = parseFloat(String(amount).trim().replace(',', '.'))
+    const illegible = isIllegibleReceiptAi(aiResult) && !debtForm.isManuallyEdited
     const debtMm = portalCurrencyMismatchMessage(aiResult?.extracted_currency, selDebt?.currency)
     if (debtMm) {
       setDebtForm((p) => ({ ...p, error: debtMm }))
@@ -4267,8 +4307,16 @@ function ClientPortalPageInner() {
       }))
       return
     }
-    if (!Number.isFinite(amt) || amt <= 0) {
-      setDebtForm((p) => ({ ...p, error: 'Esperamos el importe detectado por IA en tus comprobantes.' }))
+    if (debtForm.isManuallyEdited) {
+      if (!Number.isFinite(amt) || amt <= 0) {
+        setDebtForm((p) => ({ ...p, error: 'Indica un importe válido mayor a cero.' }))
+        return
+      }
+    } else if (!illegible && (!Number.isFinite(amt) || amt <= 0)) {
+      setDebtForm((p) => ({
+        ...p,
+        error: 'Esperamos el importe detectado por IA en tus comprobantes.',
+      }))
       return
     }
     if (!receiptList.length) {
@@ -4282,7 +4330,7 @@ function ClientPortalPageInner() {
       fd.append('payment_method_id', String(method))
       fd.append('deposit_account_id', depId)
       fd.append('receipt_file', receiptList[0])
-      fd.append('paid_amount', String(amt))
+      fd.append('paid_amount', String(debtForm.isManuallyEdited ? amt : illegible ? 0 : amt))
       fd.append('currency', debtCurrency)
       if (ob.kind === 'recharge') {
         const rid = Number(ob.rechargeRow?.id)
@@ -4293,6 +4341,11 @@ function ClientPortalPageInner() {
         fd.append('portal_debt_kind', 'sale')
         fd.append('portal_sale_id', String(ob.saleId))
       }
+      appendOcrFormFields(fd, {
+        isManuallyEdited: debtForm.isManuallyEdited,
+        aiResult: debtForm.aiResult,
+        illegibleSubmit: illegible,
+      })
       await api.post(`/api/v1/portal/${token}/payments`, fd)
       if (ob.kind === 'recharge') {
         const rid = Number(ob.rechargeRow?.id)
@@ -4523,7 +4576,12 @@ function ClientPortalPageInner() {
         }
       })
       setReceiptFilesByRecharge((prev) => ({ ...prev, [rid]: capped.length ? capped : [] }))
-      patchRechargePayForm(setRechargeFormById, rid, { error: null, aiResult: null, amount: '' })
+      patchRechargePayForm(setRechargeFormById, rid, {
+        error: null,
+        aiResult: null,
+        amount: '',
+        isManuallyEdited: false,
+      })
       if (capped.length) {
         const cur =
           row?.recharge_currency && String(row.recharge_currency).trim().length >= 3
@@ -4589,6 +4647,7 @@ function ClientPortalPageInner() {
       }
       const selAcc = depList.find((d) => String(d.id) === String(depId))
       const amt = parseFloat(String(form.amount).trim().replace(',', '.'))
+      const illegible = isIllegibleReceiptAi(form.aiResult) && !form.isManuallyEdited
       const featMm = portalCurrencyMismatchMessage(form.aiResult?.extracted_currency, selAcc?.currency)
       if (featMm) {
         patchRechargePayForm(setRechargeFormById, rid, { error: featMm })
@@ -4601,7 +4660,14 @@ function ClientPortalPageInner() {
         })
         return
       }
-      if (!Number.isFinite(amt) || amt <= 0) {
+      if (form.isManuallyEdited) {
+        if (!Number.isFinite(amt) || amt <= 0) {
+          patchRechargePayForm(setRechargeFormById, rid, {
+            error: 'Indica un importe válido mayor a cero.',
+          })
+          return
+        }
+      } else if (!illegible && (!Number.isFinite(amt) || amt <= 0)) {
         patchRechargePayForm(setRechargeFormById, rid, {
           error: 'Esperamos el importe detectado por IA en tu comprobante.',
         })
@@ -4617,7 +4683,7 @@ function ClientPortalPageInner() {
         fd.append('file', receiptList[0])
         fd.append('payment_method_id', String(effectiveMethod))
         fd.append('deposit_account_id', depId)
-        fd.append('paid_amount', String(amt))
+        fd.append('paid_amount', String(form.isManuallyEdited ? amt : illegible ? 0 : amt))
         fd.append('id_erp', String(rid))
         const featCreditAvail = portalCreditForCurrency(data, creditRowsDisplay, cur)
         const featOpen = portalRechargeOpenBalance(row)
@@ -4626,6 +4692,11 @@ function ClientPortalPageInner() {
           fd.append('apply_credit_balance', '1')
           fd.append('use_credit_balance', '1')
         }
+        appendOcrFormFields(fd, {
+          isManuallyEdited: form.isManuallyEdited,
+          aiResult: form.aiResult,
+          illegibleSubmit: illegible,
+        })
         await api.post(
           `/api/v1/portal/${encodeURIComponent(token)}/recharges/${encodeURIComponent(String(rid))}/pay`,
           fd,
@@ -5104,6 +5175,10 @@ function ClientPortalPageInner() {
     const debtPaidOk = Number.isFinite(parseFloat(String(debtForm.amount ?? '').trim().replace(',', '.')))
       ? parseFloat(String(debtForm.amount ?? '').trim().replace(',', '.'))
       : NaN
+    const debtIllegible =
+      isIllegibleReceiptAi(debtForm.aiResult) &&
+      !debtForm.isManuallyEdited &&
+      debtReceiptFiles.length > 0
     const debtDisableBtn =
       debtForm.submitting ||
       !obligationReady ||
@@ -5111,8 +5186,8 @@ function ClientPortalPageInner() {
       (isDebtRetiro
         ? debtPaymentMethods.length === 0 || debtPaymentAccounts.length === 0
         : debtReceiptFiles.length === 0 ||
-          !Number.isFinite(debtPaidOk) ||
-          !(debtPaidOk > 0) ||
+          (!debtIllegible &&
+            (!Number.isFinite(debtPaidOk) || !(debtPaidOk > 0))) ||
           Boolean(debtMismatchMsg || debtMultiMsg)) ||
       debtPaymentMethods.length === 0 ||
       debtPaymentAccounts.length === 0
@@ -5128,6 +5203,7 @@ function ClientPortalPageInner() {
       analyzing: debtForm.analyzing,
       paidOk: Number.isFinite(debtPaidOk) && debtPaidOk > 0,
       hasBlockingCurrencyError: Boolean(debtMismatchMsg || debtMultiMsg),
+      illegibleWithReceipt: debtIllegible,
     })
     const debtCreditAvail = obligationReady
       ? portalCreditForCurrency(data, creditRowsDisplay, currentDebtPayObligation.currency)
@@ -5363,18 +5439,29 @@ function ClientPortalPageInner() {
 
       {!isDebtRetiro ? (
       <>
-      <label style={{ display: 'block', fontSize: 11, opacity: 0.55, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>
-        Importe detectado por IA (referencia: {selectedPendingLabel} · {currentDebtPayObligation?.summaryLabel ?? '—'})
-      </label>
-      <input
-        type="number"
-        readOnly
-        required
-        min="0.01"
-        step="0.01"
-        placeholder="—"
-        value={debtForm.amount}
-        className="mb-2 w-full rounded-xl border border-white/18 bg-gray-950/55 px-4 py-3 text-[15px] text-fuchsia-50 opacity-80 cursor-not-allowed box-border"
+      <PortalManualAmountField
+        label={`Importe detectado por IA (referencia: ${selectedPendingLabel} · ${currentDebtPayObligation?.summaryLabel ?? '—'})`}
+        amount={debtForm.amount}
+        onAmountChange={(val) => setDebtForm((p) => ({ ...p, amount: val }))}
+        isManuallyEdited={debtForm.isManuallyEdited}
+        onManualEditChange={(checked) => {
+          setDebtForm((p) => {
+            const next = { ...p, isManuallyEdited: checked }
+            if (!checked && p.aiResult?.is_readable && p.aiResult.extracted_amount > 0) {
+              next.amount = String(p.aiResult.extracted_amount)
+            }
+            return next
+          })
+        }}
+        labelStyle={{
+          display: 'block',
+          fontSize: 11,
+          opacity: 0.55,
+          textTransform: 'uppercase',
+          letterSpacing: '0.07em',
+          marginBottom: 6,
+        }}
+        inputClassName="mb-2 w-full rounded-xl border border-white/18 bg-gray-950/55 px-4 py-3 text-[15px] text-fuchsia-50 box-border"
       />
       {debtMultiMsg ? (
         <p className="mb-2 text-[13px] font-semibold leading-relaxed text-red-300">{`❌ ${debtMultiMsg}`}</p>
@@ -5701,6 +5788,10 @@ function ClientPortalPageInner() {
             )
               ? parseFloat(String(rechargeForm.amount ?? '').trim().replace(',', '.'))
               : NaN
+            const featIllegible =
+              isIllegibleReceiptAi(rechargeForm.aiResult) &&
+              !rechargeForm.isManuallyEdited &&
+              rechargeReceiptFiles.length > 0
             const featDisableBtn =
               rechargeForm.submitting ||
               !showPayForm ||
@@ -5712,8 +5803,8 @@ function ClientPortalPageInner() {
               (isRechargeRetiroMethod
                 ? false
                 : rechargeReceiptFiles.length === 0 ||
-                  !Number.isFinite(featPaidOk) ||
-                  !(featPaidOk > 0) ||
+                  (!featIllegible &&
+                    (!Number.isFinite(featPaidOk) || !(featPaidOk > 0))) ||
                   Boolean(featMismatchMsg || featMultiMsg))
             const dragOverFeat = Boolean(rechargeForm.dragOver)
             const headlineAmt =
@@ -5740,6 +5831,7 @@ function ClientPortalPageInner() {
               isAnalyzing: rechargeForm.analyzing,
               paidOk: Number.isFinite(featPaidOk) && featPaidOk > 0,
               hasBlockingCurrencyError: Boolean(featMismatchMsg || featMultiMsg),
+              illegibleWithReceipt: featIllegible,
             })
             const featCreditAvail = portalCreditForCurrency(data, creditRowsDisplay, cur)
             const featCreditApply = Math.min(featCreditAvail, Math.max(0, pend))
@@ -6078,39 +6170,43 @@ function ClientPortalPageInner() {
                       </section>
                     </div>
 
-                    <div style={{ marginBottom: 12 }}>
-                      <label
-                        style={{
-                          display: 'block',
-                          fontSize: 11,
-                          opacity: 0.6,
-                          letterSpacing: '0.07em',
-                          textTransform: 'uppercase',
-                          marginBottom: 6,
-                        }}
-                      >
-                        ¿Cuánto pagaste en tu depósito? ({cur})
-                      </label>
-                      <p style={{ margin: '0 0 8px', fontSize: 12, opacity: 0.65 }}>
-                        Este importe solo se completa con la IA al leer el comprobante.
-                      </p>
-                      <input
-                        type="number"
-                        readOnly
-                        required
-                        min="0.01"
-                        step="0.01"
-                        placeholder="—"
-                        value={rechargeForm.amount}
-                        className="w-full rounded-xl border border-white/18 bg-gray-950/55 px-4 py-3 text-[15px] text-fuchsia-50 opacity-80 cursor-not-allowed box-border"
-                      />
-                      {featMultiMsg ?
-                        <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-red-300">{`❌ ${featMultiMsg}`}</p>
-                      : null}
-                      {featMismatchMsg ?
-                        <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-red-300">{featMismatchMsg}</p>
-                      : null}
-                    </div>
+                    <PortalManualAmountField
+                      label={`¿Cuánto pagaste en tu depósito? (${cur})`}
+                      hint="Este importe solo se completa con la IA al leer el comprobante."
+                      amount={rechargeForm.amount}
+                      onAmountChange={(val) =>
+                        patchRechargePayForm(setRechargeFormById, rid, { amount: val })
+                      }
+                      isManuallyEdited={rechargeForm.isManuallyEdited}
+                      onManualEditChange={(checked) => {
+                        patchRechargePayForm(setRechargeFormById, rid, (prev) => {
+                          const next = { ...prev, isManuallyEdited: checked }
+                          if (
+                            !checked &&
+                            prev.aiResult?.is_readable &&
+                            prev.aiResult.extracted_amount > 0
+                          ) {
+                            next.amount = String(prev.aiResult.extracted_amount)
+                          }
+                          return next
+                        })
+                      }}
+                      labelStyle={{
+                        display: 'block',
+                        fontSize: 11,
+                        opacity: 0.6,
+                        letterSpacing: '0.07em',
+                        textTransform: 'uppercase',
+                        marginBottom: 6,
+                      }}
+                      hintStyle={{ margin: '0 0 8px', fontSize: 12, opacity: 0.65 }}
+                    />
+                    {featMultiMsg ?
+                      <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-red-300">{`❌ ${featMultiMsg}`}</p>
+                    : null}
+                    {featMismatchMsg ?
+                      <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-red-300">{featMismatchMsg}</p>
+                    : null}
 
                     {rechargeForm.analyzing ?
                       <p
@@ -6298,7 +6394,11 @@ function ClientPortalPageInner() {
                 // Cualquier diferencia se ajusta automáticamente al aprobar (vuelto → credit_balance).
                 const paidOkMixed =
                   Number.isFinite(paidParsedInline) && paidParsedInline > 0
-                const paidOk = paysOnlyWithCredit ? true : paidOkMixed
+                const saleIllegible =
+                  isIllegibleReceiptAi(aiResult) &&
+                  !Boolean(isManuallyEditedBySale[sid]) &&
+                  fileArr.length > 0
+                const paidOk = paysOnlyWithCredit ? true : paidOkMixed || saleIllegible
                 const hasOpenBalance = saleBalance > 1e-9
                 const disablePay =
                   !hasOpenBalance
@@ -6315,7 +6415,7 @@ function ClientPortalPageInner() {
                     || !String(methodId || '').trim()
                     || (needsDepositPick && depList.length > 0 && !resolvedDepId)
                     || fileArr.length === 0
-                    || !paidOk
+                    || (!saleIllegible && !paidOkMixed)
                     || Boolean(currencyMismatchAlert || multiCurrencyAiAlert)
 
                 const newOrderUxHint = portalNewOrderPayMissingHint({
@@ -6333,6 +6433,7 @@ function ClientPortalPageInner() {
                   isAnalyzing,
                   paidOk,
                   hasBlockingCurrencyError: Boolean(currencyMismatchAlert || multiCurrencyAiAlert),
+                  illegibleWithReceipt: saleIllegible,
                 })
 
                 return (
@@ -6689,39 +6790,44 @@ function ClientPortalPageInner() {
 
                         {!paysOnlyWithCredit && !isSaleRetiro ? (
                           <>
-                        <div style={{ marginBottom: 12 }}>
-                          <label
-                            style={{
-                              display: 'block',
-                              fontSize: 11,
-                              opacity: 0.6,
-                              letterSpacing: '0.07em',
-                              textTransform: 'uppercase',
-                              marginBottom: 6,
-                            }}
-                          >
-                            {creditAppliedToOrder > 1e-9
+                        <PortalManualAmountField
+                          label={
+                            creditAppliedToOrder > 1e-9
                               ? `Importe depositado (${saleCurrency}), solo la diferencia`
-                              : `¿Cuánto pagaste en tu depósito? (${saleCurrency})`}
-                          </label>
-                          <p style={{ margin: '0 0 8px', fontSize: 12, opacity: 0.65 }}>
-                            {creditAppliedToOrder > 1e-9
-                              ? <>La IA validará contra {formatMoney(totalAfterCredit, saleCurrency)} después de usar tu saldo a favor.</>
-                              : <>Este importe solo se completa con la IA al leer el comprobante.</>}
-                          </p>
-                          <input
-                            type="number"
-                            readOnly
-                            min="0.01"
-                            step="0.01"
-                            required
-                            placeholder="—"
-                            value={paidAmountBySale[sid] ?? ''}
-                            className="w-full rounded-xl border border-white/18 bg-gray-950/55 px-4 py-3 text-[15px] text-fuchsia-50 opacity-80 cursor-not-allowed box-border"
-                            style={{
-                              MozAppearance: 'textfield',
-                            }}
-                          />
+                              : `¿Cuánto pagaste en tu depósito? (${saleCurrency})`
+                          }
+                          hint={
+                            creditAppliedToOrder > 1e-9
+                              ? `La IA validará contra ${formatMoney(totalAfterCredit, saleCurrency)} después de usar tu saldo a favor.`
+                              : 'Este importe solo se completa con la IA al leer el comprobante.'
+                          }
+                          amount={paidAmountBySale[sid] ?? ''}
+                          onAmountChange={(val) =>
+                            setPaidAmountBySale((p) => ({ ...p, [sid]: val }))
+                          }
+                          isManuallyEdited={Boolean(isManuallyEditedBySale[sid])}
+                          onManualEditChange={(checked) => {
+                            setIsManuallyEditedBySale((p) => ({ ...p, [sid]: checked }))
+                            if (!checked) {
+                              const ia = aiResultBySale[sid]
+                              if (ia?.is_readable && ia.extracted_amount > 0) {
+                                setPaidAmountBySale((prev) => ({
+                                  ...prev,
+                                  [sid]: String(ia.extracted_amount),
+                                }))
+                              }
+                            }
+                          }}
+                          labelStyle={{
+                            display: 'block',
+                            fontSize: 11,
+                            opacity: 0.6,
+                            letterSpacing: '0.07em',
+                            textTransform: 'uppercase',
+                            marginBottom: 6,
+                          }}
+                          hintStyle={{ margin: '0 0 8px', fontSize: 12, opacity: 0.65 }}
+                        />
                           {multiCurrencyAiAlert ? (
                             <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-red-300">
                               {multiCurrencyAiAlert}
@@ -6732,7 +6838,6 @@ function ClientPortalPageInner() {
                               {currencyMismatchAlert}
                             </p>
                           ) : null}
-                        </div>
 
                         {isAnalyzing ? (
                           <p

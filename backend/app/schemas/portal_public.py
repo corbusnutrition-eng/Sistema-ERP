@@ -587,3 +587,9 @@ class ReceiptAnalysisResponse(BaseModel):
     )
     expected_amount: Optional[float] = Field(default=None)
     expected_currency: Optional[str] = Field(default=None)
+    confidence: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Confianza 0–100 de la lectura IA según nitidez del comprobante.",
+    )

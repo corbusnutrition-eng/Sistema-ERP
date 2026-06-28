@@ -42,6 +42,11 @@ import {
   CopyPaymentLinkButton,
   copyClientPortalLink,
 } from '../sales/saleTableHelpers'
+import OcrSecurityBadges, {
+  pickOcrFlagsFromRecharge,
+  isIllegibleDeclaredRecord,
+  IllegibleReceiptAlert,
+} from '../../components/OcrSecurityBadges'
 
 const NotificationManagementPanel = lazy(() => import('./NotificationManagementPanel'))
 
@@ -1042,6 +1047,11 @@ export default function DistributorsBaaSPage() {
     return Number.isFinite(pendOk) ? String(pendOk) : ''
   }
 
+  function canApproveRechargeRow(row) {
+    const decl = declaredAmountForRechargeApprove(row)
+    return decl != null && Number(decl) > 0
+  }
+
   async function openApproveModal(row) {
     if (!row || row.status !== 'in_review') return
     let hydrated = row
@@ -1796,7 +1806,12 @@ export default function DistributorsBaaSPage() {
                         <RechargeAmountCell row={r} />
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap align-middle min-w-[108px]">
-                        <RechargeStatusBadge status={r.status} />
+                        <div className="flex flex-col items-start gap-1">
+                          <RechargeStatusBadge status={r.status} />
+                          {r.status === 'in_review' ? (
+                            <OcrSecurityBadges {...pickOcrFlagsFromRecharge(r)} />
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-center align-middle w-14">
                         <SaleReceiptProofLink
@@ -1970,6 +1985,9 @@ export default function DistributorsBaaSPage() {
               deuda CxC de la solicitud y el excedente queda como <strong>saldo a favor</strong> del cliente. Si es menor,
               el saldo virtual ya entregado se mantiene y el resto sigue como deuda CxC.
             </p>
+            {isIllegibleDeclaredRecord(approveRow) ? (
+              <IllegibleReceiptAlert className="w-full" />
+            ) : null}
             {declaredAmountForRechargeApprove(approveRow) != null ?
               <p className="text-xs text-sky-800 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2">
                 Cliente declaró{' '}
@@ -2031,10 +2049,14 @@ export default function DistributorsBaaSPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={processingReqId === approveRow.id}
+                  disabled={processingReqId === approveRow.id || !canApproveRechargeRow(approveRow)}
                   className="px-3 py-2 text-sm rounded-xl bg-emerald-600 text-white font-medium hover:bg-emerald-700 disabled:opacity-60"
                 >
-                  {processingReqId === approveRow.id ? 'Procesando…' : 'Confirmar abono'}
+                  {processingReqId === approveRow.id ?
+                    'Procesando…'
+                  : !canApproveRechargeRow(approveRow) ?
+                    'Requiere monto para aprobar'
+                  : 'Confirmar abono'}
                 </button>
               </div>
             </form>
@@ -2158,6 +2180,8 @@ export default function DistributorsBaaSPage() {
         linkedPaymentsFromEdit={
           Array.isArray(editRechargeRow?.linked_payments) ? editRechargeRow.linked_payments : []
         }
+        ocrIsManuallyEdited={Boolean(editRechargeRow?.is_manually_edited)}
+        ocrAiConfidenceScore={editRechargeRow?.ai_confidence_score ?? null}
       />
 
     </div>

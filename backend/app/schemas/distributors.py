@@ -334,6 +334,8 @@ class WalletRechargeRequestRead(BaseModel):
         description="Líneas de detalle (producto/cantidad/tarifa) guardadas desde el modal multilinea.",
     )
     declared_deposit_usd: Optional[float] = Field(default=None, description="Depósito declarado en USD al crear/editar desde ERP.")
+    is_manually_edited: bool = Field(default=False)
+    ai_confidence_score: Optional[int] = Field(default=None, ge=0, le=100)
 
     model_config = {"from_attributes": True}
 
@@ -391,6 +393,8 @@ class WalletRechargeLinkedPaymentAdmin(BaseModel):
         default=None,
         description="Importe declarado como depósito bancario (pendiente de aprobación).",
     )
+    is_manually_edited: bool = Field(default=False)
+    ai_confidence_score: Optional[int] = Field(default=None, ge=0, le=100)
 
 
 class WalletRechargeRequestAdminRow(BaseModel):
@@ -436,6 +440,8 @@ class WalletRechargeRequestAdminRow(BaseModel):
         default=None,
         description="Importe que el cliente declaró en el portal al subir el comprobante.",
     )
+    is_manually_edited: bool = Field(default=False)
+    ai_confidence_score: Optional[int] = Field(default=None, ge=0, le=100)
     linked_payments: list[WalletRechargeLinkedPaymentAdmin] = Field(
         default_factory=list,
         description="Historial de abonos reconocidos y comprobante en revisión vinculados a esta recarga.",

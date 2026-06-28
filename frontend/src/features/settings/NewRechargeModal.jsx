@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { X, Plus, Trash2 } from 'lucide-react'
 import FinancialSummarySidebar from '../../components/ui/FinancialSummarySidebar'
+import OcrSecurityBadges from '../../components/OcrSecurityBadges'
 import PaymentReceiptAttachment from '../../components/ui/PaymentReceiptAttachment'
 import api from '../../api/axios'
 import { financialSummaryFromRechargeLinkedPayments } from '../../lib/financialSummaryUtils'
@@ -142,6 +143,8 @@ export default function NewRechargeModal({
   linkedPaymentsForReadOnly = null,
   linkedPaymentsFromEdit = null,
   readOnlyAuditRequestId = null,
+  ocrIsManuallyEdited = false,
+  ocrAiConfidenceScore = null,
 }) {
   const [clientSearchMode, setClientSearchMode] = useState('nombre')
   const [clientesDesdeRender, setClientesDesdeRender] = useState([])
@@ -1131,6 +1134,13 @@ export default function NewRechargeModal({
                             </>
                           : 'Sin depósito declarado hasta que indiques un importe (opcional).'}
                         </p>
+                        {editMode ? (
+                          <OcrSecurityBadges
+                            className="mt-2"
+                            is_manually_edited={ocrIsManuallyEdited}
+                            ai_confidence_score={ocrAiConfidenceScore}
+                          />
+                        ) : null}
                       </div>
 
                       <PaymentMethodsDepositCheckboxes

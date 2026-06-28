@@ -42,6 +42,16 @@ class ClientPaymentOut(BaseModel):
             "y debe revisarse desde la fila de la venta (no como abono suelto)."
         ),
     )
+    is_manually_edited: bool = Field(
+        default=False,
+        description="True si el cliente corrigió manualmente el monto detectado por IA.",
+    )
+    ai_confidence_score: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Confianza 0–100 de la lectura IA del comprobante.",
+    )
 
     model_config = {"from_attributes": True}
 

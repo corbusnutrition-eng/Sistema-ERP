@@ -162,10 +162,14 @@ def _linked_wallet_payments_admin(db: Session, req: WalletRechargeRequest) -> li
         amt = float(row.get("amount_applied_to_sale") or row.get("amount") or 0)
         notes_raw = ""
         cpid = row.get("payment_id")
+        cp_manual = False
+        cp_confidence: Optional[int] = None
         if cpid is not None:
             cp_row = db.get(ClientPayment, int(cpid))
             if cp_row is not None:
                 notes_raw = str(cp_row.notes or "")
+                cp_manual = bool(getattr(cp_row, "is_manually_edited", False))
+                cp_confidence = getattr(cp_row, "ai_confidence_score", None)
         from app.services.client_payment_service import credit_reserved_restore_from_notes
 
         credit_part = float(credit_reserved_restore_from_notes(notes_raw))
@@ -193,6 +197,8 @@ def _linked_wallet_payments_admin(db: Session, req: WalletRechargeRequest) -> li
                 wallet_transaction_id=None,
                 credit_portion=round(credit_part, 2) if credit_part > 1e-9 else None,
                 cash_portion=round(cash_part, 2) if cash_part > 1e-9 else None,
+                is_manually_edited=cp_manual,
+                ai_confidence_score=cp_confidence,
             )
         )
     return out
@@ -861,6 +867,8 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
             and float(x) > 1e-9
             else None
         ),
+        is_manually_edited=bool(getattr(r, "is_manually_edited", False)),
+        ai_confidence_score=getattr(r, "ai_confidence_score", None),
         linked_payments=_linked_wallet_payments_admin(db, r),
     )
 
@@ -1354,6 +1362,10 @@ def approve_wallet_recharge(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Aprueba sólo cuando hay un comprobante en revisión (incluye abonos adicionales tras un pago parcial).",
         )
+
+    from app.services.client_payment_service import assert_wallet_recharge_has_approvable_declared_amount
+
+    assert_wallet_recharge_has_approvable_declared_amount(db, req)
 
     client = db.get(Client, req.client_id)
     if client is None:

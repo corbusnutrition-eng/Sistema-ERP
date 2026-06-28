@@ -21,6 +21,10 @@ import {
   staffReviewConfirmLabel,
   staffReviewModalTitle,
 } from '../saleStaffReview'
+import {
+  isIllegibleDeclaredRecord,
+  IllegibleReceiptAlert,
+} from '../../../components/OcrSecurityBadges'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -75,11 +79,23 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
   const balanceDue = Number(consolidated?.balance_due ?? 0)
 
   const pendingBank = consolidated?.pending_bank_review ?? null
+  const pendingReview = Array.isArray(consolidated?.pending_review_payments)
+    ? consolidated.pending_review_payments
+    : Array.isArray(sale?.pending_review_payments)
+      ? sale.pending_review_payments
+      : []
+  const pendingReceipt =
+    pendingBank ||
+    pendingReview.find((p) => p?.receipt_file_url) ||
+    pendingReview[0] ||
+    null
+  const approveBlocked =
+    pendingReceipt != null && isIllegibleDeclaredRecord(pendingReceipt)
   const bankAmount =
     pendingBank?.amount != null && Number.isFinite(Number(pendingBank.amount))
       ? Number(pendingBank.amount)
       : 0
-  const hasLegacyPendingBank = Boolean(pendingBank) && bankAmount > 0.001
+  const hasLegacyPendingBank = Boolean(pendingBank)
 
   const saleReceiptUrl = sale?.receipt_url ? String(sale.receipt_url).trim() : ''
   const showGeneralAbonoHint =
@@ -159,7 +175,11 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
                 </div>
               )}
 
-              {hasLegacyPendingBank && (
+                {isPaymentOnly && pendingReceipt && isIllegibleDeclaredRecord(pendingReceipt) ? (
+                  <IllegibleReceiptAlert className="w-full" />
+                ) : null}
+
+                {hasLegacyPendingBank && (
                 <div className="p-3 rounded-xl bg-sky-50 ring-1 ring-sky-100 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm text-sky-700">
@@ -181,6 +201,10 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
                   {pendingBank.receipt_url && (
                     <ReceiptPreview url={pendingBank.receipt_url} currency={pendingBank.currency ?? cur} />
                   )}
+                  <OcrSecurityBadges
+                    is_manually_edited={pendingBank.is_manually_edited}
+                    ai_confidence_score={pendingBank.ai_confidence_score}
+                  />
                 </div>
               )}
 
@@ -252,7 +276,7 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
           </button>
           <button
             type="button"
-            disabled={activating || loading || !!error}
+            disabled={activating || loading || !!error || approveBlocked}
             onClick={onConfirm}
             className="inline-flex items-center gap-2 px-5 py-2 text-sm font-bold text-white
                        bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm
@@ -263,7 +287,7 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
             ) : (
               <CheckCircle2 size={16} />
             )}
-            {confirmLabel}
+            {approveBlocked ? 'Requiere monto para aprobar' : confirmLabel}
           </button>
         </div>
       </div>

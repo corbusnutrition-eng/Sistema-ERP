@@ -41,6 +41,7 @@ import SalesFilters from './components/SalesFilters'
 import SalesTabs from './components/SalesTabs'
 import SalesTableSkeleton from './components/SalesTableSkeleton'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
+import OcrSecurityBadges, { pickOcrFlagsFromSale, pickOcrSecurityFlags } from '../../components/OcrSecurityBadges'
 
 const ITEMS_PER_PAGE = 10
 
@@ -1484,8 +1485,11 @@ export default function Sales() {
                         </div>
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap align-middle min-w-[108px]">
-                        <div className="flex flex-col items-start gap-0">
+                        <div className="flex flex-col items-start gap-1">
                           <StatusBadge status={sale.status} />
+                          {sale.status === 'payment_submitted' ? (
+                            <OcrSecurityBadges {...pickOcrFlagsFromSale(sale)} />
+                          ) : null}
                           {sale.status === 'pending' && sale.expires_at ? (
                             <PendingReservationCountdown expiresAt={sale.expires_at} />
                           ) : null}
@@ -1586,9 +1590,12 @@ export default function Sales() {
                           {Number.isFinite(amt) ? amt.toFixed(2) : '—'}
                         </td>
                         <td className="px-3 py-2.5">
-                          <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-1 rounded-full ring-1 ring-sky-100">
-                            En revisión
-                          </span>
+                          <div className="flex flex-col items-start gap-1">
+                            <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-1 rounded-full ring-1 ring-sky-100">
+                              En revisión
+                            </span>
+                            <OcrSecurityBadges {...pickOcrSecurityFlags(p)} />
+                          </div>
                         </td>
                         <td className="px-3 py-2.5 text-center">
                           {p.receipt_file_url ? (

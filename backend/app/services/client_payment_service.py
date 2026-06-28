@@ -2857,6 +2857,95 @@ def sync_pending_payment_declared_amount_for_wallet_recharge(
     db.flush()
 
 
+_APPROVAL_REQUIRES_VALID_AMOUNT_MSG = (
+    "No se puede aprobar una transacción sin un monto válido. "
+    "Por favor, edita el registro e ingresa el monto del comprobante."
+)
+
+
+def effective_wallet_recharge_declared_amount(
+    db: Session,
+    req: "WalletRechargeRequest",
+) -> Optional[float]:
+    """Monto declarado vigente para aprobar una recarga BaaS (portal o admin)."""
+    from app.services.wallet_recharge_client_payment import find_pending_client_payment_for_wallet_recharge
+
+    raw = getattr(req, "portal_declared_payment_amount", None)
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            pass
+
+    cp = find_pending_client_payment_for_wallet_recharge(db, req)
+    if cp is not None and str(cp.receipt_file_url or "").strip():
+        try:
+            return float(cp.amount or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    dusd = getattr(req, "declared_deposit_usd", None)
+    if dusd is not None:
+        try:
+            d = float(dusd)
+            if d > _FP_EPS:
+                xr = float(getattr(req, "recharge_exchange_rate", None) or 1.0)
+                return round(d * xr, 2)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def assert_wallet_recharge_has_approvable_declared_amount(
+    db: Session,
+    req: "WalletRechargeRequest",
+) -> None:
+    from fastapi import HTTPException, status
+
+    amt = effective_wallet_recharge_declared_amount(db, req)
+    if amt is None or amt <= _FP_EPS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_APPROVAL_REQUIRES_VALID_AMOUNT_MSG,
+        )
+
+
+def assert_sale_has_approvable_declared_amount(db: Session, sale: "Sale") -> None:
+    """Bloquea activación/aprobación si hay comprobante en revisión sin monto válido."""
+    from fastapi import HTTPException, status
+    from app.models.sale import SaleStatus
+
+    if sale.status not in (
+        SaleStatus.payment_submitted,
+        SaleStatus.partially_paid,
+    ):
+        return
+
+    pending = collect_pending_payments_for_sale_activation(db, sale)
+    receipt_pending = [
+        cp
+        for cp in pending
+        if str(getattr(cp, "receipt_file_url", "") or "").strip()
+        and cp.status == ClientPaymentStatus.pending_review
+    ]
+    if not receipt_pending:
+        if str(getattr(sale, "receipt_url", "") or "").strip():
+            # Legado: comprobante en la venta sin cobro CxC explícito — no bloquear aquí.
+            return
+        return
+
+    for cp in receipt_pending:
+        try:
+            amt = float(cp.amount or 0)
+        except (TypeError, ValueError):
+            amt = 0.0
+        if amt <= _FP_EPS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=_APPROVAL_REQUIRES_VALID_AMOUNT_MSG,
+            )
+
+
 def sync_pending_payment_declared_amount_for_sale(
     db: Session,
     sale: Sale,

@@ -108,6 +108,8 @@ def _payment_to_out(
         encapsulated_in_sale_review=(
             payment_encapsulated_in_open_sale_review(db, p) if db is not None else False
         ),
+        is_manually_edited=bool(getattr(p, "is_manually_edited", False)),
+        ai_confidence_score=getattr(p, "ai_confidence_score", None),
     )
 
 

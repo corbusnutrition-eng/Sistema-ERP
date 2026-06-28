@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, func, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -68,5 +68,11 @@ class WalletRechargeRequest(Base):
 
     #: Importe declarado por el admin/distribuidor en USD al crear/editar la solicitud.
     declared_deposit_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    #: El cliente corrigió manualmente el monto detectado por IA en el portal.
+    is_manually_edited: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    #: Confianza 0–100 de la lectura IA del último comprobante portal.
+    ai_confidence_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, server_default=text("100"))
 
     client: Mapped["Client"] = relationship(back_populates="wallet_recharge_requests")

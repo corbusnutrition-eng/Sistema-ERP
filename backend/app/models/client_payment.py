@@ -5,7 +5,7 @@ import enum
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -47,6 +47,8 @@ class ClientPayment(Base):
         Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
     )
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_manually_edited: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ai_confidence_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=100)
     created_at: Mapped[Optional[object]] = mapped_column(DateTime(timezone=True), nullable=True)
     approved_at: Mapped[Optional[object]] = mapped_column(DateTime(timezone=True), nullable=True)
 

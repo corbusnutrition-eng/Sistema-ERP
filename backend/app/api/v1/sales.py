@@ -3478,6 +3478,8 @@ def get_sale_portal_payment_consolidated(sale_id: int, db: DbDep, _: SalesInvoic
             currency=normalize_currency_code(str(pdep.currency or cur)),
             deposit_account_id=int(pdep.deposit_account_id) if pdep.deposit_account_id is not None else None,
             receipt_url=str(pdep.receipt_file_url).strip() if pdep.receipt_file_url else None,
+            is_manually_edited=bool(getattr(pdep, "is_manually_edited", False)),
+            ai_confidence_score=getattr(pdep, "ai_confidence_score", None),
         )
 
     default_dep: Optional[int] = None
@@ -4644,6 +4646,10 @@ def _finalize_sale_payment_approval_only(
             detail="Esta venta no tiene un comprobante de abono pendiente de revisión.",
         )
 
+    from app.services.client_payment_service import assert_sale_has_approvable_declared_amount
+
+    assert_sale_has_approvable_declared_amount(db, sale)
+
     approve_pending_linked_client_payments_for_sale(db, sale, strict_accounting=True)
     db.refresh(sale)
     _approve_pending_payment_events(sale)
@@ -4749,6 +4755,10 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
                 "ya envió el comprobante («en revisión»)."
             ),
         )
+
+    from app.services.client_payment_service import assert_sale_has_approvable_declared_amount
+
+    assert_sale_has_approvable_declared_amount(db, sale)
 
     client = sale.client if sale.client else db.get(Client, sale.client_id)
     if client is None:
@@ -5232,6 +5242,8 @@ def _build_response(
                     receipt_file_url=str(pr.receipt_file_url or "").strip() or None,
                     created_at=pr.created_at,
                     amount_applied_to_sale=float(appl.quantize(Decimal("0.01"))),
+                    is_manually_edited=bool(getattr(pr, "is_manually_edited", False)),
+                    ai_confidence_score=getattr(pr, "ai_confidence_score", None),
                 )
             )
 

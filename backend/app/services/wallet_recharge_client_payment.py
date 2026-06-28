@@ -121,6 +121,9 @@ def ensure_pending_client_payment_for_wallet_recharge(
     declared_amount: Optional[float] = None,
     credit_amount: Optional[float] = None,
     always_create_new: bool = False,
+    is_manually_edited: bool = False,
+    ai_confidence_score: Optional[int] = None,
+    allow_zero_declared: bool = False,
 ) -> Optional[ClientPayment]:
     """
     Crea un ``ClientPayment`` en revisión vinculado a la solicitud BaaS.
@@ -140,13 +143,19 @@ def ensure_pending_client_payment_for_wallet_recharge(
     except (TypeError, ValueError):
         credit_f = 0.0
     if cash_f <= 0 and credit_f <= 0:
-        try:
-            cash_f = float(getattr(req, "balance_pending", None) or req.amount_requested or 0)
-        except (TypeError, ValueError):
+        if allow_zero_declared and receipt:
             cash_f = 0.0
+        else:
+            try:
+                cash_f = float(getattr(req, "balance_pending", None) or req.amount_requested or 0)
+            except (TypeError, ValueError):
+                cash_f = 0.0
     total_f = cash_f + max(0.0, credit_f)
     if total_f <= 0:
-        return None
+        if allow_zero_declared and receipt:
+            total_f = 0.0
+        else:
+            return None
     if not receipt and credit_f <= 0:
         return None
 
@@ -223,6 +232,8 @@ def ensure_pending_client_payment_for_wallet_recharge(
         if dep_id is not None:
             existing.deposit_account_id = int(dep_id)
         existing.notes = notes
+        existing.is_manually_edited = bool(is_manually_edited)
+        existing.ai_confidence_score = ai_confidence_score
         db.flush()
         if not _reserve_credit_on_payment(existing):
             return None
@@ -244,6 +255,8 @@ def ensure_pending_client_payment_for_wallet_recharge(
         deposit_account_id=int(dep_id) if dep_id is not None else None,
         status=ClientPaymentStatus.pending_review,
         notes=notes,
+        is_manually_edited=bool(is_manually_edited),
+        ai_confidence_score=ai_confidence_score,
         created_at=now_ecuador(),
     )
     db.add(cp)
