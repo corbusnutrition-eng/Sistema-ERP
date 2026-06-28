@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { hierarchy, tree as d3tree } from 'd3-hierarchy'
 import Tree from 'react-d3-tree'
 import {
   GitBranch,
@@ -17,8 +18,10 @@ const TREE_DEPTH_FACTOR = 168
 const TREE_NODE_SIZE_X = 300
 const TREE_NODE_SIZE_Y = 150
 const TREE_SIBLING_SEP = 1.12
-const TREE_CANVAS_PADDING_X = 200
-const TREE_CANVAS_PADDING_Y = 160
+const TREE_NODE_HALF_W = 140
+const TREE_NODE_HALF_H = 59
+const TREE_VIEWPORT_PADDING = 28
+const TREE_TOP_OFFSET = 56
 
 export const NETWORK_LEVEL_THEME = {
   1: {
@@ -112,65 +115,99 @@ function apiNodeToRd3(node, fallbackNivel = 1) {
   return out
 }
 
-function treeLayoutDepth(node) {
-  const children = node?.children || []
-  if (!children.length) return 1
-  return 1 + Math.max(...children.map(treeLayoutDepth))
+function cloneRd3Node(node) {
+  if (!node) return null
+  const out = {
+    name: node.name,
+    attributes: { ...(node.attributes || {}) },
+  }
+  const kids = Array.isArray(node.children) ? node.children.filter(Boolean) : []
+  if (kids.length > 0) {
+    out.children = kids.map(cloneRd3Node).filter(Boolean)
+  }
+  return out
 }
 
-function treeLayoutLeaves(node) {
-  const children = node?.children || []
-  if (!children.length) return 1
-  return children.reduce((sum, child) => sum + treeLayoutLeaves(child), 0)
+function assignRd3InternalIds(node, depth = 0, idGen = { n: 0 }) {
+  if (!node) return null
+  node.__rd3t = { id: String(idGen.n++), depth, collapsed: false }
+  for (const child of node.children || []) {
+    assignRd3InternalIds(child, depth + 1, idGen)
+  }
+  return node
 }
 
-/** Tamaño del lienzo SVG: debe cubrir todo el árbol o react-d3-tree recorta nodos inferiores. */
-function computeTreeCanvasDimensions(rd3Node, viewportWidth, viewportMinHeight) {
-  const vpW = Math.max(Number(viewportWidth) || 320, 320)
-  const vpH = Math.max(Number(viewportMinHeight) || 500, 500)
-  if (!rd3Node) {
-    return { width: vpW, height: vpH }
+/** Réplica el layout de react-d3-tree para calcular bounds reales y centrar sin desfase. */
+function computeRd3LayoutBounds(rd3Node) {
+  const cloned = assignRd3InternalIds(cloneRd3Node(rd3Node))
+  if (!cloned) {
+    return { minX: 0, maxX: 0, minY: 0, maxY: 0, rootX: 0, rootY: 0 }
   }
 
-  const depth = treeLayoutDepth(rd3Node)
-  const leaves = Math.max(treeLayoutLeaves(rd3Node), 1)
-  const computedHeight = Math.ceil(
-    depth * TREE_DEPTH_FACTOR + TREE_NODE_SIZE_Y + TREE_CANVAS_PADDING_Y + 80,
-  )
-  const computedWidth = Math.ceil(
-    Math.max(leaves * TREE_NODE_SIZE_X * TREE_SIBLING_SEP, TREE_NODE_SIZE_X) + TREE_CANVAS_PADDING_X,
-  )
+  const layout = d3tree()
+    .nodeSize([TREE_NODE_SIZE_X, TREE_NODE_SIZE_Y])
+    .separation((a, b) =>
+      a.parent.data.__rd3t.id === b.parent.data.__rd3t.id ? TREE_SIBLING_SEP : 1.28,
+    )
+
+  const root = layout(hierarchy(cloned))
+  root.eachBefore((node) => {
+    node.y = node.depth * TREE_DEPTH_FACTOR
+  })
+
+  const nodes = root.descendants()
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+
+  for (const node of nodes) {
+    minX = Math.min(minX, node.x - TREE_NODE_HALF_W)
+    maxX = Math.max(maxX, node.x + TREE_NODE_HALF_W)
+    minY = Math.min(minY, node.y - TREE_NODE_HALF_H)
+    maxY = Math.max(maxY, node.y + TREE_NODE_HALF_H)
+  }
+
+  if (!Number.isFinite(minX)) {
+    minX = 0
+    maxX = 0
+    minY = 0
+    maxY = 0
+  }
 
   return {
-    width: Math.max(vpW, computedWidth),
-    height: Math.max(vpH, computedHeight),
+    minX,
+    maxX,
+    minY,
+    maxY,
+    rootX: root.x,
+    rootY: root.y,
+    width: Math.max(maxX - minX, TREE_NODE_SIZE_X),
+    height: Math.max(maxY - minY, TREE_NODE_SIZE_Y),
   }
 }
 
-/** Zoom y traslación inicial para que el árbol completo quepa en el visor. */
+/** Zoom y traslación inicial: nodo raíz centrado horizontalmente y árbol completo visible. */
 function computeTreeFitView(viewport, rd3Node) {
   const vpW = Math.max(Number(viewport?.width) || 320, 320)
   const vpH = Math.max(Number(viewport?.height) || 500, 500)
   if (!rd3Node) {
-    return { zoom: 0.75, translate: { x: vpW / 2, y: 56 } }
+    return { zoom: 0.75, translate: { x: vpW / 2, y: TREE_TOP_OFFSET } }
   }
 
-  const depth = treeLayoutDepth(rd3Node)
-  const leaves = Math.max(treeLayoutLeaves(rd3Node), 1)
-  const contentW = Math.max(leaves * TREE_NODE_SIZE_X * TREE_SIBLING_SEP, TREE_NODE_SIZE_X) + 120
-  const contentH = depth * TREE_DEPTH_FACTOR + TREE_NODE_SIZE_Y + 160
+  const bounds = computeRd3LayoutBounds(rd3Node)
+  const pad = TREE_VIEWPORT_PADDING
+  const scaleX = (vpW - pad * 2) / bounds.width
+  const scaleY = (vpH - pad * 2) / bounds.height
+  const zoom = Math.max(0.12, Math.min(1, Math.min(scaleX, scaleY) * 0.92))
 
-  const scaleX = vpW / contentW
-  const scaleY = vpH / contentH
-  const zoom = Math.max(0.12, Math.min(1, Math.min(scaleX, scaleY) * 0.88))
-
-  return {
-    zoom,
-    translate: {
-      x: vpW / (2 * zoom),
-      y: 48 / zoom,
-    },
+  // translate + nodeCoord * zoom = posición en pantalla
+  const translate = {
+    x: vpW / 2 - bounds.rootX * zoom,
+    y: TREE_TOP_OFFSET - bounds.minY * zoom,
   }
+
+  return { zoom, translate }
 }
 
 function NeonTreeNodeCard({ nodeDatum, toggleNode }) {
@@ -257,6 +294,7 @@ function KpiCard({ icon: Icon, label, value, hint, accentClass }) {
 export default function NetworkDashboard({ dashboard, loading = false, error = null, onRefresh, className = '' }) {
   const containerRef = useRef(null)
   const [viewportSize, setViewportSize] = useState(null)
+  const [treeView, setTreeView] = useState(null)
 
   const tree = dashboard?.tree ?? null
   const metrics = dashboard?.metrics ?? null
@@ -265,17 +303,13 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
 
   const rd3Data = useMemo(() => apiNodeToRd3(tree), [tree])
 
-  const canvasDimensions = useMemo(() => {
-    if (!viewportSize || !rd3Data) return null
-    return computeTreeCanvasDimensions(rd3Data, viewportSize.width, viewportSize.height)
-  }, [rd3Data, viewportSize])
-
   const fitView = useMemo(() => {
     if (!viewportSize || !rd3Data) return null
     return computeTreeFitView(viewportSize, rd3Data)
   }, [rd3Data, viewportSize])
 
-  const canRenderTree = Boolean(rd3Data && viewportSize && canvasDimensions && fitView)
+  const activeTreeView = treeView ?? fitView
+  const canRenderTree = Boolean(rd3Data && viewportSize && activeTreeView)
 
   const measureViewport = useCallback(() => {
     const el = containerRef.current
@@ -321,6 +355,25 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
       window.clearTimeout(stopRetryId)
     }
   }, [measureViewport])
+
+  useLayoutEffect(() => {
+    if (!fitView) {
+      setTreeView(null)
+      return
+    }
+    setTreeView(fitView)
+  }, [fitView])
+
+  useEffect(() => {
+    if (!fitView || !rd3Data || !viewportSize) return undefined
+
+    const recenterTree = () => {
+      setTreeView(computeTreeFitView(viewportSize, rd3Data))
+    }
+
+    const timeoutId = window.setTimeout(recenterTree, 100)
+    return () => window.clearTimeout(timeoutId)
+  }, [fitView, rd3Data, viewportSize])
 
   const renderCustomNode = useCallback((props) => <NeonTreeNodeCard {...props} />, [])
 
@@ -453,6 +506,11 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
             fill: transparent;
             stroke: none;
           }
+          .portal-neon-tree-shell .rd3t-tree-container {
+            width: 100%;
+            height: 100%;
+            margin: 0 auto;
+          }
           .portal-neon-tree-shell .rd3t-svg {
             display: block;
             overflow: visible;
@@ -461,38 +519,38 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
             overflow: visible;
           }
         `}</style>
-        <div className="absolute inset-0 flex flex-col items-center justify-start overflow-hidden pt-8">
-          {!rd3Data ? (
-            <div className="flex min-h-[500px] flex-1 items-center justify-center px-6 pb-20 text-center text-sm text-slate-400">
-              Tu red aún no tiene subdistribuidores. Aparecerán aquí en cascada.
-            </div>
-          ) : !canRenderTree ? (
-            <div className="flex min-h-[500px] flex-1 items-center justify-center gap-2 text-sm text-slate-300">
-              <Loader2 size={18} className="animate-spin" aria-hidden />
-              Preparando mapa…
-            </div>
-          ) : (
+        {!rd3Data ? (
+          <div className="flex h-full min-h-[500px] w-full items-center justify-center px-6 pb-20 text-center text-sm text-slate-400">
+            Tu red aún no tiene subdistribuidores. Aparecerán aquí en cascada.
+          </div>
+        ) : !canRenderTree ? (
+          <div className="flex h-full min-h-[500px] w-full items-center justify-center gap-2 text-sm text-slate-300">
+            <Loader2 size={18} className="animate-spin" aria-hidden />
+            Preparando mapa…
+          </div>
+        ) : (
+          <div className="flex h-full w-full items-start justify-center">
             <Tree
-              key={`${tree.id}-${fitView.zoom}-${viewportSize.width}x${viewportSize.height}`}
+              key={`${tree.id}-${activeTreeView.zoom}-${viewportSize.width}x${viewportSize.height}`}
               data={rd3Data}
               orientation="vertical"
               pathFunc="step"
               pathClassFunc={() => TREE_LINK_CLASS}
-              translate={fitView.translate}
-              dimensions={canvasDimensions}
+              translate={activeTreeView.translate}
+              dimensions={viewportSize}
               nodeSize={{ x: TREE_NODE_SIZE_X, y: TREE_NODE_SIZE_Y }}
               separation={{ siblings: TREE_SIBLING_SEP, nonSiblings: 1.28 }}
               zoomable
               scaleExtent={{ min: 0.12, max: 2.4 }}
-              zoom={fitView.zoom}
+              zoom={activeTreeView.zoom}
               shouldRenderForeignObjects
               renderCustomNodeElement={renderCustomNode}
               enableLegacyTransitions={false}
               transitionDuration={0}
               depthFactor={TREE_DEPTH_FACTOR}
             />
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       <div className="mx-auto w-full max-w-xl">
