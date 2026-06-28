@@ -25,6 +25,13 @@ export function isRestrictedLedgerUser(user) {
   return user.role === 'worker' && ids.length > 0
 }
 
+/** Verificación bancaria / bandeja interbancaria — siempre permitida para rol restringido del ledger. */
+export function canManageLedgerVerification(user, hasPermission) {
+  if (!user || user.role === 'admin') return true
+  if (isRestrictedLedgerUser(user)) return true
+  return Boolean(hasPermission?.(PERMS.ACCOUNTING_RECONCILE_EDIT))
+}
+
 export function getPrimaryAssignedAccountPath(user) {
   const ids = Array.isArray(user?.assigned_account_ids) ? user.assigned_account_ids : []
   const first = ids.map((id) => Number(id)).find((id) => Number.isFinite(id) && id > 0)

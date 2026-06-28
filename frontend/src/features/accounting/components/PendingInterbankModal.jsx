@@ -1,5 +1,10 @@
 import { useMemo } from 'react'
 import { Clock, Loader2, X } from 'lucide-react'
+import { useAuth } from '../../../context/AuthContext'
+import {
+  canManageLedgerVerification,
+  isRestrictedLedgerUser,
+} from '../../../lib/permissionMatrix'
 import { formatSaleLedgerDateParts } from '../../sales/saleTableHelpers'
 
 function formatMoney(n, currency) {
@@ -39,6 +44,7 @@ function pendingAmount(line) {
  * @param {string} [currency]
  * @param {(lineId: number, nextStatus: string) => void} onRequestStatusChange
  * @param {number | null} [confirmingLineId]
+ * @param {boolean} [canManageVerification] — override; verificador/trabajador asignado siempre puede actuar
  */
 export default function PendingInterbankModal({
   open,
@@ -47,7 +53,18 @@ export default function PendingInterbankModal({
   currency = 'USD',
   onRequestStatusChange,
   confirmingLineId = null,
+  canManageVerification,
 }) {
+  const { user, hasPermission } = useAuth()
+
+  const canManage = useMemo(() => {
+    if (isRestrictedLedgerUser(user)) return true
+    if (typeof canManageVerification === 'boolean') return canManageVerification
+    return canManageLedgerVerification(user, hasPermission)
+  }, [user, hasPermission, canManageVerification])
+
+  const showActionButtons = canManage && typeof onRequestStatusChange === 'function'
+
   const pendingTxs = useMemo(
     () =>
       (Array.isArray(transactions) ? transactions : []).filter(
@@ -114,9 +131,11 @@ export default function PendingInterbankModal({
                     <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                       Monto
                     </th>
-                    <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600 min-w-[11rem]">
-                      Acción
-                    </th>
+                    {showActionButtons ? (
+                      <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600 min-w-[11rem]">
+                        Acción
+                      </th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -145,27 +164,29 @@ export default function PendingInterbankModal({
                         <td className="px-4 py-3 align-top text-right tabular-nums font-medium text-gray-900 whitespace-nowrap">
                           {amt != null ? formatMoney(amt, currency) : '—'}
                         </td>
-                        <td className="px-4 py-3 align-top">
-                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              disabled={lineId == null || saving || rowBusy}
-                              onClick={() => onRequestStatusChange?.(lineId, 'not_found')}
-                              className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                              No efectiva
-                            </button>
-                            <button
-                              type="button"
-                              disabled={lineId == null || saving || rowBusy}
-                              onClick={() => onRequestStatusChange?.(lineId, 'confirmed')}
-                              className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                            >
-                              {saving ? <Loader2 size={13} className="animate-spin shrink-0" aria-hidden /> : null}
-                              ✅ Confirmar
-                            </button>
-                          </div>
-                        </td>
+                        {showActionButtons ? (
+                          <td className="px-4 py-3 align-top">
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                disabled={lineId == null || saving || rowBusy}
+                                onClick={() => onRequestStatusChange(lineId, 'not_found')}
+                                className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                              >
+                                No efectiva
+                              </button>
+                              <button
+                                type="button"
+                                disabled={lineId == null || saving || rowBusy}
+                                onClick={() => onRequestStatusChange(lineId, 'confirmed')}
+                                className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                              >
+                                {saving ? <Loader2 size={13} className="animate-spin shrink-0" aria-hidden /> : null}
+                                ✅ Confirmar
+                              </button>
+                            </div>
+                          </td>
+                        ) : null}
                       </tr>
                     )
                   })}

@@ -20,7 +20,7 @@ import {
 import api from '../../api/axios'
 import { getApiErrorMessage } from '../../lib/apiErrors'
 import { useAuth } from '../../context/AuthContext'
-import { isAccountVerifierUser } from '../../lib/permissionMatrix'
+import { isAccountVerifierUser, canManageLedgerVerification } from '../../lib/permissionMatrix'
 import { useModal } from '../../context/ModalContext'
 import { formatSaleDocNo, formatSaleLedgerDateParts } from '../sales/saleTableHelpers'
 import { toDatetimeLocalEcuador } from '../../utils/datetime'
@@ -218,8 +218,9 @@ export default function AccountHistoryPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { user } = useAuth()
+  const { user, hasPermission } = useAuth()
   const isAccountVerifier = isAccountVerifierUser(user)
+  const canVerifyLedger = canManageLedgerVerification(user, hasPermission)
   const { openNewSale, openTransferModal } = useModal()
   const accountId = Number(id)
 
@@ -1230,7 +1231,8 @@ export default function AccountHistoryPage() {
                                   lineId={line.ledger_transaction_id}
                                   currentStatus={line.verification_status}
                                   saving={savingVerificationId === line.ledger_transaction_id}
-                                  onSelect={requestVerificationChange}
+                                  disabled={!canVerifyLedger}
+                                  onSelect={canVerifyLedger ? requestVerificationChange : undefined}
                                 />
                               ) : (
                                 <span className="text-gray-300 text-xs">—</span>
@@ -1433,7 +1435,8 @@ export default function AccountHistoryPage() {
           transactions={lines}
           currency={currency}
           confirmingLineId={savingVerificationId}
-          onRequestStatusChange={requestVerificationChange}
+          canManageVerification={canVerifyLedger}
+          onRequestStatusChange={canVerifyLedger ? requestVerificationChange : undefined}
         />
 
         <ReconciliationModal
