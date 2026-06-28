@@ -37,7 +37,7 @@ from app.models.screen_stock import ScreenStock
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.ledger_verification import LEDGER_VERIFICATION_CONFIRMED, normalize_ledger_verification_status
 from app.services.accounting_engine import TRANSFER_REFERENCE_TYPE, post_account_transfer
-from app.timezone_utils import datetime_at_ecuador_midnight
+from app.timezone_utils import datetime_at_ecuador_midnight, now_utc
 from app.schemas.chart_accounts import (
     AccountHistoryEntry,
     AccountHistoryResponse,
@@ -1418,9 +1418,19 @@ def transfer_between_accounts(payload: AccountTransferCreate, db: DbDep, _: Reco
         description=desc,
     )
 
-    if payload.destination_verification_status is not None:
-        dst_line.verification_status = payload.destination_verification_status
-        db.add(dst_line)
+    confirmed_at = now_utc()
+    src_line.verification_status = LEDGER_VERIFICATION_CONFIRMED
+    src_line.verified_at = confirmed_at
+    db.add(src_line)
+
+    dst_status = payload.destination_verification_status
+    if dst_status is not None:
+        dst_line.verification_status = dst_status
+        dst_line.verified_at = confirmed_at if dst_status == LEDGER_VERIFICATION_CONFIRMED else None
+    else:
+        dst_line.verification_status = LEDGER_VERIFICATION_CONFIRMED
+        dst_line.verified_at = confirmed_at
+    db.add(dst_line)
 
     _sync_current_balance_from_opening_and_journal(db, src)
     _sync_current_balance_from_opening_and_journal(db, dst)

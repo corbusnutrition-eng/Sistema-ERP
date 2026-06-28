@@ -23,9 +23,11 @@ export function ModalProvider({ children }) {
   const [receivePaymentPrefill, setReceivePaymentPrefill] = useState(null)
   const [expenseOpen, setExpenseOpen] = useState(false)
   const [transferOpen, setTransferOpen] = useState(false)
-  const [transferPrefillSourceAccountId, setTransferPrefillSourceAccountId] = useState(null)
-  const [transferPrefillDestinationAccountId, setTransferPrefillDestinationAccountId] = useState(null)
-  const [transferInterbankMode, setTransferInterbankMode] = useState(false)
+  const [transferModalState, setTransferModalState] = useState(() => ({
+    sourceAccountId: null,
+    destinationAccountId: null,
+    interbankMode: false,
+  }))
 
   const [vendorFormOpen, setVendorFormOpen] = useState(false)
   const [vendorFormEditVendor, setVendorFormEditVendor] = useState(null)
@@ -117,21 +119,23 @@ export function ModalProvider({ children }) {
   const openTransferModal = useCallback((opts = null) => {
     const o = opts != null && typeof opts === 'object' ? opts : {}
     transferCb.current = typeof o.afterSave === 'function' ? o.afterSave : null
-    setTransferPrefillSourceAccountId(
-      o.defaultSourceAccountId != null ? Number(o.defaultSourceAccountId) || null : null,
-    )
-    setTransferPrefillDestinationAccountId(
-      o.defaultDestinationAccountId != null ? Number(o.defaultDestinationAccountId) || null : null,
-    )
-    setTransferInterbankMode(Boolean(o.interbankMode))
+    setTransferModalState({
+      sourceAccountId:
+        o.defaultSourceAccountId != null ? Number(o.defaultSourceAccountId) || null : null,
+      destinationAccountId:
+        o.defaultDestinationAccountId != null ? Number(o.defaultDestinationAccountId) || null : null,
+      interbankMode: Boolean(o.interbankMode),
+    })
     setTransferOpen(true)
   }, [])
 
   const closeTransferModal = useCallback(() => {
     setTransferOpen(false)
-    setTransferPrefillSourceAccountId(null)
-    setTransferPrefillDestinationAccountId(null)
-    setTransferInterbankMode(false)
+    setTransferModalState({
+      sourceAccountId: null,
+      destinationAccountId: null,
+      interbankMode: false,
+    })
     transferCb.current = null
   }, [])
 
@@ -199,9 +203,7 @@ export function ModalProvider({ children }) {
       receivePaymentOpen, openReceivePayment, closeReceivePayment, receivePaymentCb, receivePaymentPrefill,
       expenseOpen, openNewExpense, closeNewExpense, expenseCb,
       transferOpen,
-      transferPrefillSourceAccountId,
-      transferPrefillDestinationAccountId,
-      transferInterbankMode,
+      transferModalState,
       openTransferModal,
       closeTransferModal,
       transferCb,

@@ -56,9 +56,7 @@ export default function GlobalModals() {
     receivePaymentOpen, closeReceivePayment, receivePaymentCb, receivePaymentPrefill,
     expenseOpen, closeNewExpense, expenseCb,
     transferOpen,
-    transferPrefillSourceAccountId,
-    transferPrefillDestinationAccountId,
-    transferInterbankMode,
+    transferModalState,
     closeTransferModal,
     transferCb,
     vendorFormOpen, closeVendorForm, vendorFormCb, vendorFormEditVendor,
@@ -167,9 +165,9 @@ export default function GlobalModals() {
 
       {transferOpen && (
         <TransferModal
-          defaultSourceAccountId={transferPrefillSourceAccountId ?? undefined}
-          defaultDestinationAccountId={transferPrefillDestinationAccountId ?? undefined}
-          interbankMode={transferInterbankMode}
+          defaultSourceAccountId={transferModalState.sourceAccountId ?? undefined}
+          defaultDestinationAccountId={transferModalState.destinationAccountId ?? undefined}
+          interbankMode={transferModalState.interbankMode}
           onClose={closeTransferModal}
           onToast={(message, variant = 'success') => showToast(message, variant)}
           onSuccess={({ keptOpen } = {}) => {
