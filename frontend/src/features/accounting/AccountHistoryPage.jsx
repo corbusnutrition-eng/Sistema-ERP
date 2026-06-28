@@ -19,7 +19,7 @@ import {
 import api from '../../api/axios'
 import { getApiErrorMessage } from '../../lib/apiErrors'
 import { useAuth } from '../../context/AuthContext'
-import { isAccountVerifierUser, canManageLedgerVerification } from '../../lib/permissionMatrix'
+import { isAccountVerifierUser, canManageLedgerVerification, isRestrictedLedgerUser } from '../../lib/permissionMatrix'
 import { useModal } from '../../context/ModalContext'
 import { formatSaleDocNo, formatSaleLedgerDateParts } from '../sales/saleTableHelpers'
 import { toDatetimeLocalEcuador } from '../../utils/datetime'
@@ -109,6 +109,9 @@ const INVENTORY_SERVICE_COLUMN = Object.freeze({
   minWidth: 112,
   maxWidth: 220,
 })
+
+/** Columnas ocultas en vista restringida (verificador / trabajador asignado). */
+const RESTRICTED_LEDGER_HIDDEN_COLUMN_IDS = new Set(['balance', 'notes', 'payment', 'pago'])
 
 function insertColumnAfter(columns, afterId, column) {
   const idx = columns.findIndex((c) => c.id === afterId)
@@ -206,6 +209,7 @@ export default function AccountHistoryPage() {
   const [searchParams] = useSearchParams()
   const { user, hasPermission } = useAuth()
   const isAccountVerifier = isAccountVerifierUser(user)
+  const isRestrictedLedger = isRestrictedLedgerUser(user)
   const canVerifyLedger = canManageLedgerVerification(user, hasPermission)
   const { openNewSale, openTransferModal } = useModal()
   const accountId = Number(id)
@@ -359,12 +363,12 @@ export default function AccountHistoryPage() {
       cols = insertColumnAfter(cols, 'notes', INVENTORY_CREDITS_COLUMN)
       cols = insertColumnAfter(cols, 'credits_qty', INVENTORY_SERVICE_COLUMN)
     }
-    if (isAccountVerifier) {
-      cols = cols.filter((col) => col.id !== 'balance')
+    if (isRestrictedLedger) {
+      cols = cols.filter((col) => !RESTRICTED_LEDGER_HIDDEN_COLUMN_IDS.has(col.id))
     }
     if (!showBankVerification) return cols
     return [...cols, BANK_VERIFICATION_COLUMN]
-  }, [ledgerMode, showBankVerification, showInventoryCredits, isAccountVerifier])
+  }, [ledgerMode, showBankVerification, showInventoryCredits, isRestrictedLedger])
   const colCount = columnConfig.length
 
   useEffect(() => {
