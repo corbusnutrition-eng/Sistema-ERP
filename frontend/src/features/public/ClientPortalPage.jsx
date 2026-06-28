@@ -5440,6 +5440,7 @@ function ClientPortalPageInner() {
       {!isDebtRetiro ? (
       <>
       <PortalManualAmountField
+        fieldId="debt-manual-amt"
         label={`Importe detectado por IA (referencia: ${selectedPendingLabel} · ${currentDebtPayObligation?.summaryLabel ?? '—'})`}
         amount={debtForm.amount}
         onAmountChange={(val) => setDebtForm((p) => ({ ...p, amount: val }))}
@@ -6171,15 +6172,16 @@ function ClientPortalPageInner() {
                     </div>
 
                     <PortalManualAmountField
+                      fieldId={`recharge-manual-amt-${frId}`}
                       label={`¿Cuánto pagaste en tu depósito? (${cur})`}
                       hint="Este importe solo se completa con la IA al leer el comprobante."
                       amount={rechargeForm.amount}
                       onAmountChange={(val) =>
-                        patchRechargePayForm(setRechargeFormById, rid, { amount: val })
+                        patchRechargePayForm(setRechargeFormById, frId, { amount: val })
                       }
                       isManuallyEdited={rechargeForm.isManuallyEdited}
                       onManualEditChange={(checked) => {
-                        patchRechargePayForm(setRechargeFormById, rid, (prev) => {
+                        patchRechargePayForm(setRechargeFormById, frId, (prev) => {
                           const next = { ...prev, isManuallyEdited: checked }
                           if (
                             !checked &&
@@ -6791,6 +6793,7 @@ function ClientPortalPageInner() {
                         {!paysOnlyWithCredit && !isSaleRetiro ? (
                           <>
                         <PortalManualAmountField
+                          fieldId={`sale-manual-amt-${sid}`}
                           label={
                             creditAppliedToOrder > 1e-9
                               ? `Importe depositado (${saleCurrency}), solo la diferencia`
