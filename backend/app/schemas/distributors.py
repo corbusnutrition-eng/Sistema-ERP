@@ -586,6 +586,17 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
             "importe_deposito_usd",
         ),
     )
+    portal_declared_payment_amount: Optional[float] = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices(
+            "portal_declared_payment_amount",
+            "declared_amount",
+            "declared_payment_amount",
+            "monto_declarado",
+        ),
+        description="Depósito declarado en moneda de la solicitud (corrección admin).",
+    )
     admin_note: Optional[str] = Field(
         default=None,
         max_length=2048,
@@ -675,6 +686,7 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
             and self.admin_precheck_receipt_url is None
             and self.line_items is None
             and self.declared_deposit_usd is None
+            and self.portal_declared_payment_amount is None
             and self.admin_note is None
         ):
             raise ValueError("Indica al menos un campo a actualizar.")

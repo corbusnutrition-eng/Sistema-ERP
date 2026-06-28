@@ -546,6 +546,17 @@ class SaleUpdate(BaseModel):
         decimal_places=4,
         description="Importe cobrado en moneda de venta. Omitido en PATCH no altera el valor guardado.",
     )
+    declared_payment_amount: Optional[Decimal] = Field(
+        default=None,
+        gt=0,
+        decimal_places=4,
+        description="Corrección del monto declarado en comprobante (ClientPayment en revisión).",
+    )
+    declared_payment_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Opcional: id del ClientPayment en revisión a corregir.",
+    )
     notes: Optional[str] = Field(default=None, max_length=4000)
     receipt_clear: Optional[bool] = Field(
         default=None,

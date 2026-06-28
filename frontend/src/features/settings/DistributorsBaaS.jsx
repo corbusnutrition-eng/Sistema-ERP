@@ -1267,6 +1267,7 @@ export default function DistributorsBaaSPage() {
     }
 
     let depositUsdNum
+    let portalDeclaredBilling
     const depRaw = String(linkDepositUsd ?? '').trim().replace(',', '.')
     if (depRaw !== '') {
       const depositBilling = Number(depRaw)
@@ -1275,6 +1276,7 @@ export default function DistributorsBaaSPage() {
         return
       }
       if (depositBilling > 0) {
+        portalDeclaredBilling = depositBilling
         depositUsdNum = depositBilling / xrImplicit
       }
     }
@@ -1306,7 +1308,12 @@ export default function DistributorsBaaSPage() {
         currency: cur,
         exchange_rate: xrImplicit,
         ...(admin_precheck_receipt_url != null ? { admin_precheck_receipt_url } : {}),
-        ...(depositUsdNum != null ? { declared_deposit_usd: depositUsdNum } : {}),
+        ...(portalDeclaredBilling != null ?
+          {
+            portal_declared_payment_amount: portalDeclaredBilling,
+            declared_deposit_usd: depositUsdNum,
+          }
+        : {}),
         ...(noteTrim.length ? { admin_note: noteTrim } : {}),
       }
       const { data } = await api.patch(`/api/v1/distributors/recharge-requests/${rid}`, body)

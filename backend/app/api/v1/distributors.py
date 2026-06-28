@@ -1104,7 +1104,18 @@ def patch_wallet_recharge_request_fields(
         nb = str(payload.admin_note).strip()
         req.admin_note = nb[:2048] if nb else None
 
-    if payload.declared_deposit_usd is not None:
+    declared_updated = False
+    if payload.portal_declared_payment_amount is not None:
+        pad = float(payload.portal_declared_payment_amount)
+        xr_eff = float(getattr(req, "recharge_exchange_rate", None) or 1.0)
+        if pad > 1e-9:
+            req.portal_declared_payment_amount = round(pad, 2)
+            req.declared_deposit_usd = round(pad / xr_eff, 4) if xr_eff > 0 else None
+        else:
+            req.portal_declared_payment_amount = None
+            req.declared_deposit_usd = None
+        declared_updated = True
+    elif payload.declared_deposit_usd is not None:
         deps_raw = payload.declared_deposit_usd
         deps_f = float(deps_raw)
         xr_eff = float(getattr(req, "recharge_exchange_rate", None) or 1.0)
@@ -1114,6 +1125,12 @@ def patch_wallet_recharge_request_fields(
         else:
             req.declared_deposit_usd = None
             req.portal_declared_payment_amount = None
+        declared_updated = True
+
+    if declared_updated:
+        from app.services.client_payment_service import sync_pending_payment_declared_amount_for_wallet_recharge
+
+        sync_pending_payment_declared_amount_for_wallet_recharge(db, req)
 
     cli = req.client or db.get(Client, req.client_id)
     if cli is not None:

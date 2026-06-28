@@ -1122,7 +1122,9 @@ export default function NewRechargeModal({
                           className={icls}
                         />
                         <p className="mt-1 text-[10px] text-gray-500 leading-snug">
-                          {depositDeclaredNum > 0 ?
+                          {editMode ?
+                            'Corrija aquí si la lectura automática del comprobante fue incorrecta. Al guardar, el monto se aplicará al cobro en revisión.'
+                          : depositDeclaredNum > 0 ?
                             <>
                               Comparado contra el subtotal:{' '}
                               {depositInBilling.toLocaleString('es-ES', { minimumFractionDigits: 2 })} {billingCode}.

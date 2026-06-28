@@ -741,6 +741,8 @@ export default function NuevaVentaModal({
   const [form, setForm] = useState(INITIAL)
   const [linkedPayments, setLinkedPayments] = useState([])
   const [pendingReviewPayments, setPendingReviewPayments] = useState([])
+  const [declaredDepositStr, setDeclaredDepositStr] = useState('')
+  const declaredDepositInitializedRef = useRef(false)
   const [detailBalanceDue, setDetailBalanceDue] = useState(null)
 
   const amountPaidDirtyRef = useRef(false)
@@ -1649,6 +1651,14 @@ export default function NuevaVentaModal({
       )) ||
     (isEditing && pendingReviewPayments.length > 0)
 
+  const showDeclaredDepositField =
+    isEditing &&
+    !saleIsViewOnly &&
+    (pendingReviewPayments.length > 0 ||
+      ['payment_submitted', 'partially_paid'].includes(
+        String(initialSale?.status ?? '').toLowerCase(),
+      ))
+
   const amountPaidInvalid =
     localAmount > 0 &&
     amountPaidRawTrim !== '' &&
@@ -2052,6 +2062,20 @@ export default function NuevaVentaModal({
       cancelled = true
     }
   }, [initialSale?.id, initialSale?.linked_payments, isSyntheticLedgerRecharge, readOnlyMode])
+
+  useEffect(() => {
+    declaredDepositInitializedRef.current = false
+    setDeclaredDepositStr('')
+  }, [initialSale?.id])
+
+  useEffect(() => {
+    if (declaredDepositInitializedRef.current) return
+    const pr = pendingReviewPayments[0]
+    if (pr?.amount != null && Number.isFinite(Number(pr.amount))) {
+      setDeclaredDepositStr(String(Number(pr.amount)))
+      declaredDepositInitializedRef.current = true
+    }
+  }, [pendingReviewPayments])
 
   useEffect(() => {
     if (!initialSale?.id) return
@@ -2777,6 +2801,16 @@ export default function NuevaVentaModal({
         notes: notesVal,
         tag_ids: Array.isArray(form.tag_ids) ? form.tag_ids : [],
         ...paymentPortalFields,
+      }
+      if (showDeclaredDepositField && String(declaredDepositStr ?? '').trim()) {
+        const declAmt = Number.parseFloat(String(declaredDepositStr).replace(',', '.'))
+        if (!Number.isFinite(declAmt) || declAmt <= 0) {
+          setError('Indica un depósito declarado válido mayor que cero.')
+          return
+        }
+        basePatch.declared_payment_amount = String(declAmt)
+        const pendingPid = pendingReviewPayments[0]?.payment_id
+        if (pendingPid != null) basePatch.declared_payment_id = Number(pendingPid)
       }
       if (!isLegacyPending && showInvoiceLayout) {
         basePatch.invoice_lines = buildInvoiceLinesPayload(lineItems)
@@ -4279,37 +4313,65 @@ export default function NuevaVentaModal({
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              Importe del depósito ({form.currency})
-            </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
-                <CurrencyFlag code={form.currency} />
-              </span>
-              <input
-                type="number"
-                name="amount_paid"
-                value={form.amount_paid}
-                onChange={handleChange}
-                min="0"
-                step="0.01"
-                readOnly={depositLocked}
-                disabled={depositLocked}
-                placeholder={form.local_amount ? String(form.local_amount) : '0.00'}
-                className={`${inputCls} pl-8 ${depositLocked ? 'bg-gray-50 text-gray-700 cursor-not-allowed' : ''}`}
-              />
-            </div>
-            {!isEditing && (
-              <p className="mt-1 text-xs text-gray-600 leading-snug">
-                Saldo pendiente (CxC):{' '}
-                <span className="font-semibold tabular-nums">
-                  {balanceDueReceivable.toLocaleString('es-ES', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}{' '}
-                  {saleCurrencyCode}
-                </span>
-              </p>
+            {showDeclaredDepositField ? (
+              <>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Depósito declarado ({form.currency})
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
+                    <CurrencyFlag code={form.currency} />
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={declaredDepositStr}
+                    onChange={(e) => setDeclaredDepositStr(e.target.value)}
+                    disabled={submitting}
+                    placeholder="0.00"
+                    className={`${inputCls} pl-8`}
+                  />
+                </div>
+                <p className="mt-1 text-xs text-gray-600 leading-snug">
+                  Corrija aquí si la lectura automática del comprobante fue incorrecta. Al guardar, el monto se
+                  aplicará al cobro en revisión.
+                </p>
+              </>
+            ) : (
+              <>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Importe del depósito ({form.currency})
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
+                    <CurrencyFlag code={form.currency} />
+                  </span>
+                  <input
+                    type="number"
+                    name="amount_paid"
+                    value={form.amount_paid}
+                    onChange={handleChange}
+                    min="0"
+                    step="0.01"
+                    readOnly={depositLocked}
+                    disabled={depositLocked}
+                    placeholder={form.local_amount ? String(form.local_amount) : '0.00'}
+                    className={`${inputCls} pl-8 ${depositLocked ? 'bg-gray-50 text-gray-700 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+                {!isEditing && (
+                  <p className="mt-1 text-xs text-gray-600 leading-snug">
+                    Saldo pendiente (CxC):{' '}
+                    <span className="font-semibold tabular-nums">
+                      {balanceDueReceivable.toLocaleString('es-ES', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}{' '}
+                      {saleCurrencyCode}
+                    </span>
+                  </p>
+                )}
+              </>
             )}
           </div>
 

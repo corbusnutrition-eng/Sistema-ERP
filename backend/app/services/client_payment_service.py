@@ -2050,6 +2050,28 @@ def resolve_liquid_deposit_account_id(db: Session, deposit_account_id: Optional[
     return int(deposit_account_id)
 
 
+def _stamp_parte_efectivo_in_notes(
+    notes: Optional[str],
+    cash_amount: float,
+    currency: str,
+) -> str:
+    """Actualiza o añade ``PARTE_EFECTIVO`` en notas de cobro portal."""
+    cur = normalize_currency_code(currency, "USD")
+    cash = round(float(cash_amount), 2)
+    s = str(notes or "").strip()
+    if re.search(r"PARTE_EFECTIVO=", s, flags=re.IGNORECASE):
+        return re.sub(
+            r"PARTE_EFECTIVO=[^\n]+",
+            f"PARTE_EFECTIVO={cash:.2f} {cur}",
+            s,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    if not s:
+        return f"PARTE_EFECTIVO={cash:.2f} {cur}"
+    return f"{s}\nPARTE_EFECTIVO={cash:.2f} {cur}"
+
+
 def sync_wallet_recharge_submitted_deposit_from_allowlist(
     req: WalletRechargeRequest,
     deposit_account_ids: list[int],
@@ -2793,6 +2815,79 @@ def sync_pending_payments_deposit_for_wallet_recharge(db: Session, req: WalletRe
     cp = find_pending_client_payment_for_wallet_recharge(db, req)
     if cp is not None and cp.status == ClientPaymentStatus.pending_review:
         cp.deposit_account_id = resolved
+    db.flush()
+
+
+def sync_pending_payment_declared_amount_for_wallet_recharge(
+    db: Session,
+    req: WalletRechargeRequest,
+) -> None:
+    """Propaga ``portal_declared_payment_amount`` al ``ClientPayment`` en revisión."""
+    declared = getattr(req, "portal_declared_payment_amount", None)
+    if declared is None:
+        return
+    try:
+        cash_f = float(declared)
+    except (TypeError, ValueError):
+        return
+    if cash_f <= 0:
+        return
+
+    from app.services.wallet_recharge_client_payment import (
+        build_wallet_recharge_payment_notes,
+        find_pending_client_payment_for_wallet_recharge,
+    )
+
+    cp = find_pending_client_payment_for_wallet_recharge(db, req)
+    if cp is None or cp.status != ClientPaymentStatus.pending_review:
+        return
+
+    credit_f = float(credit_reserved_restore_from_notes(cp.notes))
+    total_f = cash_f + max(0.0, credit_f)
+    cur = normalize_currency_code(
+        getattr(req, "recharge_currency", None) or getattr(cp, "currency", None) or "USD"
+    )
+    cp.amount = Decimal(str(total_f)).quantize(Decimal("0.0001"))
+    cp.notes = build_wallet_recharge_payment_notes(
+        int(req.id),
+        total_f,
+        cur,
+        credit_amount=credit_f,
+    )
+    db.flush()
+
+
+def sync_pending_payment_declared_amount_for_sale(
+    db: Session,
+    sale: Sale,
+    declared_amount: float,
+    *,
+    payment_id: Optional[int] = None,
+) -> None:
+    """Actualiza el monto declarado del cobro ``pending_review`` vinculado a la venta."""
+    try:
+        cash = Decimal(str(declared_amount)).quantize(Decimal("0.0001"))
+    except Exception:
+        return
+    if cash <= _FP_EPS:
+        return
+
+    targets: list[ClientPayment] = []
+    if payment_id is not None:
+        cp = db.get(ClientPayment, int(payment_id))
+        if cp is not None and cp.status == ClientPaymentStatus.pending_review:
+            targets = [cp]
+    if not targets:
+        pending = collect_pending_payments_for_sale_activation(db, sale)
+        if payment_id is None and pending:
+            targets = [pending[0]]
+
+    cur = normalize_currency_code(str(getattr(sale, "currency", None) or "USD"))
+    for cp in targets:
+        credit_f = credit_reserved_restore_from_notes(cp.notes)
+        total = cash + Decimal(str(credit_f)).quantize(Decimal("0.0001"))
+        cp.amount = total
+        cp.notes = _stamp_parte_efectivo_in_notes(cp.notes, float(cash), cur)
     db.flush()
 
 

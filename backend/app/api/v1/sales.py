@@ -3704,6 +3704,8 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
             "deposit_account_id",
             "allowed_payment_methods",
             "allowed_deposit_accounts",
+            "declared_payment_amount",
+            "declared_payment_id",
             "created_at",
             "class_id",
             "product_id",
@@ -3766,6 +3768,19 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
             "allowed_deposit_accounts",
         }:
             _sync_sale_allowlists_denormalized(db, sale)
+            from app.services.client_payment_service import sync_pending_payments_deposit_for_sale
+
+            sync_pending_payments_deposit_for_sale(db, sale)
+
+        if "declared_payment_amount" in raw_preview:
+            from app.services.client_payment_service import sync_pending_payment_declared_amount_for_sale
+
+            sync_pending_payment_declared_amount_for_sale(
+                db,
+                sale,
+                float(raw_preview["declared_payment_amount"]),
+                payment_id=raw_preview.get("declared_payment_id"),
+            )
 
         if "currency" in raw_preview:
             sale.currency = (raw_preview["currency"] or "USD").upper()
@@ -4039,6 +4054,16 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
             )
         sale.amount_paid = _normalize_amount_paid(la_pd, raw["amount_paid"])
     # Al cambiar local_amount sin proveer amount_paid explícito NO se reinicia el cobro.
+
+    if "declared_payment_amount" in explicit_keys:
+        from app.services.client_payment_service import sync_pending_payment_declared_amount_for_sale
+
+        sync_pending_payment_declared_amount_for_sale(
+            db,
+            sale,
+            float(raw["declared_payment_amount"]),
+            payment_id=raw.get("declared_payment_id"),
+        )
 
     inv_patch_keys = {
         "inventory_channel",
