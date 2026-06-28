@@ -14,7 +14,6 @@ import {
   Filter,
   Loader2,
   CheckSquare,
-  Eye,
   Clock,
 } from 'lucide-react'
 import api from '../../api/axios'
@@ -30,6 +29,8 @@ import PendingInterbankModal from './components/PendingInterbankModal'
 import ReconciliationModal from './components/ReconciliationModal'
 import LedgerVerificationConfirmModal from './components/LedgerVerificationConfirmModal'
 import LedgerBankVerificationPills from './components/LedgerBankVerificationPills'
+import LedgerReceiptViewLink from './components/LedgerReceiptViewLink'
+import { receiptAbsoluteUrl } from './ledgerReceiptUtils'
 import {
   BANK_VERIFICATION_COLUMN,
   lineIsBankDeposit,
@@ -37,7 +38,7 @@ import {
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
 
-const API_ORIGIN = String(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
+const ITEMS_PER_PAGE = 10
 
 /** Texto de opción estilo registro QuickBooks: "Nombre - número - MON". */
 function ledgerAccountDisplayLabel(account) {
@@ -92,8 +93,6 @@ const AR_LEDGER_COLUMN_CONFIG = [
   { id: 'balance', label: 'SALDO', defaultWidth: 136, minWidth: 104, maxWidth: 260 },
   { id: 'receipt', label: 'COMPROBANTE', defaultWidth: 112, minWidth: 96, maxWidth: 150, alignHeader: 'right' },
 ]
-
-const ITEMS_PER_PAGE = 10
 
 const INVENTORY_CREDITS_COLUMN = Object.freeze({
   id: 'credits_qty',
@@ -190,19 +189,6 @@ function ledgerReferenceDisplay(line) {
 function csvDateTimeCell(iso) {
   const { dateLine, timeLine } = formatSaleLedgerDateParts(iso)
   return timeLine ? `${dateLine} · ${timeLine}` : dateLine
-}
-
-function receiptAbsoluteUrl(path) {
-  if (path == null || path === '') return null
-  const p = String(path).trim()
-  if (!p) return null
-  if (p.startsWith('http://') || p.startsWith('https://')) return p
-  return `${API_ORIGIN}${p.startsWith('/') ? p : `/${p}`}`
-}
-
-function ledgerReceiptIsPdf(urlPath) {
-  if (!urlPath) return false
-  return String(urlPath).toLowerCase().split('?')[0].endsWith('.pdf')
 }
 
 function formatVerifiedAtLabel(iso) {
@@ -374,7 +360,7 @@ export default function AccountHistoryPage() {
       cols = insertColumnAfter(cols, 'credits_qty', INVENTORY_SERVICE_COLUMN)
     }
     if (isAccountVerifier) {
-      cols = cols.filter((col) => col.id !== 'balance' && col.id !== 'receipt')
+      cols = cols.filter((col) => col.id !== 'balance')
     }
     if (!showBankVerification) return cols
     return [...cols, BANK_VERIFICATION_COLUMN]
@@ -1022,7 +1008,6 @@ export default function AccountHistoryPage() {
                       String(line.verification_status ?? '').toLowerCase() === 'confirmed'
                     const verifiedAtLabel =
                       isConfirmedLine && line.verified_at ? formatVerifiedAtLabel(line.verified_at) : ''
-                    const receiptHref = line.receipt_url ? receiptAbsoluteUrl(line.receipt_url) : null
                     const reasonText = line.transaction_reason || '—'
                     const kindLabel = (line.line_kind || '').trim() || reasonText
                     const cargo = lineCargoAmount(line)
@@ -1196,26 +1181,7 @@ export default function AccountHistoryPage() {
                               className="px-3 py-2.5 align-middle text-right"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              {receiptHref ? (
-                                <a
-                                  href={receiptHref}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  aria-label={
-                                    ledgerReceiptIsPdf(line.receipt_url)
-                                      ? 'Abrir comprobante PDF en nueva pestaña'
-                                      : 'Abrir comprobante en nueva pestaña'
-                                  }
-                                  title="Ver comprobante"
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg
-                                             bg-slate-100 text-slate-700 hover:bg-slate-200 ring-1 ring-slate-200 transition-colors"
-                                >
-                                  <Eye size={13} aria-hidden />
-                                  Ver
-                                </a>
-                              ) : (
-                                <span className="text-gray-400 text-sm tabular-nums">—</span>
-                              )}
+                              <LedgerReceiptViewLink receiptUrl={line.receipt_url} />
                             </td>
                           )
                         case 'bank_verification':

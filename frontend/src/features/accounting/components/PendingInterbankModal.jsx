@@ -6,6 +6,7 @@ import {
   isRestrictedLedgerUser,
 } from '../../../lib/permissionMatrix'
 import { formatShortDateEcuador } from '../../../utils/datetime'
+import LedgerReceiptViewLink from './LedgerReceiptViewLink'
 
 function formatMoney(n, currency) {
   try {
@@ -76,7 +77,7 @@ export default function PendingInterbankModal({
       <div
         role="dialog"
         aria-labelledby="pending-interbank-title"
-        className="relative w-full max-w-lg max-h-[min(88vh,720px)] flex flex-col rounded-2xl bg-white shadow-2xl border border-gray-100 overflow-hidden"
+        className="relative w-full max-w-2xl max-h-[min(88vh,720px)] flex flex-col rounded-2xl bg-white shadow-2xl border border-gray-100 overflow-hidden"
       >
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-gray-100 shrink-0 bg-amber-50/60">
           <div className="flex items-start gap-3 min-w-0">
@@ -112,19 +113,23 @@ export default function PendingInterbankModal({
           ) : (
             <table className="w-full text-sm table-fixed">
               <colgroup>
-                <col className="w-[30%]" />
-                <col className="w-[26%]" />
-                <col className="w-[44%]" />
+                <col className="w-[22%]" />
+                <col className="w-[22%]" />
+                <col className="w-[18%]" />
+                <col className="w-[38%]" />
               </colgroup>
               <thead>
                 <tr className="border-b border-gray-100 bg-slate-50/80">
-                  <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                     Fecha
                   </th>
-                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                     Monto
                   </th>
-                  <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="px-2 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                    Comprobante
+                  </th>
+                  <th className="px-2 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                     Acción
                   </th>
                 </tr>
@@ -138,20 +143,23 @@ export default function PendingInterbankModal({
 
                   return (
                     <tr key={lineId ?? `${line.occurred_at}-${line.reference_number}`} className="hover:bg-slate-50/50">
-                      <td className="px-4 py-3 align-middle whitespace-nowrap text-gray-900">
+                      <td className="px-3 py-3 align-middle whitespace-nowrap text-gray-900">
                         {dateLabel}
                       </td>
-                      <td className="px-4 py-3 align-middle text-right tabular-nums font-semibold text-gray-900 whitespace-nowrap">
+                      <td className="px-3 py-3 align-middle text-right tabular-nums font-semibold text-gray-900 whitespace-nowrap">
                         {amt != null ? formatMoney(amt, currency) : '—'}
                       </td>
-                      <td className="px-3 py-3 align-middle">
+                      <td className="px-2 py-3 align-middle text-center">
+                        <LedgerReceiptViewLink receiptUrl={line.receipt_url} compact />
+                      </td>
+                      <td className="px-2 py-3 align-middle">
                         {showActionButtons ? (
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               type="button"
                               disabled={lineId == null || saving || rowBusy}
                               onClick={() => onRequestStatusChange(lineId, 'not_found')}
-                              className="inline-flex items-center justify-center px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                              className="inline-flex items-center justify-center px-2 py-1.5 rounded-lg text-[11px] font-semibold text-rose-800 bg-rose-50 ring-1 ring-rose-200 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                             >
                               No efectiva
                             </button>
@@ -159,7 +167,7 @@ export default function PendingInterbankModal({
                               type="button"
                               disabled={lineId == null || saving || rowBusy}
                               onClick={() => onRequestStatusChange(lineId, 'confirmed')}
-                              className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm whitespace-nowrap"
+                              className="inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed shadow-sm whitespace-nowrap"
                             >
                               {saving ? <Loader2 size={12} className="animate-spin shrink-0" aria-hidden /> : null}
                               Confirmar
