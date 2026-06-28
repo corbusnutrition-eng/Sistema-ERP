@@ -9,6 +9,12 @@ import {
 
 export const ROLE_TEMPLATE_CUSTOM = 'custom'
 export const ROLE_TEMPLATE_FULL_ADMIN = 'full_admin'
+export const ROLE_TEMPLATE_ACCOUNT_VERIFIER = 'account_verifier'
+
+export function isAccountVerifierUser(user) {
+  if (!user || user.role === 'admin') return false
+  return String(user.role_template || '').trim() === ROLE_TEMPLATE_ACCOUNT_VERIFIER
+}
 
 export function splitFullName(fullName = '') {
   const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean)
@@ -125,6 +131,7 @@ export function buildUserApiPayload({
   isCustomRole,
   granted,
   modules,
+  assignedAccountIds,
 }) {
   const name = joinFullName(firstName, lastName)
   const payload = {
@@ -157,6 +164,16 @@ export function buildUserApiPayload({
       throw new Error('El rol personalizado requiere al menos un permiso en la matriz.')
     }
     payload.permissions = permissions
+  }
+
+  if (roleTemplate === ROLE_TEMPLATE_ACCOUNT_VERIFIER) {
+    const ids = Array.isArray(assignedAccountIds)
+      ? [...new Set(assignedAccountIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))]
+      : []
+    if (!ids.length) {
+      throw new Error('Selecciona al menos una cuenta asignada para el Verificador de Cuentas.')
+    }
+    payload.assigned_account_ids = ids
   }
 
   return payload

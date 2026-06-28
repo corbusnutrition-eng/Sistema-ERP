@@ -266,6 +266,7 @@ PERMISSION_GROUPS: list[dict[str, Any]] = [
 
 ROLE_TEMPLATE_CUSTOM = "custom"
 ROLE_TEMPLATE_FULL_ADMIN = "full_admin"
+ROLE_TEMPLATE_ACCOUNT_VERIFIER = "account_verifier"
 
 PREDEFINED_ROLES: list[dict[str, Any]] = [
     {
@@ -311,6 +312,18 @@ PREDEFINED_ROLES: list[dict[str, Any]] = [
             | _cells("accounting", "vendors", ("view", "create", "edit"))
             | {_cell("accounting", "reconcile", "view"), _cell("accounting", "reconcile", "edit")}
             | {_cell("reports", "financial", "view"), _cell("reports", "lists", "view")}
+        ),
+    },
+    {
+        "id": ROLE_TEMPLATE_ACCOUNT_VERIFIER,
+        "label": "Verificador de Cuentas",
+        "description": "Verificación bancaria limitada a cuentas asignadas (sin conciliación ni altas).",
+        "system_role": "worker",
+        "permissions": sorted(
+            {
+                _cell("accounting", "chart", "view"),
+                _cell("accounting", "reconcile", "edit"),
+            }
         ),
     },
     {

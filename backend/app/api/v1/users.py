@@ -16,6 +16,11 @@ from app.permissions import (
     TEAM_USERS_VIEW,
 )
 from app.database import get_db
+from app.account_verifier_access import (
+    ROLE_TEMPLATE_ACCOUNT_VERIFIER,
+    normalize_assigned_account_ids,
+    resolve_assigned_account_ids_for_user,
+)
 from app.models.user import User, UserRole
 from app.permissions import (
     ROLE_TEMPLATE_CUSTOM,
@@ -85,6 +90,17 @@ class UserCreate(BaseModel):
     )
     role_template: str = Field(default=ROLE_TEMPLATE_CUSTOM, max_length=64)
     permissions: list[str] = Field(default_factory=list)
+    assigned_account_ids: Optional[list[int]] = Field(
+        default=None,
+        description="Cuentas asignadas (requerido para Verificador de Cuentas).",
+    )
+
+    @field_validator("assigned_account_ids", mode="before")
+    @classmethod
+    def coerce_assigned_account_ids(cls, v: Any) -> Optional[list[int]]:
+        if v is None:
+            return None
+        return normalize_assigned_account_ids(v)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -127,6 +143,17 @@ class UserUpdate(BaseModel):
     role_template: Optional[str] = Field(default=None, max_length=64)
     permissions: Optional[list[str]] = None
     is_active: Optional[bool] = None
+    assigned_account_ids: Optional[list[int]] = Field(
+        default=None,
+        description="Cuentas asignadas (Verificador de Cuentas).",
+    )
+
+    @field_validator("assigned_account_ids", mode="before")
+    @classmethod
+    def coerce_assigned_account_ids(cls, v: Any) -> Optional[list[int]]:
+        if v is None:
+            return None
+        return normalize_assigned_account_ids(v)
 
     @field_validator("permissions", mode="before")
     @classmethod
@@ -172,6 +199,7 @@ class UserResponse(BaseModel):
     permissions: list[str] = Field(default_factory=list)
     role_template: Optional[str] = None
     role_template_label: Optional[str] = None
+    assigned_account_ids: list[int] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -179,6 +207,11 @@ class UserResponse(BaseModel):
     @classmethod
     def normalize_permissions_response(cls, v: object) -> list[str]:
         return normalize_permissions(v)
+
+    @field_validator("assigned_account_ids", mode="before")
+    @classmethod
+    def normalize_assigned_accounts_response(cls, v: object) -> list[int]:
+        return normalize_assigned_account_ids(v)
 
 
 def _user_to_response(user: User) -> UserResponse:
@@ -195,6 +228,7 @@ def _user_to_response(user: User) -> UserResponse:
         permissions=normalize_permissions(user.permissions),
         role_template=tpl,
         role_template_label=role_template_label(tpl if user.role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN),
+        assigned_account_ids=normalize_assigned_account_ids(user.assigned_account_ids),
     )
 
 
@@ -256,6 +290,11 @@ def create_user(payload: UserCreate, db: DbDep, _: TeamUsersCreateDep) -> UserRe
         permissions=payload.permissions,
     )
     plain_password = _resolve_create_password(payload.password)
+    assigned_ids = resolve_assigned_account_ids_for_user(
+        db,
+        role_template=tpl,
+        assigned_account_ids=payload.assigned_account_ids,
+    )
     user = User(
         name=payload.name.strip(),
         email=payload.email,
@@ -265,6 +304,7 @@ def create_user(payload: UserCreate, db: DbDep, _: TeamUsersCreateDep) -> UserRe
         referral_code=_unique_referral_code(db),
         permissions=perms if db_role == UserRole.worker else [],
         role_template=tpl if db_role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN,
+        assigned_account_ids=assigned_ids if tpl == ROLE_TEMPLATE_ACCOUNT_VERIFIER else [],
     )
     db.add(user)
     try:
@@ -431,6 +471,26 @@ def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: TeamUsersEditDe
         user.role = db_role
         user.role_template = resolved_tpl if db_role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN
         user.permissions = expanded if db_role == UserRole.worker else []
+        if resolved_tpl == ROLE_TEMPLATE_ACCOUNT_VERIFIER:
+            user.assigned_account_ids = resolve_assigned_account_ids_for_user(
+                db,
+                role_template=resolved_tpl,
+                assigned_account_ids=(
+                    payload.assigned_account_ids
+                    if payload.assigned_account_ids is not None
+                    else normalize_assigned_account_ids(user.assigned_account_ids)
+                ),
+            )
+        else:
+            user.assigned_account_ids = []
+
+    elif payload.assigned_account_ids is not None:
+        tpl = user.role_template or ROLE_TEMPLATE_CUSTOM
+        user.assigned_account_ids = resolve_assigned_account_ids_for_user(
+            db,
+            role_template=tpl,
+            assigned_account_ids=payload.assigned_account_ids,
+        )
 
     try:
         db.commit()

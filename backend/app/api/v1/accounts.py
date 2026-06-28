@@ -9,6 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
+from app.account_verifier_access import (
+    assert_account_access,
+    filter_accounts_for_user,
+    load_user_from_token,
+    normalize_assigned_account_ids,
+    resolve_assigned_account_ids_for_user,
+)
 from app.api.v1.dependencies import require_permission, UserDep
 from app.permissions import (
     ACCOUNTING_CHART_CREATE,
@@ -1298,6 +1305,7 @@ def _build_response(
 @router.get("/", response_model=list[ChartAccountResponse])
 def list_chart_accounts(
     db: DbDep,
+    current: UserDep,
     _: ChartViewDep,
     include_inactive: bool = False,
 ) -> list[ChartAccountResponse]:
@@ -1307,6 +1315,8 @@ def list_chart_accounts(
     if not include_inactive:
         q = q.filter(Account.is_active.is_(True))
     accounts = q.all()
+    db_user = load_user_from_token(db, current)
+    accounts = filter_accounts_for_user(accounts, db_user)
     parents = {a.id: a for a in accounts}
     out: list[ChartAccountResponse] = []
     for a in accounts:
@@ -1437,9 +1447,11 @@ def get_ledger_line_detail(
     account_id: int,
     line_id: int,
     db: DbDep,
+    current: UserDep,
     _: ChartViewDep,
 ) -> LedgerTransactionDetailResponse:
     """Detalle del movimiento contable (origen + líneas débito/crédito del asiento)."""
+    assert_account_access(db, current, account_id)
     return _build_ledger_line_detail(db, account_id, line_id)
 
 
@@ -1447,6 +1459,7 @@ def get_ledger_line_detail(
 def get_account_ledger(
     account_id: int,
     db: DbDep,
+    current: UserDep,
     _: ChartViewDep,
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
@@ -1454,6 +1467,7 @@ def get_account_ledger(
     """
     Libro mayor de la cuenta desde ``journal_entry_lines`` (fecha, descripción, débito, crédito, saldo).
     """
+    assert_account_access(db, current, account_id)
     return _build_account_journal_ledger(db, account_id, date_from=date_from, date_to=date_to)
 
 
@@ -1461,11 +1475,13 @@ def get_account_ledger(
 def get_account_history(
     account_id: int,
     db: DbDep,
+    current: UserDep,
     _: ChartViewDep,
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
 ) -> AccountHistoryResponse:
     """Alias de ``/ledger`` (libro mayor desde journal entries)."""
+    assert_account_access(db, current, account_id)
     return _build_account_journal_ledger(db, account_id, date_from=date_from, date_to=date_to)
 
 

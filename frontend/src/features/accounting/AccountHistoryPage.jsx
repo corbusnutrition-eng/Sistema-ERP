@@ -19,6 +19,8 @@ import {
 } from 'lucide-react'
 import api from '../../api/axios'
 import { getApiErrorMessage } from '../../lib/apiErrors'
+import { useAuth } from '../../context/AuthContext'
+import { isAccountVerifierUser } from '../../lib/permissionMatrix'
 import { useModal } from '../../context/ModalContext'
 import { formatSaleDocNo, formatSaleLedgerDateParts } from '../sales/saleTableHelpers'
 import { toDatetimeLocalEcuador } from '../../utils/datetime'
@@ -216,6 +218,8 @@ export default function AccountHistoryPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const { user } = useAuth()
+  const isAccountVerifier = isAccountVerifierUser(user)
   const { openNewSale, openTransferModal } = useModal()
   const accountId = Number(id)
 
@@ -332,6 +336,15 @@ export default function AccountHistoryPage() {
   }, [loadHistory])
 
   useEffect(() => {
+    if (!isAccountVerifier || !accounts.length || !Number.isFinite(accountId)) return
+    const allowed = accounts.some((a) => Number(a.id) === accountId)
+    if (!allowed) {
+      const first = accounts[0]
+      if (first?.id) navigate(`/contabilidad/cuenta/${first.id}`, { replace: true })
+    }
+  }, [isAccountVerifier, accounts, accountId, navigate])
+
+  useEffect(() => {
     setExpandedSaleId(null)
     setEditDraft(null)
     setAddTxnMenuOpen(false)
@@ -359,9 +372,12 @@ export default function AccountHistoryPage() {
       cols = insertColumnAfter(cols, 'notes', INVENTORY_CREDITS_COLUMN)
       cols = insertColumnAfter(cols, 'credits_qty', INVENTORY_SERVICE_COLUMN)
     }
+    if (isAccountVerifier) {
+      cols = cols.filter((col) => col.id !== 'balance' && col.id !== 'receipt')
+    }
     if (!showBankVerification) return cols
     return [...cols, BANK_VERIFICATION_COLUMN]
-  }, [ledgerMode, showBankVerification, showInventoryCredits])
+  }, [ledgerMode, showBankVerification, showInventoryCredits, isAccountVerifier])
   const colCount = columnConfig.length
 
   useEffect(() => {
@@ -440,6 +456,7 @@ export default function AccountHistoryPage() {
       : Number(meta?.opening_balance ?? 0)
 
   function openDetailModal(line) {
+    if (isAccountVerifier) return
     const lid = line?.ledger_transaction_id
     if (lid == null || lid === '') return
     setDetailModal({ ledgerLineId: lid, line })
@@ -732,25 +749,39 @@ export default function AccountHistoryPage() {
 
           <div className="flex flex-col items-stretch sm:items-end gap-3 shrink-0">
             <div className="text-right">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Saldo sistema</p>
-              <p className="text-3xl sm:text-4xl font-bold text-gray-900 tabular-nums tracking-tight">
-                {formatMoney(closingDisplayed, currency)}
-              </p>
-              {showBankVerification ? (
-                <p className="mt-2 text-sm font-semibold text-emerald-700 tabular-nums">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600/90 block mb-0.5">
+              {isAccountVerifier ? (
+                <>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600/90">
                     Saldo confirmado
-                  </span>
-                  {formatMoney(confirmedClosingDisplayed, currency)}
-                </p>
-              ) : null}
-              {meta && (filterUser.trim() !== '' || filterReference.trim() !== '') && (
-                <p className="text-xs text-gray-400 mt-1">
-                  Total cuenta: {formatMoney(Number(meta.closing_balance ?? 0), currency)}
-                </p>
+                  </p>
+                  <p className="text-3xl sm:text-4xl font-bold text-emerald-800 tabular-nums tracking-tight">
+                    {formatMoney(confirmedClosingDisplayed, currency)}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Saldo sistema</p>
+                  <p className="text-3xl sm:text-4xl font-bold text-gray-900 tabular-nums tracking-tight">
+                    {formatMoney(closingDisplayed, currency)}
+                  </p>
+                  {showBankVerification ? (
+                    <p className="mt-2 text-sm font-semibold text-emerald-700 tabular-nums">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600/90 block mb-0.5">
+                        Saldo confirmado
+                      </span>
+                      {formatMoney(confirmedClosingDisplayed, currency)}
+                    </p>
+                  ) : null}
+                  {meta && (filterUser.trim() !== '' || filterReference.trim() !== '') && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      Total cuenta: {formatMoney(Number(meta.closing_balance ?? 0), currency)}
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
+            {!isAccountVerifier ? (
             <div className="flex flex-wrap justify-end gap-2">
               <button
                 type="button"
@@ -847,6 +878,7 @@ export default function AccountHistoryPage() {
                 )}
               </div>
             </div>
+            ) : null}
           </div>
         </div>
 
@@ -856,6 +888,7 @@ export default function AccountHistoryPage() {
 
         <div className="bg-white rounded-2xl ring-1 ring-gray-200 shadow-sm overflow-hidden">
           <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-gray-100 bg-slate-50/60">
+            {!isAccountVerifier ? (
             <div ref={addTxnMenuRef} className="relative">
               <button
                 type="button"
@@ -923,6 +956,7 @@ export default function AccountHistoryPage() {
                 </div>
               )}
             </div>
+            ) : null}
             {showBankVerification ? (
               <button
                 type="button"
@@ -1211,12 +1245,12 @@ export default function AccountHistoryPage() {
                     return (
                       <Fragment key={rowKey}>
                         <tr
-                          className={`transition-colors hover:bg-slate-50/90 cursor-pointer ${isSaleRow && expandedSaleId === line.sale_id ? 'bg-blue-50/50' : ''} ${isDetailSelected ? 'bg-slate-50 ring-1 ring-inset ring-blue-200' : ''}`}
-                          onClick={() => openDetailModal(line)}
+                          className={`transition-colors ${isAccountVerifier ? '' : 'hover:bg-slate-50/90 cursor-pointer'} ${isSaleRow && expandedSaleId === line.sale_id ? 'bg-blue-50/50' : ''} ${isDetailSelected ? 'bg-slate-50 ring-1 ring-inset ring-blue-200' : ''}`}
+                          onClick={isAccountVerifier ? undefined : () => openDetailModal(line)}
                         >
                           {cells}
                         </tr>
-                      {isSaleRow && expandedSaleId === line.sale_id && editDraft && (
+                      {isSaleRow && expandedSaleId === line.sale_id && editDraft && !isAccountVerifier && (
                         <tr className="bg-slate-50">
                           <td colSpan={colCount} className="p-4 border-t border-blue-100">
                             <div

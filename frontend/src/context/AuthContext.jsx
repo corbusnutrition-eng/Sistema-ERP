@@ -33,10 +33,14 @@ export function AuthProvider({ children }) {
     if (accessToken) {
       localStorage.setItem('access_token', accessToken)
     }
-    const normalized = nextUser
+      const normalized = nextUser
       ? {
           ...nextUser,
           permissions: effectivePermissions(nextUser.role, nextUser.permissions),
+          role_template: nextUser.role_template ?? null,
+          assigned_account_ids: Array.isArray(nextUser.assigned_account_ids)
+            ? nextUser.assigned_account_ids
+            : [],
         }
       : null
     persistUser(normalized)
@@ -66,6 +70,8 @@ export function AuthProvider({ children }) {
         email: me.email,
         user_id: me.user_id ?? null,
         permissions: me.permissions ?? [],
+        role_template: me.role_template ?? null,
+        assigned_account_ids: Array.isArray(me.assigned_account_ids) ? me.assigned_account_ids : [],
       }
       persistUser(nextUser)
       setUser(nextUser)

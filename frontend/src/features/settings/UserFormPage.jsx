@@ -4,7 +4,9 @@ import { ChevronLeft, Loader2 } from 'lucide-react'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import PermissionMatrix from './components/PermissionMatrix'
 import { createTeamUser, fetchPermissionsMatrix, fetchTeamUser, updateTeamUser } from '../../api/users'
+import api from '../../api/axios'
 import {
+  ROLE_TEMPLATE_ACCOUNT_VERIFIER,
   ROLE_TEMPLATE_CUSTOM,
   ROLE_TEMPLATE_FULL_ADMIN,
   buildUserApiPayload,
@@ -13,6 +15,15 @@ import {
   permissionsFromRoleTemplate,
   splitFullName,
 } from '../../lib/permissionMatrix'
+
+function isAssignableVerifierAccount(account) {
+  if (!account || account.is_active === false) return false
+  const dt = String(account.detail_type || '').trim().toLowerCase()
+  if (dt === 'inventario') return true
+  if (String(account.account_type || '').toLowerCase() !== 'asset') return false
+  if (String(account.linked_payment_method || '').trim()) return true
+  return dt === 'fondos sin depositar'
+}
 
 function parseErrorDetail(err) {
   const detail = err?.response?.data?.detail
@@ -51,6 +62,9 @@ export default function UserFormPage() {
   const [roleTemplate, setRoleTemplate] = useState('')
   const [granted, setGranted] = useState([])
   const [rawUserPermissions, setRawUserPermissions] = useState(null)
+  const [assignableAccounts, setAssignableAccounts] = useState([])
+  const [assignedAccountIds, setAssignedAccountIds] = useState([])
+  const [accountsLoading, setAccountsLoading] = useState(false)
 
   const [matrixData, setMatrixData] = useState({ modules: [], actions: [], predefined_roles: [] })
   const [showPermissions, setShowPermissions] = useState(false)
@@ -62,6 +76,7 @@ export default function UserFormPage() {
 
   const isCustomRole = roleTemplate === ROLE_TEMPLATE_CUSTOM
   const isFullAdmin = roleTemplate === ROLE_TEMPLATE_FULL_ADMIN
+  const isAccountVerifierRole = roleTemplate === ROLE_TEMPLATE_ACCOUNT_VERIFIER
   const matrixReadOnly = Boolean(roleTemplate) && !isCustomRole
 
   const roleOptions = useMemo(
@@ -101,6 +116,27 @@ export default function UserFormPage() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setAccountsLoading(true)
+      try {
+        const { data } = await api.get('/api/v1/accounts/', { params: { include_inactive: false } })
+        if (!cancelled) {
+          const list = Array.isArray(data) ? data.filter(isAssignableVerifierAccount) : []
+          setAssignableAccounts(list)
+        }
+      } catch {
+        if (!cancelled) setAssignableAccounts([])
+      } finally {
+        if (!cancelled) setAccountsLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     if (!isEdit || !userId) return
     let cancelled = false
     ;(async () => {
@@ -114,6 +150,7 @@ export default function UserFormPage() {
         setEmail(user.email ?? '')
         setRoleTemplate(user.role_template ?? (user.role === 'admin' ? ROLE_TEMPLATE_FULL_ADMIN : ROLE_TEMPLATE_CUSTOM))
         setRawUserPermissions(user.permissions ?? [])
+        setAssignedAccountIds(Array.isArray(user.assigned_account_ids) ? user.assigned_account_ids : [])
         setShowPermissions(true)
       } catch {
         if (!cancelled) setError('No se pudo cargar el usuario.')
@@ -135,6 +172,9 @@ export default function UserFormPage() {
     (templateId) => {
       setRoleTemplate(templateId)
       setShowPermissions(Boolean(templateId))
+      if (templateId !== ROLE_TEMPLATE_ACCOUNT_VERIFIER) {
+        setAssignedAccountIds([])
+      }
       if (!templateId) {
         setGranted([])
         return
@@ -164,6 +204,7 @@ export default function UserFormPage() {
         isCustomRole,
         granted,
         modules: matrixData.modules,
+        assignedAccountIds,
       })
     } catch (buildErr) {
       setError(buildErr.message)
@@ -298,6 +339,62 @@ export default function UserFormPage() {
             )}
           </div>
         </section>
+
+        {isAccountVerifierRole ? (
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold text-gray-900">Cuentas asignadas</h2>
+            <p className="text-sm text-gray-500">
+              Selecciona las cuentas bancarias e inventario a las que este verificador tendrá acceso.
+            </p>
+            {accountsLoading ? (
+              <p className="text-sm text-gray-500 flex items-center gap-2">
+                <Loader2 size={16} className="animate-spin" aria-hidden />
+                Cargando cuentas…
+              </p>
+            ) : assignableAccounts.length === 0 ? (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
+                No hay cuentas bancarias o de inventario activas disponibles.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white p-3">
+                {assignableAccounts.map((acc) => {
+                  const checked = assignedAccountIds.includes(acc.id)
+                  return (
+                    <label
+                      key={acc.id}
+                      className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
+                        checked ? 'border-blue-300 bg-blue-50/60' : 'border-gray-100 hover:bg-slate-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500/30"
+                        checked={checked}
+                        onChange={() => {
+                          setAssignedAccountIds((prev) =>
+                            prev.includes(acc.id) ? prev.filter((id) => id !== acc.id) : [...prev, acc.id],
+                          )
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-gray-900 truncate">{acc.name}</span>
+                        <span className="block text-xs text-gray-500 truncate">
+                          {acc.detail_type || acc.account_type}
+                          {acc.account_number ? ` · N.º ${acc.account_number}` : ''}
+                        </span>
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+            {assignedAccountIds.length === 0 ? (
+              <p className="text-xs text-red-600">Selecciona al menos una cuenta.</p>
+            ) : (
+              <p className="text-xs text-gray-500">{assignedAccountIds.length} cuenta(s) seleccionada(s)</p>
+            )}
+          </section>
+        ) : null}
 
         {/* Matriz de permisos */}
         {showPermissions && (

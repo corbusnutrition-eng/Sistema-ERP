@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.account_constants import is_liquid_deposit_account
 from app.api.v1.accounts import _build_account_reconciliation
-from app.api.v1.dependencies import require_permission
+from app.api.v1.dependencies import UserDep, require_permission
 from app.database import get_db
 from app.ledger_verification import LEDGER_VERIFICATION_CONFIRMED, normalize_ledger_verification_status
 from app.services.inventory_reconciliation_service import run_inventory_reconciliation_audit
@@ -37,6 +37,7 @@ from app.schemas.chart_accounts import (
     LedgerVerificationResponse,
     LedgerVerificationUpdate,
 )
+from app.account_verifier_access import assert_account_access
 from app.models.inventory_audit_report import InventoryAuditReport
 
 router = APIRouter(prefix="/accounting", tags=["accounting"])
@@ -268,6 +269,7 @@ def patch_ledger_line_verification(
     line_id: int,
     body: LedgerVerificationUpdate,
     db: DbDep,
+    current: UserDep,
     _: ReconcileEditDep,
 ) -> LedgerVerificationResponse:
     """Actualiza el estado de verificación bancaria de una línea del libro mayor."""
@@ -288,6 +290,7 @@ def patch_ledger_line_verification(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="La verificación bancaria solo aplica a cuentas de Efectivo y equivalentes.",
         )
+    assert_account_access(db, current, int(line.account_id))
 
     try:
         normalized = normalize_ledger_verification_status(body.verification_status)

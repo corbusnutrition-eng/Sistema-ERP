@@ -4,14 +4,15 @@ from typing import Annotated, Optional
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.api.v1.dependencies import UserDep
 from app.database import get_db
 from app.jwt_utils import create_access_token
-from app.models.user import User
-from app.permissions import effective_permissions
+from app.account_verifier_access import normalize_assigned_account_ids
+from app.models.user import User, UserRole
+from app.permissions import ROLE_TEMPLATE_CUSTOM, ROLE_TEMPLATE_FULL_ADMIN, effective_permissions
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -32,6 +33,8 @@ class UserInfo(BaseModel):
     role: str
     user_id: Optional[int] = None
     permissions: list[str] = []
+    role_template: Optional[str] = None
+    assigned_account_ids: list[int] = Field(default_factory=list)
 
 
 class LoginResponse(BaseModel):
@@ -46,6 +49,8 @@ class MeResponse(BaseModel):
     email: str
     user_id: Optional[int] = None
     permissions: list[str] = []
+    role_template: Optional[str] = None
+    assigned_account_ids: list[int] = Field(default_factory=list)
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
@@ -76,11 +81,14 @@ def login(credentials: LoginRequest, db: DbDep) -> LoginResponse:
                 detail="Usuario desactivado. Contacta al administrador.",
             )
         perms = effective_permissions(role=db_user.role.value, permissions=db_user.permissions)
+        tpl = db_user.role_template or ROLE_TEMPLATE_CUSTOM
         user_info = UserInfo(
             name=db_user.name,
             role=db_user.role.value,
             user_id=db_user.id,
             permissions=perms,
+            role_template=tpl if db_user.role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN,
+            assigned_account_ids=normalize_assigned_account_ids(db_user.assigned_account_ids),
         )
 
     elif credentials.email == MOCK_EMAIL and credentials.password == MOCK_PASSWORD:
@@ -132,8 +140,14 @@ def auth_me(current_user: UserDep, db: DbDep) -> MeResponse:
         email = str(db_user.email or email)
         name = db_user.name
         perms = effective_permissions(role=role, permissions=db_user.permissions)
+        tpl = db_user.role_template or ROLE_TEMPLATE_CUSTOM
+        if db_user.role == UserRole.admin:
+            tpl = ROLE_TEMPLATE_FULL_ADMIN
+        assigned = normalize_assigned_account_ids(db_user.assigned_account_ids)
     else:
         perms = effective_permissions(role=role, permissions=current_user.get("permissions"))
+        tpl = None
+        assigned = []
 
     return MeResponse(
         name=name,
@@ -141,4 +155,6 @@ def auth_me(current_user: UserDep, db: DbDep) -> MeResponse:
         email=email,
         user_id=int(user_id) if user_id is not None else None,
         permissions=perms,
+        role_template=tpl,
+        assigned_account_ids=assigned,
     )
