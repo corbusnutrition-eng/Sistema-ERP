@@ -1173,6 +1173,7 @@ export default function NewRechargeModal({
                         {editMode ? (
                           <OcrSecurityBadges
                             className="mt-2"
+                            suppressIllegibleAlert
                             is_manually_edited={ocrIsManuallyEdited}
                             ai_confidence_score={ocrAiConfidenceScore}
                             portal_declared_payment_amount={ocrPortalDeclaredAmount}

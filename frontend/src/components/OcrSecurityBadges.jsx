@@ -93,6 +93,15 @@ export function isIllegibleDeclaredRecord(source) {
 }
 
 export function IllegibleReceiptAlert({ className = '', layout = 'block' }) {
+  if (layout === 'compact' || layout === 'table') {
+    return (
+      <div
+        className={`mt-1 text-xs text-orange-700 bg-orange-100 border border-orange-300 rounded p-1 max-w-[200px] whitespace-normal break-words leading-tight text-center ${className}`.trim()}
+      >
+        ⚠️ Monto Ilegible. Requiere revisión manual.
+      </div>
+    )
+  }
   const base =
     'inline-flex items-center rounded-md bg-orange-100 px-2.5 py-1.5 text-[11px] font-bold leading-snug text-orange-950 ring-2 ring-orange-300'
   return (
@@ -111,7 +120,8 @@ export function pickOcrFlagsFromSale(sale) {
   if (p) {
     return {
       ...pickOcrSecurityFlags(p),
-      amount: p.amount,
+      portal_declared_payment_amount: p.amount_applied_to_sale ?? p.amount,
+      amount: p.amount_applied_to_sale ?? p.amount,
     }
   }
   return pickOcrSecurityFlags(sale)
@@ -160,6 +170,10 @@ export default function OcrSecurityBadges({
   portal_declared_payment_amount: portalDeclared,
   className = '',
   layout = 'column',
+  /** 'block' = modal; 'compact' = celdas de tabla */
+  illegibleLayout = 'block',
+  /** true en modales que ya muestran IllegibleReceiptAlert encima del input */
+  suppressIllegibleAlert = false,
 }) {
   const source = {
     is_manually_edited: manual,
@@ -174,16 +188,20 @@ export default function OcrSecurityBadges({
     confidence != null &&
     Number.isFinite(Number(confidence)) &&
     Number(confidence) < 80
-  if (!showManual && !showLowConfidence && !showIllegible) return null
+  if (!showManual && !showLowConfidence && !(showIllegible && !suppressIllegibleAlert)) return null
 
   const wrapClass =
     layout === 'row'
       ? `flex flex-wrap items-center gap-2 ${className}`
-      : `flex flex-col items-start gap-1.5 ${className}`
+      : layout === 'table'
+        ? `flex flex-col items-center gap-1 w-full min-w-0 ${className}`
+        : `flex flex-col items-start gap-1.5 ${className}`
 
   return (
     <div className={wrapClass}>
-      {showIllegible ? <IllegibleReceiptAlert layout="block" /> : null}
+      {showIllegible && !suppressIllegibleAlert ? (
+        <IllegibleReceiptAlert layout={illegibleLayout === 'compact' ? 'compact' : 'block'} />
+      ) : null}
       {showManual ? (
         <span className="inline-flex items-center rounded-md bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-900 ring-1 ring-sky-200">
           Editado por el cliente

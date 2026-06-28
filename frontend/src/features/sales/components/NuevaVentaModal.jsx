@@ -4365,6 +4365,7 @@ export default function NuevaVentaModal({
                 {Array.isArray(pendingReviewPayments) && pendingReviewPayments.length > 0 ? (
                   <OcrSecurityBadges
                     className="mt-2"
+                    suppressIllegibleAlert
                     {...pickOcrSecurityFlags(
                       pendingReviewPayments.find((p) => p?.receipt_file_url) ||
                         pendingReviewPayments[0],

@@ -1484,11 +1484,15 @@ export default function Sales() {
                           <SaleAmountCell sale={sale} />
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap align-middle min-w-[108px]">
-                        <div className="flex flex-col items-start gap-1">
+                      <td className="px-3 py-2.5 align-middle min-w-[108px] max-w-[220px]">
+                        <div className="flex flex-col items-center gap-1 min-w-0">
                           <StatusBadge status={sale.status} />
                           {sale.status === 'payment_submitted' ? (
-                            <OcrSecurityBadges {...pickOcrFlagsFromSale(sale)} />
+                            <OcrSecurityBadges
+                              {...pickOcrFlagsFromSale(sale)}
+                              layout="table"
+                              illegibleLayout="compact"
+                            />
                           ) : null}
                           {sale.status === 'pending' && sale.expires_at ? (
                             <PendingReservationCountdown expiresAt={sale.expires_at} />
@@ -1589,12 +1593,18 @@ export default function Sales() {
                         <td className="px-3 py-2.5 text-right font-bold tabular-nums text-sm">
                           {Number.isFinite(amt) ? amt.toFixed(2) : '—'}
                         </td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex flex-col items-start gap-1">
+                        <td className="px-3 py-2.5 max-w-[220px]">
+                          <div className="flex flex-col items-center gap-1 min-w-0">
                             <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-1 rounded-full ring-1 ring-sky-100">
                               En revisión
                             </span>
-                            <OcrSecurityBadges {...pickOcrSecurityFlags(p)} />
+                            <OcrSecurityBadges
+                              {...pickOcrSecurityFlags(p)}
+                              amount={p?.amount_applied_to_sale ?? p?.amount}
+                              portal_declared_payment_amount={p?.amount_applied_to_sale ?? p?.amount}
+                              layout="table"
+                              illegibleLayout="compact"
+                            />
                           </div>
                         </td>
                         <td className="px-3 py-2.5 text-center">

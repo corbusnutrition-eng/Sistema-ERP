@@ -1802,11 +1802,15 @@ export default function DistributorsBaaSPage() {
                       <td className="px-3 py-2.5 whitespace-nowrap text-right align-middle">
                         <RechargeAmountCell row={r} />
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap align-middle min-w-[108px]">
-                        <div className="flex flex-col items-start gap-1">
+                      <td className="px-3 py-2.5 align-middle min-w-[108px] max-w-[220px]">
+                        <div className="flex flex-col items-center gap-1 min-w-0">
                           <RechargeStatusBadge status={r.status} />
                           {r.status === 'in_review' ? (
-                            <OcrSecurityBadges {...pickOcrFlagsFromRecharge(r)} />
+                            <OcrSecurityBadges
+                              {...pickOcrFlagsFromRecharge(r)}
+                              layout="table"
+                              illegibleLayout="compact"
+                            />
                           ) : null}
                         </div>
                       </td>
