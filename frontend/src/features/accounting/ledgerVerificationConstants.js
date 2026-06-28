@@ -94,3 +94,16 @@ export function isHistoryLedgerVerification(line) {
   const s = normalizeLedgerVerificationStatus(line?.verification_status)
   return s === 'confirmed' || s === 'not_found' || s === 'wrong_account'
 }
+
+/** Movimiento de transferencia entre cuentas (asiento TRX / tipo Transferencia). */
+export function isTransferLedgerLine(line) {
+  if (!line) return false
+  const kind = String(line.line_kind ?? '').trim().toLowerCase()
+  if (kind === 'transferencia') return true
+  const reason = String(line.transaction_reason ?? '').trim().toLowerCase()
+  if (reason.includes('transferencia')) return true
+  const ref = `${line.reference_number ?? ''} ${line.reference ?? ''}`.trim().toUpperCase()
+  if (ref.startsWith('TRX-')) return true
+  const label = String(line.client_name ?? '').trim().toLowerCase()
+  return label.startsWith('transferencia')
+}

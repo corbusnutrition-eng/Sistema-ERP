@@ -36,6 +36,7 @@ import {
   lineIsBankDeposit,
   isPendingLedgerVerification,
   isHistoryLedgerVerification,
+  isTransferLedgerLine,
 } from './ledgerVerificationConstants'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
@@ -114,6 +115,9 @@ const INVENTORY_SERVICE_COLUMN = Object.freeze({
 
 /** Columnas ocultas en vista restringida (verificador / trabajador asignado). */
 const RESTRICTED_LEDGER_HIDDEN_COLUMN_IDS = new Set(['balance', 'notes', 'payment', 'pago'])
+
+/** En pestaña Transferencias se muestra PAGO pero no saldo/notas. */
+const RESTRICTED_TRANSFER_TAB_HIDDEN_COLUMN_IDS = new Set(['balance', 'notes'])
 
 function insertColumnAfter(columns, afterId, column) {
   const idx = columns.findIndex((c) => c.id === afterId)
@@ -370,11 +374,24 @@ export default function AccountHistoryPage() {
       cols = insertColumnAfter(cols, 'credits_qty', INVENTORY_SERVICE_COLUMN)
     }
     if (isRestrictedLedger) {
-      cols = cols.filter((col) => !RESTRICTED_LEDGER_HIDDEN_COLUMN_IDS.has(col.id))
+      const hiddenIds =
+        showVerifierTabs && verifierViewTab === 'transfers'
+          ? RESTRICTED_TRANSFER_TAB_HIDDEN_COLUMN_IDS
+          : RESTRICTED_LEDGER_HIDDEN_COLUMN_IDS
+      cols = cols.filter((col) => !hiddenIds.has(col.id))
     }
-    if (!showBankVerification) return cols
+    const showVerificationColumn =
+      showBankVerification && !(showVerifierTabs && verifierViewTab === 'transfers')
+    if (!showVerificationColumn) return cols
     return [...cols, BANK_VERIFICATION_COLUMN]
-  }, [ledgerMode, showBankVerification, showInventoryCredits, isRestrictedLedger])
+  }, [
+    ledgerMode,
+    showBankVerification,
+    showInventoryCredits,
+    isRestrictedLedger,
+    showVerifierTabs,
+    verifierViewTab,
+  ])
   const colCount = columnConfig.length
 
   useEffect(() => {
@@ -432,26 +449,36 @@ export default function AccountHistoryPage() {
     [filteredWithRunning],
   )
 
+  const transferLedgerLines = useMemo(
+    () => filteredWithRunning.filter(isTransferLedgerLine),
+    [filteredWithRunning],
+  )
+
   const tableRows = useMemo(() => {
     if (!showVerifierTabs) return filteredWithRunning
-    return verifierViewTab === 'history' ? historyVerificationLines : pendingVerificationLines
+    if (verifierViewTab === 'history') return historyVerificationLines
+    if (verifierViewTab === 'transfers') return transferLedgerLines
+    return pendingVerificationLines
   }, [
     showVerifierTabs,
     verifierViewTab,
     filteredWithRunning,
     historyVerificationLines,
     pendingVerificationLines,
+    transferLedgerLines,
   ])
 
   const historyPaginationEnabled = showVerifierTabs && verifierViewTab === 'history'
+  const transfersPaginationEnabled = showVerifierTabs && verifierViewTab === 'transfers'
   const standardPaginationEnabled = !showVerifierTabs
 
-  const totalPages = historyPaginationEnabled || standardPaginationEnabled
-    ? Math.ceil(tableRows.length / ITEMS_PER_PAGE)
-    : 1
+  const totalPages =
+    historyPaginationEnabled || transfersPaginationEnabled || standardPaginationEnabled
+      ? Math.ceil(tableRows.length / ITEMS_PER_PAGE)
+      : 1
 
   const paginatedData =
-    historyPaginationEnabled || standardPaginationEnabled
+    historyPaginationEnabled || transfersPaginationEnabled || standardPaginationEnabled
       ? tableRows.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
       : tableRows
 
@@ -462,10 +489,18 @@ export default function AccountHistoryPage() {
   useEffect(() => {
     const n = tableRows.length
     const tp =
-      historyPaginationEnabled || standardPaginationEnabled ? Math.ceil(n / ITEMS_PER_PAGE) : 1
+      historyPaginationEnabled || transfersPaginationEnabled || standardPaginationEnabled
+        ? Math.ceil(n / ITEMS_PER_PAGE)
+        : 1
     if (tp === 0 && currentPage !== 1) setCurrentPage(1)
     else if (tp > 0 && currentPage > tp) setCurrentPage(tp)
-  }, [tableRows.length, currentPage, historyPaginationEnabled, standardPaginationEnabled])
+  }, [
+    tableRows.length,
+    currentPage,
+    historyPaginationEnabled,
+    transfersPaginationEnabled,
+    standardPaginationEnabled,
+  ])
 
   useEffect(() => {
     setExpandedSaleId(null)
@@ -947,6 +982,24 @@ export default function AccountHistoryPage() {
                   </span>
                 ) : null}
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={verifierViewTab === 'transfers'}
+                onClick={() => setVerifierViewTab('transfers')}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+                  verifierViewTab === 'transfers'
+                    ? 'bg-indigo-100 text-indigo-950 ring-1 ring-indigo-300'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Historial de Transferencias
+                {transferLedgerLines.length > 0 ? (
+                  <span className="text-[11px] font-medium text-gray-500 tabular-nums">
+                    ({transferLedgerLines.length})
+                  </span>
+                ) : null}
+              </button>
             </div>
           </div>
         ) : null}
@@ -1070,7 +1123,9 @@ export default function AccountHistoryPage() {
                         ? 'No hay transacciones pendientes de verificación en este periodo.'
                         : showVerifierTabs && verifierViewTab === 'history'
                           ? 'Aún no hay verificaciones registradas en este periodo.'
-                          : 'No hay movimientos en este periodo.'}
+                          : showVerifierTabs && verifierViewTab === 'transfers'
+                            ? 'No hay transferencias registradas en esta cuenta en el periodo seleccionado.'
+                            : 'No hay movimientos en este periodo.'}
                     </td>
                   </tr>
                 )}
@@ -1444,7 +1499,7 @@ export default function AccountHistoryPage() {
               </tbody>
             </table>
           </div>
-          {(historyPaginationEnabled || standardPaginationEnabled) && (
+          {(historyPaginationEnabled || transfersPaginationEnabled || standardPaginationEnabled) && (
           <div className="flex items-center justify-between px-4 py-3 bg-white border-t border-gray-200 sm:px-6 mt-4 rounded-b-lg shadow-sm">
             <div className="text-sm text-gray-500">
               Mostrando{' '}
