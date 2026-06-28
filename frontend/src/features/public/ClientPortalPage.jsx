@@ -2,7 +2,7 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, RefreshCw, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
 import PortalAccordionSortableList from './PortalAccordionSortableList'
 import {
   filterVisiblePortalAccordionOrder,
@@ -1768,7 +1768,9 @@ function ClientPortalPageInner() {
   const [cxcBalance, setCxcBalance] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [isBlocked, setIsBlocked] = useState(false)
+  const portalRefreshInFlightRef = useRef(false)
 
   const [payMethodBySale, setPayMethodBySale] = useState({})
   const [payAccountBySale, setPayAccountBySale] = useState({})
@@ -2131,10 +2133,13 @@ function ClientPortalPageInner() {
     }
   }, [api, token])
 
-  const loadAutoPurchaseCatalog = useCallback(async () => {
+  const loadAutoPurchaseCatalog = useCallback(async (opts = {}) => {
+    const silent = Boolean(opts?.silent)
     if (!token) return
-    setAutoPurchaseLoading(true)
-    setAutoPurchaseErr(null)
+    if (!silent) {
+      setAutoPurchaseLoading(true)
+      setAutoPurchaseErr(null)
+    }
     try {
       const { data: rows } = await api.get(
         `/api/v1/portal/${encodeURIComponent(token)}/auto-purchase/catalog`,
@@ -2142,17 +2147,22 @@ function ClientPortalPageInner() {
       setAutoPurchaseProducts(Array.isArray(rows) ? rows : [])
     } catch (err) {
       const d = err?.response?.data?.detail
-      setAutoPurchaseErr(typeof d === 'string' ? d : 'No se pudo cargar el catálogo de compra.')
-      setAutoPurchaseProducts([])
+      if (!silent) {
+        setAutoPurchaseErr(typeof d === 'string' ? d : 'No se pudo cargar el catálogo de compra.')
+        setAutoPurchaseProducts([])
+      }
     } finally {
-      setAutoPurchaseLoading(false)
+      if (!silent) setAutoPurchaseLoading(false)
     }
   }, [api, token])
 
-  const loadTrackedPurchases = useCallback(async () => {
+  const loadTrackedPurchases = useCallback(async (opts = {}) => {
+    const silent = Boolean(opts?.silent)
     if (!token) return
-    setTrackedPurchasesLoading(true)
-    setTrackedPurchasesErr(null)
+    if (!silent) {
+      setTrackedPurchasesLoading(true)
+      setTrackedPurchasesErr(null)
+    }
     try {
       const { data: rows } = await api.get(
         `/api/v1/portal/${encodeURIComponent(token)}/tracked-purchases`,
@@ -2160,10 +2170,12 @@ function ClientPortalPageInner() {
       setTrackedPurchases(Array.isArray(rows) ? rows : [])
     } catch (err) {
       const d = err?.response?.data?.detail
-      setTrackedPurchasesErr(typeof d === 'string' ? d : 'No se pudieron cargar tus compras con seguimiento.')
-      setTrackedPurchases([])
+      if (!silent) {
+        setTrackedPurchasesErr(typeof d === 'string' ? d : 'No se pudieron cargar tus compras con seguimiento.')
+        setTrackedPurchases([])
+      }
     } finally {
-      setTrackedPurchasesLoading(false)
+      if (!silent) setTrackedPurchasesLoading(false)
     }
   }, [api, token])
 
@@ -2209,35 +2221,45 @@ function ClientPortalPageInner() {
     [api, token],
   )
 
-  const loadSubClients = useCallback(async () => {
+  const loadSubClients = useCallback(async (opts = {}) => {
+    const silent = Boolean(opts?.silent)
     if (!token) return
-    setSubClientsLoading(true)
-    setSubClientsErr(null)
+    if (!silent) {
+      setSubClientsLoading(true)
+      setSubClientsErr(null)
+    }
     try {
       const { data: rows } = await api.get(`/api/v1/portal/${encodeURIComponent(token)}/sub-clients`)
       setSubClients(Array.isArray(rows) ? rows : [])
     } catch (err) {
       const d = err?.response?.data?.detail
-      setSubClientsErr(typeof d === 'string' ? d : 'No se pudo cargar tu red de clientes.')
-      setSubClients([])
+      if (!silent) {
+        setSubClientsErr(typeof d === 'string' ? d : 'No se pudo cargar tu red de clientes.')
+        setSubClients([])
+      }
     } finally {
-      setSubClientsLoading(false)
+      if (!silent) setSubClientsLoading(false)
     }
   }, [api, token])
 
-  const loadNetworkTree = useCallback(async () => {
+  const loadNetworkTree = useCallback(async (opts = {}) => {
+    const silent = Boolean(opts?.silent)
     if (!token) return
-    setNetworkTreeLoading(true)
-    setNetworkTreeErr(null)
+    if (!silent) {
+      setNetworkTreeLoading(true)
+      setNetworkTreeErr(null)
+    }
     try {
       const { data } = await api.get(`/api/v1/portal/${encodeURIComponent(token)}/network-tree`)
       setNetworkDashboard(data ?? null)
     } catch (err) {
       const d = err?.response?.data?.detail
-      setNetworkTreeErr(typeof d === 'string' ? d : 'No se pudo cargar el árbol de tu red.')
-      setNetworkDashboard(null)
+      if (!silent) {
+        setNetworkTreeErr(typeof d === 'string' ? d : 'No se pudo cargar el árbol de tu red.')
+        setNetworkDashboard(null)
+      }
     } finally {
-      setNetworkTreeLoading(false)
+      if (!silent) setNetworkTreeLoading(false)
     }
   }, [api, token])
 
@@ -2248,10 +2270,57 @@ function ClientPortalPageInner() {
     }
   }, [activeFilter, loadNetworkTree, loadSubClients])
 
-  const loadPortalNotifications = useCallback(async () => {
+  const refreshPortalData = useCallback(async (opts = {}) => {
+    const silent = opts?.silent !== false
+    if (!token || portalRefreshInFlightRef.current) return
+    portalRefreshInFlightRef.current = true
+    try {
+      const tasks = [
+        loadPortal({ silent }),
+        loadWalletRecharges(),
+        loadPortalNotifications({ silent }),
+        loadAutoPurchaseCatalog({ silent }),
+      ]
+      if (isTrackedPurchasesOpen) tasks.push(loadTrackedPurchases({ silent }))
+      if (isResellerNetworkOpen) {
+        tasks.push(loadSubClients({ silent }))
+        if (activeFilter === 'team') tasks.push(loadNetworkTree({ silent }))
+      }
+      await Promise.all(tasks)
+    } finally {
+      portalRefreshInFlightRef.current = false
+    }
+  }, [
+    activeFilter,
+    isResellerNetworkOpen,
+    isTrackedPurchasesOpen,
+    loadAutoPurchaseCatalog,
+    loadNetworkTree,
+    loadPortal,
+    loadPortalNotifications,
+    loadSubClients,
+    loadTrackedPurchases,
+    loadWalletRecharges,
+    token,
+  ])
+
+  const handleManualPortalRefresh = useCallback(async () => {
+    if (isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      await refreshPortalData({ silent: true })
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [isRefreshing, refreshPortalData])
+
+  const loadPortalNotifications = useCallback(async (opts = {}) => {
+    const silent = Boolean(opts?.silent)
     if (!token) return
-    setPortalNotificationsLoading(true)
-    setPortalNotificationsErr(null)
+    if (!silent) {
+      setPortalNotificationsLoading(true)
+      setPortalNotificationsErr(null)
+    }
     try {
       const { data: rows } = await api.get(
         `/api/v1/portal/${encodeURIComponent(token)}/notifications`,
@@ -2259,10 +2328,12 @@ function ClientPortalPageInner() {
       setPortalNotifications(Array.isArray(rows) ? rows : [])
     } catch (err) {
       const d = err?.response?.data?.detail
-      setPortalNotificationsErr(typeof d === 'string' ? d : 'No se pudieron cargar las notificaciones.')
-      setPortalNotifications([])
+      if (!silent) {
+        setPortalNotificationsErr(typeof d === 'string' ? d : 'No se pudieron cargar las notificaciones.')
+        setPortalNotifications([])
+      }
     } finally {
-      setPortalNotificationsLoading(false)
+      if (!silent) setPortalNotificationsLoading(false)
     }
   }, [api, token])
 
@@ -2870,6 +2941,25 @@ function ClientPortalPageInner() {
   useEffect(() => {
     loadPortal()
   }, [loadPortal])
+
+  useEffect(() => {
+    if (!token || !data || isBlocked) return undefined
+    const intervalId = window.setInterval(() => {
+      void refreshPortalData({ silent: true })
+    }, 60000)
+    return () => window.clearInterval(intervalId)
+  }, [token, data, isBlocked, refreshPortalData])
+
+  useEffect(() => {
+    if (!token || !data || isBlocked) return undefined
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshPortalData({ silent: true })
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [token, data, isBlocked, refreshPortalData])
 
   useEffect(() => {
     setAccordionSectionOrder(loadPortalAccordionOrder(token))
@@ -5700,7 +5790,17 @@ function ClientPortalPageInner() {
           <div className="mb-3 md:mb-4" />
         )}
 
-        <div className="mb-3 flex w-full justify-end px-1">
+        <div className="mb-3 flex w-full justify-end gap-2 px-1">
+          <button
+            type="button"
+            onClick={() => void handleManualPortalRefresh()}
+            disabled={isRefreshing || loading}
+            className="flex cursor-pointer items-center gap-1.5 rounded-full border border-slate-600/50 bg-slate-900/45 px-3 py-1.5 text-xs text-slate-300 transition-all hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Actualizar datos del portal"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`} aria-hidden />
+            Actualizar
+          </button>
           <button
             type="button"
             onClick={collapseAllSections}
