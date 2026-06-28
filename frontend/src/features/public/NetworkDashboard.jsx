@@ -278,15 +278,23 @@ function NeonTreeNodeCard({ nodeDatum, toggleNode }) {
 
 function KpiCard({ icon: Icon, label, value, hint, accentClass }) {
   return (
-    <div className="rounded-2xl border border-slate-700/50 bg-[#0a0f1a]/90 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-      <div className="mb-2 flex items-center gap-2">
-        <span className={`inline-flex rounded-lg border p-1.5 ${accentClass}`}>
+    <div className="min-w-0 rounded-2xl border border-slate-700/50 bg-[#0a0f1a]/90 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+      <div className="mb-2 flex min-w-0 items-start gap-2">
+        <span className={`inline-flex shrink-0 rounded-lg border p-1.5 ${accentClass}`}>
           <Icon size={16} aria-hidden />
         </span>
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+        <span className="min-w-0 flex-1 text-xs font-semibold uppercase leading-tight tracking-wide text-slate-400 text-center md:text-left">
+          {label}
+        </span>
       </div>
-      <p className="m-0 text-xl font-extrabold tabular-nums text-white md:text-2xl">{value}</p>
-      {hint ? <p className="m-0 mt-1 text-[11px] text-slate-500">{hint}</p> : null}
+      <p className="m-0 truncate text-lg font-bold tabular-nums text-white md:text-xl" title={String(value)}>
+        {value}
+      </p>
+      {hint ? (
+        <p className="m-0 mt-1 truncate text-[11px] text-slate-500" title={hint}>
+          {hint}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -443,7 +451,7 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3">
         <KpiCard
           icon={Users}
           label="Red total"
