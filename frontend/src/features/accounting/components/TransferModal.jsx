@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Paperclip,
   Clock,
+  Info,
 } from 'lucide-react'
 import api from '../../../api/axios'
 import SearchableSelect from '../../../components/ui/SearchableSelect'
@@ -44,6 +45,76 @@ function formatMoneyQty(code, value) {
   const abs = Number.isFinite(n) ? Math.abs(n) : 0
   const s = abs.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   return `${normalizeCurrencyCode(code, 'USD')}$ ${Number.isFinite(n) && n < 0 ? `(${s})` : s}`
+}
+
+function parseDecimalInput(raw) {
+  const s = String(raw ?? '').trim().replace(/\s/g, '').replace(',', '.')
+  if (!s) return null
+  const n = Number.parseFloat(s)
+  return Number.isFinite(n) ? n : null
+}
+
+/** Formato legible para el preview (2 decimales, sin símbolo $ duplicado). */
+function formatPreviewMoney(code, value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  const formatted = Math.abs(n).toLocaleString('es-CO', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${normalizeCurrencyCode(code, 'USD')} ${formatted}`
+}
+
+/**
+ * Calcula montos debitados (origen) y acreditados (destino) según moneda del importe y tasas.
+ * @returns {{ debitAmount: number, debitCurrency: string, creditAmount: number, creditCurrency: string } | null}
+ */
+function computeTransferAmounts({
+  amountRaw,
+  srcCur,
+  dstCur,
+  txnCurrency,
+  needsCrossFx,
+  exchangeCross,
+  txnToSrcRate,
+}) {
+  if (!srcCur || !dstCur) return null
+
+  const amtTxn = parseDecimalInput(amountRaw)
+  if (amtTxn == null || amtTxn <= 0) return null
+
+  let amtSrc = null
+  if (txnCurrency === srcCur) {
+    amtSrc = amtTxn
+  } else if (needsCrossFx && txnCurrency === dstCur) {
+    const xc = parseDecimalInput(exchangeCross)
+    if (xc == null || xc <= 0) return null
+    amtSrc = amtTxn / xc
+  } else {
+    const m = parseDecimalInput(txnToSrcRate)
+    if (m == null || m <= 0) return null
+    amtSrc = amtTxn * m
+  }
+
+  if (amtSrc == null || amtSrc <= 0) return null
+
+  let amtDst = null
+  if (!needsCrossFx) {
+    amtDst = amtSrc
+  } else {
+    const xc = parseDecimalInput(exchangeCross)
+    if (xc == null || xc <= 0) return null
+    amtDst = txnCurrency === dstCur ? amtTxn : amtSrc * xc
+  }
+
+  if (amtDst == null || amtDst <= 0) return null
+
+  return {
+    debitAmount: amtSrc,
+    debitCurrency: srcCur,
+    creditAmount: amtDst,
+    creditCurrency: dstCur,
+  }
 }
 
 const TRANSFER_ATTACH_MAX_BYTES = 20 * 1024 * 1024
@@ -160,19 +231,16 @@ export default function TransferModal({
   )
 
   function deriveAmountSrc() {
-    const raw = String(amount).trim().replace(/\s/g, '').replace(',', '.')
-    const amt = Number.parseFloat(raw)
-    if (!Number.isFinite(amt) || amt <= 0) return null
-    if (!srcCur || !txnCurrency) return null
-    if (txnCurrency === srcCur) return amt
-    if (needsCrossFx && txnCurrency === dstCur) {
-      const xc = Number.parseFloat(String(exchangeCross).replace(',', '.'))
-      if (!Number.isFinite(xc) || xc <= 0) return null
-      return amt / xc
-    }
-    const m = Number.parseFloat(String(txnToSrcRate).replace(',', '.'))
-    if (!Number.isFinite(m) || m <= 0) return null
-    return amt * m
+    const preview = computeTransferAmounts({
+      amountRaw: amount,
+      srcCur,
+      dstCur,
+      txnCurrency,
+      needsCrossFx,
+      exchangeCross,
+      txnToSrcRate,
+    })
+    return preview?.debitAmount ?? null
   }
 
   const fetchAccountsData = useCallback(async ({ showSpinner = true } = {}) => {
@@ -440,6 +508,22 @@ export default function TransferModal({
   const dstMeta = currencyMeta(dstCur || txnCurrency || 'USD')
   const txnMeta = currencyMeta(txnCurrency)
 
+  const transferPreview = useMemo(
+    () =>
+      sourceId && destId
+        ? computeTransferAmounts({
+            amountRaw: amount,
+            srcCur,
+            dstCur,
+            txnCurrency,
+            needsCrossFx,
+            exchangeCross,
+            txnToSrcRate,
+          })
+        : null,
+    [amount, sourceId, destId, srcCur, dstCur, txnCurrency, needsCrossFx, exchangeCross, txnToSrcRate],
+  )
+
   return (
     <div className="fixed inset-0 z-[215] flex items-center justify-center p-3 sm:p-6 font-sans text-gray-900">
       <button
@@ -665,6 +749,39 @@ export default function TransferModal({
                   className="box-border w-full max-w-md h-10 rounded-md border border-gray-300 bg-white px-3 text-sm tabular-nums focus:outline-none focus-visible:ring-0"
                 />
               </div>
+
+              {transferPreview ? (
+                <div
+                  role="status"
+                  className={`rounded-lg border px-4 py-3 text-sm ${
+                    needsCrossFx
+                      ? 'bg-blue-50 border-blue-100 text-blue-950'
+                      : 'bg-green-50 border-green-100 text-green-950'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <Info
+                      size={18}
+                      className={`shrink-0 mt-0.5 ${needsCrossFx ? 'text-blue-600' : 'text-green-700'}`}
+                      aria-hidden
+                    />
+                    <div className="min-w-0 space-y-1">
+                      <p className="font-semibold">Resumen de la operación</p>
+                      <p className="leading-relaxed">
+                        Se debitarán{' '}
+                        <span className="font-semibold tabular-nums">
+                          {formatPreviewMoney(transferPreview.debitCurrency, transferPreview.debitAmount)}
+                        </span>{' '}
+                        de la cuenta origen y se acreditarán{' '}
+                        <span className="font-semibold tabular-nums">
+                          {formatPreviewMoney(transferPreview.creditCurrency, transferPreview.creditAmount)}
+                        </span>{' '}
+                        en la cuenta destino.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             {/* Notas / adjuntos */}
