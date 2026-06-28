@@ -14,6 +14,12 @@ import {
 } from 'lucide-react'
 
 const TREE_LINK_CLASS = 'portal-neon-tree-link'
+const TREE_DEPTH_FACTOR = 168
+const TREE_NODE_SIZE_X = 300
+const TREE_NODE_SIZE_Y = 150
+const TREE_SIBLING_SEP = 1.12
+const TREE_CANVAS_PADDING_X = 200
+const TREE_CANVAS_PADDING_Y = 160
 
 const NETWORK_BENEFITS = [
   'Crea subclientes ilimitados',
@@ -114,6 +120,41 @@ function apiNodeToRd3(node, fallbackNivel = 1) {
   return out
 }
 
+function treeLayoutDepth(node) {
+  const children = node?.children || []
+  if (!children.length) return 1
+  return 1 + Math.max(...children.map(treeLayoutDepth))
+}
+
+function treeLayoutLeaves(node) {
+  const children = node?.children || []
+  if (!children.length) return 1
+  return children.reduce((sum, child) => sum + treeLayoutLeaves(child), 0)
+}
+
+/** Tamaño del lienzo SVG: debe cubrir todo el árbol o react-d3-tree recorta nodos inferiores. */
+function computeTreeCanvasDimensions(rd3Node, viewportWidth, viewportMinHeight) {
+  const vpW = Math.max(Number(viewportWidth) || 320, 320)
+  const vpH = Math.max(Number(viewportMinHeight) || 500, 500)
+  if (!rd3Node) {
+    return { width: vpW, height: vpH }
+  }
+
+  const depth = treeLayoutDepth(rd3Node)
+  const leaves = Math.max(treeLayoutLeaves(rd3Node), 1)
+  const computedHeight = Math.ceil(
+    depth * TREE_DEPTH_FACTOR + TREE_NODE_SIZE_Y + TREE_CANVAS_PADDING_Y + 80,
+  )
+  const computedWidth = Math.ceil(
+    Math.max(leaves * TREE_NODE_SIZE_X * TREE_SIBLING_SEP, TREE_NODE_SIZE_X) + TREE_CANVAS_PADDING_X,
+  )
+
+  return {
+    width: Math.max(vpW, computedWidth),
+    height: Math.max(vpH, computedHeight),
+  }
+}
+
 function NeonTreeNodeCard({ nodeDatum, toggleNode }) {
   const attrs = nodeDatum?.attributes || {}
   const hasChildren = Array.isArray(nodeDatum?.children) && nodeDatum.children.length > 0
@@ -196,7 +237,7 @@ function KpiCard({ icon: Icon, label, value, hint, accentClass }) {
 
 export default function NetworkDashboard({ dashboard, loading = false, error = null, onRefresh, className = '' }) {
   const containerRef = useRef(null)
-  const [dimensions, setDimensions] = useState({ width: 900, height: 460 })
+  const [viewportSize, setViewportSize] = useState({ width: 900, height: 520 })
   const [treeKey, setTreeKey] = useState(0)
 
   const tree = dashboard?.tree ?? null
@@ -204,26 +245,43 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
   const levelCounts = Array.isArray(dashboard?.level_counts) ? dashboard.level_counts : []
   const currency = String(metrics?.currency ?? tree?.currency ?? 'USD').trim().slice(0, 10) || 'USD'
 
+  const rd3Data = useMemo(() => apiNodeToRd3(tree), [tree])
+
+  const canvasDimensions = useMemo(
+    () => computeTreeCanvasDimensions(rd3Data, viewportSize.width, viewportSize.height),
+    [rd3Data, viewportSize.height, viewportSize.width],
+  )
+
   useEffect(() => {
     setTreeKey((k) => k + 1)
   }, [tree?.id])
 
   useEffect(() => {
-    function measure() {
-      if (!containerRef.current) return
-      const rect = containerRef.current.getBoundingClientRect()
-      setDimensions({
+    const el = containerRef.current
+    if (!el) return undefined
+
+    const measure = () => {
+      const rect = el.getBoundingClientRect()
+      setViewportSize({
         width: Math.max(Math.floor(rect.width), 320),
-        height: Math.max(Math.floor(rect.height), 380),
+        height: Math.max(Math.floor(rect.height), 500),
       })
     }
+
     measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
     window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
   }, [])
 
-  const rd3Data = useMemo(() => apiNodeToRd3(tree), [tree])
-  const translate = useMemo(() => ({ x: dimensions.width / 2, y: 64 }), [dimensions.width])
+  const translate = useMemo(
+    () => ({ x: canvasDimensions.width / 2, y: 72 }),
+    [canvasDimensions.width],
+  )
 
   const renderCustomNode = useCallback((props) => <NeonTreeNodeCard {...props} />, [])
 
@@ -342,7 +400,7 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
 
       <div
         ref={containerRef}
-        className="portal-neon-tree-shell relative min-h-[420px] overflow-hidden rounded-2xl border border-slate-700/55 bg-[#04070f]"
+        className="portal-neon-tree-shell relative h-[min(72vh,680px)] w-full min-h-[500px] overflow-hidden rounded-2xl border border-slate-700/55 bg-[#0B1021] md:min-h-[600px] md:h-[600px]"
       >
         <style>{`
           .portal-neon-tree-shell .${TREE_LINK_CLASS} {
@@ -356,32 +414,41 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
             fill: transparent;
             stroke: none;
           }
+          .portal-neon-tree-shell .rd3t-svg {
+            display: block;
+            overflow: visible;
+          }
+          .portal-neon-tree-shell .rd3t-g {
+            overflow: visible;
+          }
         `}</style>
-        {rd3Data ? (
-          <Tree
-            key={treeKey}
-            data={rd3Data}
-            orientation="vertical"
-            pathFunc="step"
-            pathClassFunc={() => TREE_LINK_CLASS}
-            translate={translate}
-            dimensions={dimensions}
-            nodeSize={{ x: 300, y: 150 }}
-            separation={{ siblings: 1.12, nonSiblings: 1.28 }}
-            zoomable
-            scaleExtent={{ min: 0.2, max: 2.2 }}
-            zoom={0.82}
-            shouldRenderForeignObjects
-            renderCustomNodeElement={renderCustomNode}
-            enableLegacyTransitions
-            transitionDuration={280}
-            depthFactor={168}
-          />
-        ) : (
-          <div className="flex h-full min-h-[420px] items-center justify-center px-6 text-center text-sm text-slate-400">
-            Tu red aún no tiene subdistribuidores. Aparecerán aquí en cascada.
-          </div>
-        )}
+        <div className="absolute inset-0 overflow-hidden">
+          {rd3Data ? (
+            <Tree
+              key={treeKey}
+              data={rd3Data}
+              orientation="vertical"
+              pathFunc="step"
+              pathClassFunc={() => TREE_LINK_CLASS}
+              translate={translate}
+              dimensions={canvasDimensions}
+              nodeSize={{ x: TREE_NODE_SIZE_X, y: TREE_NODE_SIZE_Y }}
+              separation={{ siblings: TREE_SIBLING_SEP, nonSiblings: 1.28 }}
+              zoomable
+              scaleExtent={{ min: 0.15, max: 2.4 }}
+              zoom={0.78}
+              shouldRenderForeignObjects
+              renderCustomNodeElement={renderCustomNode}
+              enableLegacyTransitions
+              transitionDuration={280}
+              depthFactor={TREE_DEPTH_FACTOR}
+            />
+          ) : (
+            <div className="flex h-full min-h-[500px] items-center justify-center px-6 pb-20 text-center text-sm text-slate-400">
+              Tu red aún no tiene subdistribuidores. Aparecerán aquí en cascada.
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
