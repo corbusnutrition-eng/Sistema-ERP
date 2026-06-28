@@ -863,11 +863,15 @@ export default function Sales() {
     await _doActivateSale(sale)
   }
 
-  async function _doActivateSale(sale) {
+  async function _doActivateSale(sale, overrideAccountId = null) {
     const action = saleStaffReviewAction(sale)
     setActivatingId(sale.id)
     try {
-      await api.patch(`/api/v1/sales/${sale.id}/activate`)
+      const body =
+        overrideAccountId != null && Number.isFinite(Number(overrideAccountId))
+          ? { override_account_id: Number(overrideAccountId) }
+          : undefined
+      await api.patch(`/api/v1/sales/${sale.id}/activate`, body)
       await fetchSales()
       if (action !== 'approve_payment') {
         await refreshInventoryData()
@@ -1292,7 +1296,7 @@ export default function Sales() {
           sale={reviewActivateSale}
           activating={activatingId === reviewActivateSale.id}
           onClose={() => { if (activatingId !== reviewActivateSale.id) setReviewActivateSale(null) }}
-          onConfirm={() => _doActivateSale(reviewActivateSale)}
+          onConfirm={(overrideAccountId) => _doActivateSale(reviewActivateSale, overrideAccountId)}
         />
       )}
 

@@ -505,6 +505,11 @@ class ApproveWalletRechargePayload(BaseModel):
             "Si se omite, se asume igual al saldo pendiente de la solicitud (compatibilidad)."
         ),
     )
+    override_account_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Cuenta bancaria real donde ingresó el dinero (reemplaza la declarada por el cliente).",
+    )
 
     @field_validator("received_amount", mode="before")
     @classmethod

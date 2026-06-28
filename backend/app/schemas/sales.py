@@ -905,8 +905,22 @@ class PendingBankPaymentBrief(BaseModel):
     payment_number: Optional[str] = None
     amount: float
     currency: str
+    deposit_account_id: Optional[int] = Field(
+        default=None,
+        description="Cuenta bancaria declarada por el cliente para este comprobante.",
+    )
     receipt_url: Optional[str] = Field(
         default=None, description="Ruta relativa del comprobante (p. ej. /uploads/…)."
+    )
+
+
+class SaleApprovalBody(BaseModel):
+    """Opciones al activar/aprobar una venta con comprobante en revisión."""
+
+    override_account_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Cuenta bancaria real donde ingresó el dinero (reemplaza la declarada por el cliente).",
     )
 
 
@@ -923,4 +937,8 @@ class SalePortalPaymentConsolidated(BaseModel):
     balance_due: float
     amount_paid_registered: float
     auto_credit_applied: float
+    default_deposit_account_id: Optional[int] = Field(
+        default=None,
+        description="Cuenta sugerida para acreditar el ingreso (venta o comprobante pendiente).",
+    )
     pending_bank_review: Optional[PendingBankPaymentBrief] = None

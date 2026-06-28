@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 
 import api from '../../api/axios'
+import SearchableSelect from '../../components/ui/SearchableSelect'
 import usePermissions from '../../hooks/usePermissions'
 import {
   BAAS_TAB_PERMISSIONS,
@@ -319,6 +320,7 @@ export default function DistributorsBaaSPage() {
   const [approveModalOpen, setApproveModalOpen] = useState(false)
   const [approveRow, setApproveRow] = useState(null)
   const [approveReceived, setApproveReceived] = useState('')
+  const [approveDepositAccountId, setApproveDepositAccountId] = useState('')
 
   const [reqMetrics, setReqMetrics] = useState({
     pending: 0,
@@ -565,24 +567,27 @@ export default function DistributorsBaaSPage() {
   }, [])
 
   useEffect(() => {
-    if (!linkModalOpen) return
+    if (!linkModalOpen && !approveModalOpen) return
     let cancelled = false
 
-    cargarClientesModalRecarga()
+    if (linkModalOpen) cargarClientesModalRecarga()
 
-    api
-      .get('/api/v1/payment-methods/')
-      .then(({ data }) => {
-        if (cancelled) return
-        const list = Array.isArray(data) ? data : []
-        list.sort((a, b) =>
-          String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'es', { sensitivity: 'base' }),
-        )
-        setPaymentMethods(list)
-      })
-      .catch(() => {
-        if (!cancelled) setPaymentMethods([])
-      })
+    if (linkModalOpen) {
+      api
+        .get('/api/v1/payment-methods/')
+        .then(({ data }) => {
+          if (cancelled) return
+          const list = Array.isArray(data) ? data : []
+          list.sort((a, b) =>
+            String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'es', { sensitivity: 'base' }),
+          )
+          setPaymentMethods(list)
+        })
+        .catch(() => {
+          if (!cancelled) setPaymentMethods([])
+        })
+    }
+
     api
       .get('/api/v1/accounts/deposit-options')
       .then(({ data }) => {
@@ -599,7 +604,7 @@ export default function DistributorsBaaSPage() {
     return () => {
       cancelled = true
     }
-  }, [linkModalOpen, cargarClientesModalRecarga])
+  }, [linkModalOpen, approveModalOpen, cargarClientesModalRecarga])
 
   useEffect(() => {
     if (!linkModalOpen || clientesLoading) return
@@ -613,6 +618,30 @@ export default function DistributorsBaaSPage() {
       ),
     [depositAccounts],
   )
+
+  const approveDepositSelectOptions = useMemo(() => {
+    const accs = Array.isArray(depositAccounts) ? depositAccounts : []
+    const cur = normalizeCurrencyCode(approveRow?.recharge_currency ?? 'USD', 'USD')
+    const map = new Map()
+    for (const a of accs) {
+      if (isDepositGroupingParent(a?.id)) continue
+      const accCur = normalizeCurrencyCode(a?.currency ?? 'USD', 'USD')
+      if (accCur !== cur) continue
+      if (!map.has(accCur)) map.set(accCur, [])
+      map.get(accCur).push(a)
+    }
+    const opts = []
+    for (const [c, list] of [...map.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      opts.push({ value: `__hdr_${c}`, label: `— ${c} —`, disabled: true })
+      for (const a of list) {
+        opts.push({
+          value: String(a.id),
+          label: `${a.name}${a.account_number ? ` · ${a.account_number}` : ''} (${c})`,
+        })
+      }
+    }
+    return opts
+  }, [approveRow?.recharge_currency, depositAccounts, isDepositGroupingParent])
 
   const salePaymentMethodOptions = useMemo(() => {
     const pms = Array.isArray(paymentMethods) ? paymentMethods : []
@@ -1042,6 +1071,21 @@ export default function DistributorsBaaSPage() {
     return Number.isFinite(pendOk) ? String(pendOk) : ''
   }
 
+  function defaultDepositAccountForRechargeApprove(row) {
+    if (row?.portal_submitted_deposit_account_id != null) {
+      return String(row.portal_submitted_deposit_account_id)
+    }
+    return ''
+  }
+
+  function rechargeApproveRequiresDepositAccount(row) {
+    const linked = Array.isArray(row?.linked_payments) ? row.linked_payments : []
+    const pending = linked.find((p) => String(p?.kind ?? '').includes('under_review'))
+    if (!pending) return true
+    const kind = String(pending.kind ?? '')
+    return kind !== 'credit_under_review'
+  }
+
   async function openApproveModal(row) {
     if (!row || row.status !== 'in_review') return
     let hydrated = row
@@ -1053,6 +1097,7 @@ export default function DistributorsBaaSPage() {
     }
     setApproveRow(hydrated)
     setApproveReceived(defaultReceivedAmountForApprove(hydrated))
+    setApproveDepositAccountId(defaultDepositAccountForRechargeApprove(hydrated))
     setApproveModalOpen(true)
   }
 
@@ -1060,6 +1105,7 @@ export default function DistributorsBaaSPage() {
     setApproveModalOpen(false)
     setApproveRow(null)
     setApproveReceived('')
+    setApproveDepositAccountId('')
   }
 
   async function submitApproveRecharge(ev) {
@@ -1071,11 +1117,17 @@ export default function DistributorsBaaSPage() {
       showToast('Indica un monto percibido válido mayor que cero.')
       return
     }
+    if (rechargeApproveRequiresDepositAccount(approveRow) && !approveDepositAccountId) {
+      showToast('Selecciona la cuenta bancaria donde ingresó el dinero.')
+      return
+    }
     setProcessingReqId(id)
     try {
-      const { data } = await api.post(`/api/v1/distributors/approve-recharge/${id}`, {
-        received_amount: recv,
-      })
+      const payload = { received_amount: recv }
+      if (approveDepositAccountId) {
+        payload.override_account_id = Number(approveDepositAccountId)
+      }
+      const { data } = await api.post(`/api/v1/distributors/approve-recharge/${id}`, payload)
       const pendingAfter = Number(data?.request?.balance_pending ?? data?.request?.pending_amount ?? 0)
       const pendBefore = Number(approveRow?.balance_pending ?? 0)
       const surplus =
@@ -2009,6 +2061,26 @@ export default function DistributorsBaaSPage() {
                   className="w-full px-3 py-2 border border-gray-200 rounded-xl text-gray-900 font-mono tabular-nums"
                 />
               </div>
+              {rechargeApproveRequiresDepositAccount(approveRow) ? (
+                <div>
+                  <label htmlFor="recharge-admin-deposit" className="block text-xs font-medium text-gray-500 mb-1">
+                    Cuenta a acreditar
+                  </label>
+                  <SearchableSelect
+                    id="recharge-admin-deposit"
+                    value={approveDepositAccountId}
+                    onChange={(v) => setApproveDepositAccountId(String(v ?? ''))}
+                    options={approveDepositSelectOptions}
+                    placeholder="Seleccionar cuenta bancaria"
+                    clearLabel="Seleccionar cuenta bancaria"
+                    disabled={processingReqId === approveRow.id}
+                  />
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-gray-600">
+                    Si el comprobante corresponde a otra cuenta distinta a la declarada por el cliente, corrígela aquí
+                    antes de confirmar.
+                  </p>
+                </div>
+              ) : null}
               <div className="flex gap-2 justify-end pt-1">
                 <button
                   type="button"

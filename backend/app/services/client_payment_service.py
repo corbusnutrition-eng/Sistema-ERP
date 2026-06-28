@@ -2028,6 +2028,49 @@ def append_client_payment_notes_unique(existing: Optional[str], addition: Option
     return dedupe_notes_portal_general_abono_chunks(merged)
 
 
+def resolve_liquid_deposit_account_id(db: Session, deposit_account_id: Optional[int]) -> Optional[int]:
+    """Valida y devuelve un id de cuenta líquida activa (banco/efectivo)."""
+    if deposit_account_id is None:
+        return None
+    from app.account_constants import is_liquid_deposit_account
+    from app.models.account import Account
+    from fastapi import HTTPException, status
+
+    acc = db.get(Account, int(deposit_account_id))
+    if acc is None or not acc.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cuenta de depósito no válida o inactiva.",
+        )
+    if not is_liquid_deposit_account(acc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La cuenta de depósito debe ser de efectivo y equivalentes (p. ej. Banco).",
+        )
+    return int(deposit_account_id)
+
+
+def apply_override_deposit_account_id(
+    db: Session,
+    override_account_id: Optional[int],
+    *,
+    payment: Optional[ClientPayment] = None,
+    sale: Optional[Sale] = None,
+    wallet_recharge: Optional[WalletRechargeRequest] = None,
+) -> None:
+    """Aplica corrección de cuenta bancaria antes de generar el asiento contable."""
+    if override_account_id is None:
+        return
+    resolved = resolve_liquid_deposit_account_id(db, int(override_account_id))
+    if payment is not None:
+        payment.deposit_account_id = resolved
+    if sale is not None and getattr(sale, "deposit_account_id", None) != resolved:
+        sale.deposit_account_id = resolved
+    if wallet_recharge is not None:
+        wallet_recharge.portal_submitted_deposit_account_id = resolved
+    db.flush()
+
+
 def resolve_client_payment_deposit_account_id(db: Session, payment: ClientPayment) -> Optional[int]:
     """Cuenta bancaria del cobro: la del pago o, si falta, la de la venta vinculada."""
     dep_id = getattr(payment, "deposit_account_id", None)
@@ -2169,6 +2212,7 @@ def finalize_client_payment_approval(
     manual_rows: Optional[list[dict]] = None,
     fifo_fallback: bool = True,
     strict_accounting: bool = True,
+    override_account_id: Optional[int] = None,
 ) -> tuple[list[PaymentAllocation], Decimal]:
     """
     Aprueba un ``ClientPayment`` en revisión dentro de la sesión actual (sin ``commit``):
@@ -2181,6 +2225,35 @@ def finalize_client_payment_approval(
         raise ValueError(f"El pago {payment.payment_number} no está en revisión.")
 
     _deduct_reserved_credit_on_payment_approval(db, payment)
+
+    linked_sale: Optional[Sale] = None
+    linked_wr: Optional[WalletRechargeRequest] = None
+    meta_sid = parse_notes_meta_sale_id(payment.notes)
+    if meta_sid is not None:
+        linked_sale = db.get(Sale, int(meta_sid))
+    from app.services.wallet_recharge_client_payment import parse_notes_meta_wallet_recharge_id
+
+    meta_wr_id = parse_notes_meta_wallet_recharge_id(payment.notes)
+    if meta_wr_id is not None:
+        linked_wr = db.get(WalletRechargeRequest, int(meta_wr_id))
+    if linked_sale is None:
+        for alloc in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == int(payment.id)).all():
+            if alloc.sale_id is not None:
+                linked_sale = db.get(Sale, int(alloc.sale_id))
+                break
+    if linked_wr is None:
+        for alloc in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == int(payment.id)).all():
+            if alloc.wallet_recharge_id is not None:
+                linked_wr = db.get(WalletRechargeRequest, int(alloc.wallet_recharge_id))
+                break
+
+    apply_override_deposit_account_id(
+        db,
+        override_account_id,
+        payment=payment,
+        sale=linked_sale,
+        wallet_recharge=linked_wr,
+    )
 
     resolved_dep = resolve_client_payment_deposit_account_id(db, payment)
     if resolved_dep is not None and payment.deposit_account_id is None:
@@ -2925,6 +2998,7 @@ def approve_pending_linked_client_payments_for_sale(
     sale: Sale,
     *,
     strict_accounting: bool = True,
+    override_account_id: Optional[int] = None,
 ) -> None:
     """
     Al activar una venta con cobro en revisión: aprueba pagos vinculados y aplica waterfall CxC.
@@ -2964,6 +3038,7 @@ def approve_pending_linked_client_payments_for_sale(
             manual_rows=primary_rows,
             fifo_fallback=True,
             strict_accounting=strict_accounting,
+            override_account_id=override_account_id,
         )
 
     db.flush()
@@ -3822,6 +3897,7 @@ def finalize_wallet_recharge_payment_approval(
     *,
     wallet_tx_type: str = _TX_RECHARGE,
     strict_accounting: bool = True,
+    override_account_id: Optional[int] = None,
 ) -> tuple["WalletTransaction", Optional[ClientPayment], float, float, float]:
     """
     Aprueba un comprobante BaaS en revisión (admin):
@@ -3842,6 +3918,9 @@ def finalize_wallet_recharge_payment_approval(
     pending_before = float(getattr(req, "balance_pending", 0) or 0)
     wr_cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
 
+    if override_account_id is not None:
+        apply_override_deposit_account_id(db, override_account_id, wallet_recharge=req)
+
     from app.wallet_recharge_helpers import wallet_recharge_is_retiro_instant_cxc
 
     credited_before = _wallet_credited_for_recharge_request(db, req)
@@ -3857,6 +3936,7 @@ def finalize_wallet_recharge_payment_approval(
         client=client,
         received_amount=recv,
         strict_accounting=strict_accounting,
+        override_account_id=override_account_id,
     )
     if cp is None:
         cp = ensure_pending_client_payment_for_wallet_recharge(
@@ -3872,6 +3952,7 @@ def finalize_wallet_recharge_payment_approval(
                 client=client,
                 received_amount=recv,
                 strict_accounting=strict_accounting,
+                override_account_id=override_account_id,
             )
 
     db.refresh(req)

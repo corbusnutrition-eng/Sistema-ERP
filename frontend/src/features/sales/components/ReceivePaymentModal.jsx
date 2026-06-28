@@ -551,12 +551,16 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
     setSaving(true)
     try {
       if (reviewMode && prefill?.paymentId) {
-        await api.patch(`/api/v1/payments/${prefill.paymentId}/approve`, {
+        const approvePayload = {
           amount: headerAmount,
           reference_number: referenceNo.trim() || undefined,
           notes: note.trim() || undefined,
           allocations,
-        })
+        }
+        if (depositAccountId && !isPortalSaldoCrossNoReceipt) {
+          approvePayload.override_account_id = Number(depositAccountId)
+        }
+        await api.patch(`/api/v1/payments/${prefill.paymentId}/approve`, approvePayload)
         onToast?.(
           `Pago ${prefill.paymentNumber || `#${prefill.paymentId}`} aprobado y aplicado a ${allocations.length} factura(s).`,
           'success',
@@ -759,7 +763,9 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
 
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>Depositar en</label>
+              <label className={labelCls}>
+                {reviewMode ? 'Cuenta a acreditar' : 'Depositar en'}
+              </label>
               <SearchableSelect
                 value={depositAccountId}
                 onChange={handleDepositAccountChange}
@@ -768,6 +774,12 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 clearLabel="Seleccionar cuenta"
                 disabled={viewMode || (reviewMode && isPortalSaldoCrossNoReceipt)}
               />
+              {reviewMode && !isPortalSaldoCrossNoReceipt && !viewMode ? (
+                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-600">
+                  Si el comprobante corresponde a otra cuenta bancaria distinta a la declarada por el cliente, cámbiala
+                  aquí antes de aprobar.
+                </p>
+              ) : null}
               {reviewMode && isPortalSaldoCrossNoReceipt && !viewMode ? (
                 <p className="mt-2 text-[11px] leading-relaxed text-emerald-800">
                   Esta solicitud solo cruza saldo a favor sin ingreso a cuenta; puedes dejar este campo sin elegir cuenta

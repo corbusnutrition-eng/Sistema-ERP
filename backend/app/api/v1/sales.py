@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Optional
 from urllib.parse import quote as url_quote, unquote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, nullslast
 from sqlalchemy.orm import Session, joinedload
@@ -47,6 +47,7 @@ from app.schemas.sales import (
     PendingReviewPaymentOut,
     PendingBankPaymentBrief,
     PublicSaleReport,
+    SaleApprovalBody,
     SaleCreate,
     SaleExtendTimerBody,
     SaleInvoiceLineItem,
@@ -3476,8 +3477,15 @@ def get_sale_portal_payment_consolidated(sale_id: int, db: DbDep, _: SalesInvoic
             payment_number=str(pdep.payment_number) if pdep.payment_number else None,
             amount=float(amt_dec),
             currency=normalize_currency_code(str(pdep.currency or cur)),
+            deposit_account_id=int(pdep.deposit_account_id) if pdep.deposit_account_id is not None else None,
             receipt_url=str(pdep.receipt_file_url).strip() if pdep.receipt_file_url else None,
         )
+
+    default_dep: Optional[int] = None
+    if sale.deposit_account_id is not None:
+        default_dep = int(sale.deposit_account_id)
+    elif pending_bank is not None and pending_bank.deposit_account_id is not None:
+        default_dep = int(pending_bank.deposit_account_id)
 
     bal_out = balance if balance > Decimal("0.005") else Decimal("0")
 
@@ -3489,6 +3497,7 @@ def get_sale_portal_payment_consolidated(sale_id: int, db: DbDep, _: SalesInvoic
         balance_due=float(bal_out.quantize(Decimal("0.01"))),
         amount_paid_registered=float(Decimal(str(sale.amount_paid or 0)).quantize(Decimal("0.01"))),
         auto_credit_applied=float(credit_sum_dec.quantize(Decimal("0.01"))),
+        default_deposit_account_id=default_dep,
         pending_bank_review=pending_bank,
     )
 
@@ -3534,8 +3543,13 @@ def patch_sale_instant_activation_by_ref(
     response_model=SaleResponse,
     summary="Activar venta o aprobar cobro CxC (según inventario ya entregado)",
 )
-def patch_activate_sale(sale_id: int, db: DbDep) -> SaleResponse:
-    return _activate_sale_record(db, sale_id)
+def patch_activate_sale(
+    sale_id: int,
+    db: DbDep,
+    body: Annotated[Optional[SaleApprovalBody], Body()] = None,
+) -> SaleResponse:
+    override = body.override_account_id if body is not None else None
+    return _activate_sale_record(db, sale_id, override_account_id=override)
 
 
 @router.post(
@@ -3543,8 +3557,13 @@ def patch_activate_sale(sale_id: int, db: DbDep) -> SaleResponse:
     response_model=SaleResponse,
     summary="Alias de activación (compatibilidad)",
 )
-def approve_sale(sale_id: int, db: DbDep) -> SaleResponse:
-    return _activate_sale_record(db, sale_id)
+def approve_sale(
+    sale_id: int,
+    db: DbDep,
+    body: Annotated[Optional[SaleApprovalBody], Body()] = None,
+) -> SaleResponse:
+    override = body.override_account_id if body is not None else None
+    return _activate_sale_record(db, sale_id, override_account_id=override)
 
 
 @router.put(
@@ -4597,6 +4616,8 @@ def _finalize_sale_payment_approval_only(
     db: Session,
     sale: Sale,
     client: Client,
+    *,
+    override_account_id: Optional[int] = None,
 ) -> SaleResponse:
     """
     Aprueba comprobantes CxC vinculados sin tocar inventario ni reservas de catálogo.
@@ -4608,7 +4629,14 @@ def _finalize_sale_payment_approval_only(
             detail="Esta venta no tiene un comprobante de abono pendiente de revisión.",
         )
 
-    approve_pending_linked_client_payments_for_sale(db, sale, strict_accounting=True)
+    if override_account_id is not None:
+        from app.services.client_payment_service import apply_override_deposit_account_id
+
+        apply_override_deposit_account_id(db, override_account_id, sale=sale)
+
+    approve_pending_linked_client_payments_for_sale(
+        db, sale, strict_accounting=True, override_account_id=override_account_id
+    )
     db.refresh(sale)
     _approve_pending_payment_events(sale)
     _maybe_set_partially_paid(sale)
@@ -4682,7 +4710,9 @@ def _maybe_set_partially_paid(sale: Sale) -> None:
         pass
 
 
-def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
+def _activate_sale_record(
+    db: Session, sale_id: int, *, override_account_id: Optional[int] = None
+) -> SaleResponse:
     expire_pending_sales_if_needed(db)
     sale = (
         db.query(Sale)
@@ -4721,7 +4751,9 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
     # Venta ya activada: comprobante adicional → solo cobro CxC (sin inventario).
     if sale.status != SaleStatus.pending and _sale_inventory_already_fulfilled(db, sale):
         if sale.status in (SaleStatus.payment_submitted, SaleStatus.partially_paid):
-            return _finalize_sale_payment_approval_only(db, sale, client)
+            return _finalize_sale_payment_approval_only(
+                db, sale, client, override_account_id=override_account_id
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="La venta ya está activada; no requiere aprovisionamiento de inventario.",
@@ -4893,7 +4925,13 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
             SaleStatus.payment_submitted,
             SaleStatus.partially_paid,
         ):
-            approve_pending_linked_client_payments_for_sale(db, sale, strict_accounting=True)
+            if override_account_id is not None:
+                from app.services.client_payment_service import apply_override_deposit_account_id
+
+                apply_override_deposit_account_id(db, override_account_id, sale=sale)
+            approve_pending_linked_client_payments_for_sale(
+                db, sale, strict_accounting=True, override_account_id=override_account_id
+            )
             db.flush()
             db.refresh(sale)
 

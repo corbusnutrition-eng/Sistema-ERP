@@ -1369,6 +1369,7 @@ def approve_wallet_recharge(
             recv,
             wallet_tx_type=TX_RECHARGE,
             strict_accounting=True,
+            override_account_id=body.override_account_id if body is not None else None,
         )
         db.commit()
     except HTTPException:
