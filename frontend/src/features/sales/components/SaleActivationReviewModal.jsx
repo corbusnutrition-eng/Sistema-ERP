@@ -21,7 +21,7 @@ import {
   staffReviewConfirmLabel,
   staffReviewModalTitle,
 } from '../saleStaffReview'
-import {
+import OcrSecurityBadges, {
   isIllegibleDeclaredRecord,
   IllegibleReceiptAlert,
 } from '../../../components/OcrSecurityBadges'
