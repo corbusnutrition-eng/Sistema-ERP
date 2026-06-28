@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { X, Plus, Trash2 } from 'lucide-react'
 import FinancialSummarySidebar from '../../components/ui/FinancialSummarySidebar'
-import OcrSecurityBadges from '../../components/OcrSecurityBadges'
+import OcrSecurityBadges, {
+  IllegibleReceiptAlert,
+  buildIllegibleCheckSource,
+  isIllegibleDeclaredRecord,
+} from '../../components/OcrSecurityBadges'
 import PaymentReceiptAttachment from '../../components/ui/PaymentReceiptAttachment'
 import api from '../../api/axios'
 import { financialSummaryFromRechargeLinkedPayments } from '../../lib/financialSummaryUtils'
@@ -145,6 +149,7 @@ export default function NewRechargeModal({
   readOnlyAuditRequestId = null,
   ocrIsManuallyEdited = false,
   ocrAiConfidenceScore = null,
+  ocrPortalDeclaredAmount = null,
 }) {
   const [clientSearchMode, setClientSearchMode] = useState('nombre')
   const [clientesDesdeRender, setClientesDesdeRender] = useState([])
@@ -545,6 +550,32 @@ export default function NewRechargeModal({
     () => financialSummaryFromRechargeLinkedPayments(financialLinkedRaw),
     [financialLinkedRaw],
   )
+
+  const pendingReviewForOcr = useMemo(() => {
+    const pending = Array.isArray(financialPending) ? financialPending : []
+    return pending[0] ?? null
+  }, [financialPending])
+
+  const showIllegibleDepositAlert = useMemo(() => {
+    if (!editMode) return false
+    const rawDep = String(depositUsd ?? '').trim().replace(',', '.')
+    const parsedDep = rawDep !== '' && Number.isFinite(Number(rawDep)) ? Number(rawDep) : null
+    return isIllegibleDeclaredRecord(
+      buildIllegibleCheckSource({
+        pendingPayment: pendingReviewForOcr,
+        isManuallyEdited: ocrIsManuallyEdited,
+        aiConfidenceScore: ocrAiConfidenceScore,
+        declaredAmount: parsedDep ?? ocrPortalDeclaredAmount,
+      }),
+    )
+  }, [
+    editMode,
+    depositUsd,
+    pendingReviewForOcr,
+    ocrIsManuallyEdited,
+    ocrAiConfidenceScore,
+    ocrPortalDeclaredAmount,
+  ])
 
   const showFinancialSummary = isReadOnly || editMode
 
@@ -1108,6 +1139,11 @@ export default function NewRechargeModal({
                   {!isReadOnly ?
                     <>
                       <div>
+                        {editMode && showIllegibleDepositAlert ? (
+                          <div className="mb-2.5">
+                            <IllegibleReceiptAlert className="w-full" layout="block" />
+                          </div>
+                        ) : null}
                         <label
                           className="block text-[11px] font-medium text-gray-600 mb-1"
                           htmlFor="recharge-deposit-ref"
@@ -1139,6 +1175,8 @@ export default function NewRechargeModal({
                             className="mt-2"
                             is_manually_edited={ocrIsManuallyEdited}
                             ai_confidence_score={ocrAiConfidenceScore}
+                            portal_declared_payment_amount={ocrPortalDeclaredAmount}
+                            amount={ocrPortalDeclaredAmount}
                           />
                         ) : null}
                       </div>

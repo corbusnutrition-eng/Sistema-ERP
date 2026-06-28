@@ -46,6 +46,8 @@ import OcrSecurityBadges, {
   pickOcrFlagsFromRecharge,
   isIllegibleDeclaredRecord,
   IllegibleReceiptAlert,
+  declaredDepositInputValueFromReview,
+  pickPendingReviewLinkedPayment,
 } from '../../components/OcrSecurityBadges'
 
 const NotificationManagementPanel = lazy(() => import('./NotificationManagementPanel'))
@@ -494,11 +496,7 @@ export default function DistributorsBaaSPage() {
             hydrated = row
           }
           setApproveRow(hydrated)
-          const pendRaw = hydrated.balance_pending != null ? Number(hydrated.balance_pending) : NaN
-          const pend = Number.isFinite(pendRaw) ? pendRaw : NaN
-          const target = Number(hydrated.amount_requested)
-          const pendOk = Number.isFinite(pend) ? pend : Number.isFinite(target) ? target : NaN
-          setApproveReceived(Number.isFinite(pendOk) ? String(pendOk) : '')
+          setApproveReceived(defaultReceivedAmountForApprove(hydrated))
           setApproveModalOpen(true)
         } else {
           setEditRechargeRow(row)
@@ -1038,8 +1036,14 @@ export default function DistributorsBaaSPage() {
 
   function defaultReceivedAmountForApprove(row) {
     if (!row) return ''
+    if (isIllegibleDeclaredRecord(pickOcrFlagsFromRecharge(row))) return ''
     const decl = declaredAmountForRechargeApprove(row)
     if (decl != null) return String(decl)
+    const pendingPay = pickPendingReviewLinkedPayment(row?.linked_payments)
+    if (pendingPay) {
+      const raw = pendingPay.amount_applied ?? pendingPay.amount
+      if (raw != null && Number.isFinite(Number(raw))) return String(Number(raw))
+    }
     const pendRaw = row.balance_pending != null ? Number(row.balance_pending) : NaN
     const pend = Number.isFinite(pendRaw) ? pendRaw : NaN
     const target = Number(row.amount_requested)
@@ -1186,7 +1190,7 @@ export default function DistributorsBaaSPage() {
     }
   }
 
-  function openEditRechargeModal(row) {
+  async function openEditRechargeModal(row) {
     if (
       !row
       || !['pending', 'in_review', 'partially_paid', 'approved'].includes(row.status)
@@ -1199,41 +1203,34 @@ export default function DistributorsBaaSPage() {
       showToast('Esta solicitud no tiene correo de distribuidor para editar.')
       return
     }
-    setLinkLineItems(rechargeLinesHydrateFromAdminRow(row))
-    {
-      const pdRaw = row.portal_declared_payment_amount
-      let depStr = ''
-      if (pdRaw != null && Number.isFinite(Number(pdRaw)) && Number(pdRaw) > 0) {
-        depStr = String(Number(pdRaw))
-      } else if (row.declared_deposit_usd != null && Number.isFinite(Number(row.declared_deposit_usd))) {
-        const dusd = Number(row.declared_deposit_usd)
-        const xrEff =
-          row.recharge_exchange_rate != null && Number.isFinite(Number(row.recharge_exchange_rate))
-            ? Number(row.recharge_exchange_rate)
-            : 1
-        if (dusd >= 0) depStr = dusd > 0 ? String(Math.round(dusd * xrEff * 100) / 100) : ''
-      }
-      setLinkDepositUsd(depStr)
+    let hydrated = row
+    try {
+      const { data } = await api.get(`/api/v1/distributors/recharge-requests/${row.id}`)
+      if (data && typeof data === 'object') hydrated = { ...row, ...data }
+    } catch {
+      hydrated = row
     }
-    setLinkComment(typeof row.admin_note === 'string' ? row.admin_note : '')
+    setLinkLineItems(rechargeLinesHydrateFromAdminRow(hydrated))
+    setLinkDepositUsd(declaredDepositInputValueFromReview(hydrated))
+    setLinkComment(typeof hydrated.admin_note === 'string' ? hydrated.admin_note : '')
     setLinkClientId(email)
     setSelectedPaymentMethodIds(
-      Array.isArray(row.allowed_payment_methods)
-        ? row.allowed_payment_methods.map((id) => String(id))
+      Array.isArray(hydrated.allowed_payment_methods)
+        ? hydrated.allowed_payment_methods.map((id) => String(id))
         : [],
     )
     setSelectedDepositAccountIds(() => {
-      const depIds = Array.isArray(row.allowed_deposit_account_ids)
-        ? row.allowed_deposit_account_ids.map((id) => String(id))
+      const depIds = Array.isArray(hydrated.allowed_deposit_account_ids)
+        ? hydrated.allowed_deposit_account_ids.map((id) => String(id))
         : []
-      const submitted = row.portal_submitted_deposit_account_id
+      const submitted = hydrated.portal_submitted_deposit_account_id
       if (submitted != null && !depIds.includes(String(submitted))) {
         depIds.push(String(submitted))
       }
       return depIds
     })
     setLinkReceiptFile(null)
-    setEditRechargeRow(row)
+    setEditRechargeRow(hydrated)
     setLinkModalOpen(true)
   }
 
@@ -2180,8 +2177,23 @@ export default function DistributorsBaaSPage() {
         linkedPaymentsFromEdit={
           Array.isArray(editRechargeRow?.linked_payments) ? editRechargeRow.linked_payments : []
         }
-        ocrIsManuallyEdited={Boolean(editRechargeRow?.is_manually_edited)}
-        ocrAiConfidenceScore={editRechargeRow?.ai_confidence_score ?? null}
+        ocrIsManuallyEdited={
+          Boolean(
+            pickPendingReviewLinkedPayment(editRechargeRow?.linked_payments)?.is_manually_edited ??
+              editRechargeRow?.is_manually_edited,
+          )
+        }
+        ocrAiConfidenceScore={
+          pickPendingReviewLinkedPayment(editRechargeRow?.linked_payments)?.ai_confidence_score ??
+          editRechargeRow?.ai_confidence_score ??
+          null
+        }
+        ocrPortalDeclaredAmount={
+          pickPendingReviewLinkedPayment(editRechargeRow?.linked_payments)?.amount_applied ??
+          pickPendingReviewLinkedPayment(editRechargeRow?.linked_payments)?.amount ??
+          editRechargeRow?.portal_declared_payment_amount ??
+          null
+        }
       />
 
     </div>

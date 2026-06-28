@@ -22,6 +22,62 @@ export function isIllegibleReceiptAi(aiResult) {
   return !aiResult.is_readable
 }
 
+const PENDING_REVIEW_KINDS = new Set([
+  'receipt_under_review',
+  'mixed_under_review',
+  'credit_under_review',
+])
+
+/** Pago/comprobante en revisión dentro de linked_payments (BaaS o venta). */
+export function pickPendingReviewLinkedPayment(linked) {
+  const list = Array.isArray(linked) ? linked : []
+  return (
+    list.find(
+      (p) =>
+        PENDING_REVIEW_KINDS.has(String(p?.kind || '')) ||
+        String(p?.status_label ?? '').toLowerCase().includes('revisión'),
+    ) ?? null
+  )
+}
+
+/**
+ * Valor inicial del campo «Depósito declarado» al editar: solo el monto del pago en revisión
+ * (incluye 0). No usa saldo pendiente ni subtotal de la orden.
+ */
+export function declaredDepositInputValueFromReview(source) {
+  if (!source) return ''
+  const pending =
+    source.payment_id != null ? source : pickPendingReviewLinkedPayment(source.linked_payments)
+  if (pending) {
+    const raw = pending.amount_applied ?? pending.amount
+    if (raw != null && Number.isFinite(Number(raw))) return String(Number(raw))
+  }
+  const declared = source.portal_declared_payment_amount
+  if (declared != null && Number.isFinite(Number(declared))) return String(Number(declared))
+  return ''
+}
+
+/** Fuente unificada para alertas OCR en modales de edición ERP. */
+export function buildIllegibleCheckSource({
+  row,
+  pendingPayment,
+  isManuallyEdited,
+  aiConfidenceScore,
+  declaredAmount,
+}) {
+  const pending = pendingPayment ?? pickPendingReviewLinkedPayment(row?.linked_payments)
+  const pendingAmt = pending?.amount_applied ?? pending?.amount
+  return {
+    is_manually_edited: pending?.is_manually_edited ?? isManuallyEdited,
+    ai_confidence_score: pending?.ai_confidence_score ?? aiConfidenceScore,
+    portal_declared_payment_amount:
+      pendingAmt ??
+      declaredAmount ??
+      row?.portal_declared_payment_amount,
+    amount: pendingAmt,
+  }
+}
+
 /** True cuando el registro en ERP no tiene monto declarado válido o confidence=0. */
 export function isIllegibleDeclaredRecord(source) {
   if (!source) return false
@@ -41,8 +97,8 @@ export function IllegibleReceiptAlert({ className = '', layout = 'block' }) {
     'inline-flex items-center rounded-md bg-orange-100 px-2.5 py-1.5 text-[11px] font-bold leading-snug text-orange-950 ring-2 ring-orange-300'
   return (
     <span className={layout === 'block' ? `${base} max-w-md ${className}` : `${base} ${className}`}>
-      ⚠️ COMPROBANTE ILEGIBLE: La IA no pudo detectar el monto. Debes editar y registrar el valor
-      manualmente.
+      ⚠️ COMPROBANTE ILEGIBLE: La IA no detectó el monto. Revisa el documento e ingresa el valor
+      manualmente antes de aprobar.
     </span>
   )
 }
@@ -69,10 +125,11 @@ export function pickOcrFlagsFromRecharge(row) {
   )
   const p = pending[pending.length - 1]
   if (p) {
+    const pendingAmt = p.amount_applied ?? p.amount
     return {
       ...pickOcrSecurityFlags(p),
-      portal_declared_payment_amount: row?.portal_declared_payment_amount,
-      amount: p.amount,
+      portal_declared_payment_amount: pendingAmt ?? row?.portal_declared_payment_amount,
+      amount: pendingAmt,
     }
   }
   return {

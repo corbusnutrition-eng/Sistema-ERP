@@ -20,7 +20,12 @@ import TagsManagerPanel from '../../tags/TagsManagerPanel'
 import SaleQBTagsCreatable from './SaleQBTagsCreatable'
 import NuevaVentaInvoiceSection from './NuevaVentaInvoiceSection'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
-import OcrSecurityBadges, { pickOcrSecurityFlags } from '../../../components/OcrSecurityBadges'
+import OcrSecurityBadges, {
+  pickOcrSecurityFlags,
+  IllegibleReceiptAlert,
+  isIllegibleDeclaredRecord,
+  buildIllegibleCheckSource,
+} from '../../../components/OcrSecurityBadges'
 import { calculateExpirationStats } from '../../inventory/screenPackageExpiration'
 import {
   packageCatalogOrderedForSale,
@@ -2072,11 +2077,26 @@ export default function NuevaVentaModal({
   useEffect(() => {
     if (declaredDepositInitializedRef.current) return
     const pr = pendingReviewPayments[0]
-    if (pr?.amount != null && Number.isFinite(Number(pr.amount))) {
-      setDeclaredDepositStr(String(Number(pr.amount)))
+    if (!pr) return
+    const raw = pr.amount_applied_to_sale ?? pr.amount
+    if (raw != null && Number.isFinite(Number(raw))) {
+      setDeclaredDepositStr(String(Number(raw)))
       declaredDepositInitializedRef.current = true
     }
   }, [pendingReviewPayments])
+
+  const pendingReviewForOcr = pendingReviewPayments[0] ?? null
+  const showIllegibleDepositAlert =
+    showDeclaredDepositField &&
+    isIllegibleDeclaredRecord(
+      buildIllegibleCheckSource({
+        pendingPayment: pendingReviewForOcr,
+        declaredAmount:
+          declaredDepositStr !== '' && Number.isFinite(Number(declaredDepositStr.replace(',', '.')))
+            ? Number(declaredDepositStr.replace(',', '.'))
+            : null,
+      }),
+    )
 
   useEffect(() => {
     if (!initialSale?.id) return
@@ -4316,6 +4336,11 @@ export default function NuevaVentaModal({
           <div>
             {showDeclaredDepositField ? (
               <>
+                {showIllegibleDepositAlert ? (
+                  <div className="mb-2.5">
+                    <IllegibleReceiptAlert className="w-full" layout="block" />
+                  </div>
+                ) : null}
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   Depósito declarado ({form.currency})
                 </label>
@@ -4344,6 +4369,14 @@ export default function NuevaVentaModal({
                       pendingReviewPayments.find((p) => p?.receipt_file_url) ||
                         pendingReviewPayments[0],
                     )}
+                    portal_declared_payment_amount={
+                      pendingReviewPayments[0]?.amount_applied_to_sale ??
+                      pendingReviewPayments[0]?.amount
+                    }
+                    amount={
+                      pendingReviewPayments[0]?.amount_applied_to_sale ??
+                      pendingReviewPayments[0]?.amount
+                    }
                   />
                 ) : null}
               </>

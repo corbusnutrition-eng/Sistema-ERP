@@ -142,8 +142,9 @@ def ensure_pending_client_payment_for_wallet_recharge(
         credit_f = float(credit_amount or 0)
     except (TypeError, ValueError):
         credit_f = 0.0
+    declared_explicit_zero = declared_amount is not None and float(declared_amount) == 0.0
     if cash_f <= 0 and credit_f <= 0:
-        if allow_zero_declared and receipt:
+        if declared_explicit_zero or (allow_zero_declared and receipt):
             cash_f = 0.0
         else:
             try:
@@ -152,7 +153,7 @@ def ensure_pending_client_payment_for_wallet_recharge(
                 cash_f = 0.0
     total_f = cash_f + max(0.0, credit_f)
     if total_f <= 0:
-        if allow_zero_declared and receipt:
+        if declared_explicit_zero or (allow_zero_declared and receipt):
             total_f = 0.0
         else:
             return None
