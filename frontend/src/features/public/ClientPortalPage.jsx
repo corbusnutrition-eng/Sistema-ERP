@@ -2263,6 +2263,29 @@ function ClientPortalPageInner() {
     }
   }, [api, token])
 
+  const loadPortalNotifications = useCallback(async (opts = {}) => {
+    const silent = Boolean(opts?.silent)
+    if (!token) return
+    if (!silent) {
+      setPortalNotificationsLoading(true)
+      setPortalNotificationsErr(null)
+    }
+    try {
+      const { data: rows } = await api.get(
+        `/api/v1/portal/${encodeURIComponent(token)}/notifications`,
+      )
+      setPortalNotifications(Array.isArray(rows) ? rows : [])
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      if (!silent) {
+        setPortalNotificationsErr(typeof d === 'string' ? d : 'No se pudieron cargar las notificaciones.')
+        setPortalNotifications([])
+      }
+    } finally {
+      if (!silent) setPortalNotificationsLoading(false)
+    }
+  }, [api, token])
+
   const refreshResellerNetwork = useCallback(async () => {
     await loadSubClients()
     if (activeFilter === 'team') {
@@ -2313,29 +2336,6 @@ function ClientPortalPageInner() {
       setIsRefreshing(false)
     }
   }, [isRefreshing, refreshPortalData])
-
-  const loadPortalNotifications = useCallback(async (opts = {}) => {
-    const silent = Boolean(opts?.silent)
-    if (!token) return
-    if (!silent) {
-      setPortalNotificationsLoading(true)
-      setPortalNotificationsErr(null)
-    }
-    try {
-      const { data: rows } = await api.get(
-        `/api/v1/portal/${encodeURIComponent(token)}/notifications`,
-      )
-      setPortalNotifications(Array.isArray(rows) ? rows : [])
-    } catch (err) {
-      const d = err?.response?.data?.detail
-      if (!silent) {
-        setPortalNotificationsErr(typeof d === 'string' ? d : 'No se pudieron cargar las notificaciones.')
-        setPortalNotifications([])
-      }
-    } finally {
-      if (!silent) setPortalNotificationsLoading(false)
-    }
-  }, [api, token])
 
   const markPortalNotificationRead = useCallback(
     async (notificationId) => {
