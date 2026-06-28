@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Optional
 from urllib.parse import quote as url_quote, unquote
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, nullslast
 from sqlalchemy.orm import Session, joinedload
@@ -47,7 +47,6 @@ from app.schemas.sales import (
     PendingReviewPaymentOut,
     PendingBankPaymentBrief,
     PublicSaleReport,
-    SaleApprovalBody,
     SaleCreate,
     SaleExtendTimerBody,
     SaleInvoiceLineItem,
@@ -3543,13 +3542,8 @@ def patch_sale_instant_activation_by_ref(
     response_model=SaleResponse,
     summary="Activar venta o aprobar cobro CxC (según inventario ya entregado)",
 )
-def patch_activate_sale(
-    sale_id: int,
-    db: DbDep,
-    body: Annotated[Optional[SaleApprovalBody], Body()] = None,
-) -> SaleResponse:
-    override = body.override_account_id if body is not None else None
-    return _activate_sale_record(db, sale_id, override_account_id=override)
+def patch_activate_sale(sale_id: int, db: DbDep) -> SaleResponse:
+    return _activate_sale_record(db, sale_id)
 
 
 @router.post(
@@ -3557,13 +3551,8 @@ def patch_activate_sale(
     response_model=SaleResponse,
     summary="Alias de activación (compatibilidad)",
 )
-def approve_sale(
-    sale_id: int,
-    db: DbDep,
-    body: Annotated[Optional[SaleApprovalBody], Body()] = None,
-) -> SaleResponse:
-    override = body.override_account_id if body is not None else None
-    return _activate_sale_record(db, sale_id, override_account_id=override)
+def approve_sale(sale_id: int, db: DbDep) -> SaleResponse:
+    return _activate_sale_record(db, sale_id)
 
 
 @router.put(
@@ -4020,6 +4009,9 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
         "allowed_deposit_accounts",
     }:
         _sync_sale_allowlists_denormalized(db, sale)
+        from app.services.client_payment_service import sync_pending_payments_deposit_for_sale
+
+        sync_pending_payments_deposit_for_sale(db, sale)
 
     if "notes" in explicit_keys:
         sale.notes = raw["notes"]
@@ -4616,8 +4608,6 @@ def _finalize_sale_payment_approval_only(
     db: Session,
     sale: Sale,
     client: Client,
-    *,
-    override_account_id: Optional[int] = None,
 ) -> SaleResponse:
     """
     Aprueba comprobantes CxC vinculados sin tocar inventario ni reservas de catálogo.
@@ -4629,14 +4619,7 @@ def _finalize_sale_payment_approval_only(
             detail="Esta venta no tiene un comprobante de abono pendiente de revisión.",
         )
 
-    if override_account_id is not None:
-        from app.services.client_payment_service import apply_override_deposit_account_id
-
-        apply_override_deposit_account_id(db, override_account_id, sale=sale)
-
-    approve_pending_linked_client_payments_for_sale(
-        db, sale, strict_accounting=True, override_account_id=override_account_id
-    )
+    approve_pending_linked_client_payments_for_sale(db, sale, strict_accounting=True)
     db.refresh(sale)
     _approve_pending_payment_events(sale)
     _maybe_set_partially_paid(sale)
@@ -4710,9 +4693,7 @@ def _maybe_set_partially_paid(sale: Sale) -> None:
         pass
 
 
-def _activate_sale_record(
-    db: Session, sale_id: int, *, override_account_id: Optional[int] = None
-) -> SaleResponse:
+def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
     expire_pending_sales_if_needed(db)
     sale = (
         db.query(Sale)
@@ -4751,9 +4732,7 @@ def _activate_sale_record(
     # Venta ya activada: comprobante adicional → solo cobro CxC (sin inventario).
     if sale.status != SaleStatus.pending and _sale_inventory_already_fulfilled(db, sale):
         if sale.status in (SaleStatus.payment_submitted, SaleStatus.partially_paid):
-            return _finalize_sale_payment_approval_only(
-                db, sale, client, override_account_id=override_account_id
-            )
+            return _finalize_sale_payment_approval_only(db, sale, client)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="La venta ya está activada; no requiere aprovisionamiento de inventario.",
@@ -4925,13 +4904,7 @@ def _activate_sale_record(
             SaleStatus.payment_submitted,
             SaleStatus.partially_paid,
         ):
-            if override_account_id is not None:
-                from app.services.client_payment_service import apply_override_deposit_account_id
-
-                apply_override_deposit_account_id(db, override_account_id, sale=sale)
-            approve_pending_linked_client_payments_for_sale(
-                db, sale, strict_accounting=True, override_account_id=override_account_id
-            )
+            approve_pending_linked_client_payments_for_sale(db, sale, strict_accounting=True)
             db.flush()
             db.refresh(sale)
 

@@ -1082,6 +1082,15 @@ def patch_wallet_recharge_request_fields(
             req.allowed_deposit_account_ids = None
         else:
             req.allowed_deposit_account_ids = _validate_deposit_subset(payload.allowed_deposit_account_ids, matched)
+        from app.services.client_payment_service import (
+            sync_pending_payments_deposit_for_wallet_recharge,
+            sync_wallet_recharge_submitted_deposit_from_allowlist,
+        )
+
+        dep_norm = list(req.allowed_deposit_account_ids or [])
+        if dep_norm:
+            sync_wallet_recharge_submitted_deposit_from_allowlist(req, dep_norm)
+            sync_pending_payments_deposit_for_wallet_recharge(db, req)
 
     if payload.currency is not None:
         req.recharge_currency = normalize_currency_code(payload.currency, "USD")
@@ -1369,7 +1378,6 @@ def approve_wallet_recharge(
             recv,
             wallet_tx_type=TX_RECHARGE,
             strict_accounting=True,
-            override_account_id=body.override_account_id if body is not None else None,
         )
         db.commit()
     except HTTPException:

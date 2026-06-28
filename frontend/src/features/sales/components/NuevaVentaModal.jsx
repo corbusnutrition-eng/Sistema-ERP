@@ -1640,9 +1640,14 @@ export default function NuevaVentaModal({
 
   const depositCurrencyMismatch = Boolean(depositAccountCurrencyCode)
 
-  /** Muestra método de pago y cuenta solo si hay un «depósito» explícito (> 0). */
+  /** Muestra método de pago y cuenta si hay depósito explícito o la venta tiene cobro en revisión. */
   const showDepositPaymentFields =
-    amountPaidRawTrim !== '' && !Number.isNaN(amountPaidParsed) && amountPaidParsed > 0
+    (amountPaidRawTrim !== '' && !Number.isNaN(amountPaidParsed) && amountPaidParsed > 0) ||
+    (isEditing &&
+      ['payment_submitted', 'partially_paid'].includes(
+        String(initialSale?.status ?? '').toLowerCase(),
+      )) ||
+    (isEditing && pendingReviewPayments.length > 0)
 
   const amountPaidInvalid =
     localAmount > 0 &&

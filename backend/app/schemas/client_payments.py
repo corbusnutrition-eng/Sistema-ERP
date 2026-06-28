@@ -95,11 +95,6 @@ class PaymentApproveBody(BaseModel):
     )
     reference_number: Optional[str] = None
     notes: Optional[str] = None
-    override_account_id: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="Cuenta bancaria real donde ingresó el dinero (reemplaza la declarada por el cliente).",
-    )
 
 
 class LedgerRelatedDoc(BaseModel):

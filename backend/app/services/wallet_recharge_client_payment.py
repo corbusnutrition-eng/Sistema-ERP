@@ -373,7 +373,6 @@ def approve_wallet_recharge_client_payment_ledger(
     applied_to_recharge: float,
     surplus: float,
     strict_accounting: bool = True,
-    override_account_id: Optional[int] = None,
 ) -> None:
     """
     Aprueba cobro BaaS vía motor CxC unificado (``finalize_client_payment_approval``).
@@ -393,7 +392,6 @@ def approve_wallet_recharge_client_payment_ledger(
             manual_rows=[{"wallet_recharge_id": int(req.id)}],
             fifo_fallback=True,
             strict_accounting=strict_accounting,
-            override_account_id=override_account_id,
         )
         return
 
@@ -426,7 +424,6 @@ def finalize_wallet_recharge_client_payment_on_approval(
     applied_to_cxc: float = 0.0,
     surplus: float = 0.0,
     strict_accounting: bool = True,
-    override_account_id: Optional[int] = None,
 ) -> Optional[ClientPayment]:
     """
     Localiza el ``ClientPayment`` en revisión y lo aprueba con FIFO cruzado CxC.
@@ -460,7 +457,6 @@ def finalize_wallet_recharge_client_payment_on_approval(
             applied_to_recharge=applied_to_cxc,
             surplus=surplus,
             strict_accounting=strict_accounting,
-            override_account_id=override_account_id,
         )
         return cp
 
@@ -472,6 +468,5 @@ def finalize_wallet_recharge_client_payment_on_approval(
         applied_to_recharge=applied_to_cxc,
         surplus=surplus,
         strict_accounting=strict_accounting,
-        override_account_id=override_account_id,
     )
     return cp

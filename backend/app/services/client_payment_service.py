@@ -2050,25 +2050,19 @@ def resolve_liquid_deposit_account_id(db: Session, deposit_account_id: Optional[
     return int(deposit_account_id)
 
 
-def apply_override_deposit_account_id(
-    db: Session,
-    override_account_id: Optional[int],
-    *,
-    payment: Optional[ClientPayment] = None,
-    sale: Optional[Sale] = None,
-    wallet_recharge: Optional[WalletRechargeRequest] = None,
+def sync_wallet_recharge_submitted_deposit_from_allowlist(
+    req: WalletRechargeRequest,
+    deposit_account_ids: list[int],
 ) -> None:
-    """Aplica corrección de cuenta bancaria antes de generar el asiento contable."""
-    if override_account_id is None:
+    """Mantiene coherente la cuenta declarada al editar métodos/cuentas permitidas."""
+    if not deposit_account_ids:
         return
-    resolved = resolve_liquid_deposit_account_id(db, int(override_account_id))
-    if payment is not None:
-        payment.deposit_account_id = resolved
-    if sale is not None and getattr(sale, "deposit_account_id", None) != resolved:
-        sale.deposit_account_id = resolved
-    if wallet_recharge is not None:
-        wallet_recharge.portal_submitted_deposit_account_id = resolved
-    db.flush()
+    if len(deposit_account_ids) == 1:
+        req.portal_submitted_deposit_account_id = int(deposit_account_ids[0])
+        return
+    cur = getattr(req, "portal_submitted_deposit_account_id", None)
+    if cur is None or int(cur) not in deposit_account_ids:
+        req.portal_submitted_deposit_account_id = int(deposit_account_ids[0])
 
 
 def resolve_client_payment_deposit_account_id(db: Session, payment: ClientPayment) -> Optional[int]:
@@ -2212,7 +2206,6 @@ def finalize_client_payment_approval(
     manual_rows: Optional[list[dict]] = None,
     fifo_fallback: bool = True,
     strict_accounting: bool = True,
-    override_account_id: Optional[int] = None,
 ) -> tuple[list[PaymentAllocation], Decimal]:
     """
     Aprueba un ``ClientPayment`` en revisión dentro de la sesión actual (sin ``commit``):
@@ -2225,35 +2218,6 @@ def finalize_client_payment_approval(
         raise ValueError(f"El pago {payment.payment_number} no está en revisión.")
 
     _deduct_reserved_credit_on_payment_approval(db, payment)
-
-    linked_sale: Optional[Sale] = None
-    linked_wr: Optional[WalletRechargeRequest] = None
-    meta_sid = parse_notes_meta_sale_id(payment.notes)
-    if meta_sid is not None:
-        linked_sale = db.get(Sale, int(meta_sid))
-    from app.services.wallet_recharge_client_payment import parse_notes_meta_wallet_recharge_id
-
-    meta_wr_id = parse_notes_meta_wallet_recharge_id(payment.notes)
-    if meta_wr_id is not None:
-        linked_wr = db.get(WalletRechargeRequest, int(meta_wr_id))
-    if linked_sale is None:
-        for alloc in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == int(payment.id)).all():
-            if alloc.sale_id is not None:
-                linked_sale = db.get(Sale, int(alloc.sale_id))
-                break
-    if linked_wr is None:
-        for alloc in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == int(payment.id)).all():
-            if alloc.wallet_recharge_id is not None:
-                linked_wr = db.get(WalletRechargeRequest, int(alloc.wallet_recharge_id))
-                break
-
-    apply_override_deposit_account_id(
-        db,
-        override_account_id,
-        payment=payment,
-        sale=linked_sale,
-        wallet_recharge=linked_wr,
-    )
 
     resolved_dep = resolve_client_payment_deposit_account_id(db, payment)
     if resolved_dep is not None and payment.deposit_account_id is None:
@@ -2807,6 +2771,31 @@ def collect_pending_payments_for_sale_activation(
     return list(by_id.values())
 
 
+def sync_pending_payments_deposit_for_sale(db: Session, sale: Sale) -> None:
+    """Propaga ``sale.deposit_account_id`` a cobros ``pending_review`` vinculados."""
+    dep_id = getattr(sale, "deposit_account_id", None)
+    if dep_id is None:
+        return
+    resolved = resolve_liquid_deposit_account_id(db, int(dep_id))
+    for cp in collect_pending_payments_for_sale_activation(db, sale):
+        cp.deposit_account_id = resolved
+    db.flush()
+
+
+def sync_pending_payments_deposit_for_wallet_recharge(db: Session, req: WalletRechargeRequest) -> None:
+    """Propaga ``portal_submitted_deposit_account_id`` al ``ClientPayment`` en revisión."""
+    dep_id = getattr(req, "portal_submitted_deposit_account_id", None)
+    if dep_id is None:
+        return
+    resolved = resolve_liquid_deposit_account_id(db, int(dep_id))
+    from app.services.wallet_recharge_client_payment import find_pending_client_payment_for_wallet_recharge
+
+    cp = find_pending_client_payment_for_wallet_recharge(db, req)
+    if cp is not None and cp.status == ClientPaymentStatus.pending_review:
+        cp.deposit_account_id = resolved
+    db.flush()
+
+
 def infer_client_payment_applied_to_ar(db: Session, payment: ClientPayment) -> Decimal:
     """
     Monto del cobro que reduce CxC.
@@ -2998,7 +2987,6 @@ def approve_pending_linked_client_payments_for_sale(
     sale: Sale,
     *,
     strict_accounting: bool = True,
-    override_account_id: Optional[int] = None,
 ) -> None:
     """
     Al activar una venta con cobro en revisión: aprueba pagos vinculados y aplica waterfall CxC.
@@ -3038,7 +3026,6 @@ def approve_pending_linked_client_payments_for_sale(
             manual_rows=primary_rows,
             fifo_fallback=True,
             strict_accounting=strict_accounting,
-            override_account_id=override_account_id,
         )
 
     db.flush()
@@ -3897,7 +3884,6 @@ def finalize_wallet_recharge_payment_approval(
     *,
     wallet_tx_type: str = _TX_RECHARGE,
     strict_accounting: bool = True,
-    override_account_id: Optional[int] = None,
 ) -> tuple["WalletTransaction", Optional[ClientPayment], float, float, float]:
     """
     Aprueba un comprobante BaaS en revisión (admin):
@@ -3918,9 +3904,6 @@ def finalize_wallet_recharge_payment_approval(
     pending_before = float(getattr(req, "balance_pending", 0) or 0)
     wr_cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
 
-    if override_account_id is not None:
-        apply_override_deposit_account_id(db, override_account_id, wallet_recharge=req)
-
     from app.wallet_recharge_helpers import wallet_recharge_is_retiro_instant_cxc
 
     credited_before = _wallet_credited_for_recharge_request(db, req)
@@ -3936,7 +3919,6 @@ def finalize_wallet_recharge_payment_approval(
         client=client,
         received_amount=recv,
         strict_accounting=strict_accounting,
-        override_account_id=override_account_id,
     )
     if cp is None:
         cp = ensure_pending_client_payment_for_wallet_recharge(
@@ -3952,7 +3934,6 @@ def finalize_wallet_recharge_payment_approval(
                 client=client,
                 received_amount=recv,
                 strict_accounting=strict_accounting,
-                override_account_id=override_account_id,
             )
 
     db.refresh(req)

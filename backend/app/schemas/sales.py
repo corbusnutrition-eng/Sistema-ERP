@@ -914,16 +914,6 @@ class PendingBankPaymentBrief(BaseModel):
     )
 
 
-class SaleApprovalBody(BaseModel):
-    """Opciones al activar/aprobar una venta con comprobante en revisión."""
-
-    override_account_id: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="Cuenta bancaria real donde ingresó el dinero (reemplaza la declarada por el cliente).",
-    )
-
-
 class SalePortalPaymentConsolidated(BaseModel):
     """Resumen financiero para revisar/activar venta con pagos mixtos portal."""
 

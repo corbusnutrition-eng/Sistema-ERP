@@ -3,7 +3,7 @@
  * Resume total factura, saldo a favor ya aplicado y saldo pendiente de la venta.
  * El efectivo enviado por el cliente va como abono general (pestaña «En revisión»), salvo datos legados con pending_bank_review.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   X,
   CheckCircle2,
@@ -16,8 +16,6 @@ import {
   Info,
 } from 'lucide-react'
 import api from '../../../api/axios'
-import SearchableSelect from '../../../components/ui/SearchableSelect'
-import { normalizeCurrencyCode } from '../../../lib/currencyCode'
 import {
   saleStaffReviewAction,
   staffReviewConfirmLabel,
@@ -52,8 +50,6 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
   const [consolidated, setConsolidated] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [depositAccounts, setDepositAccounts] = useState([])
-  const [depositAccountId, setDepositAccountId] = useState('')
 
   useEffect(() => {
     if (!sale?.id) return
@@ -68,51 +64,6 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
       })
       .finally(() => setLoading(false))
   }, [sale?.id])
-
-  useEffect(() => {
-    let cancelled = false
-    api
-      .get('/api/v1/accounts/deposit-options')
-      .then(({ data }) => {
-        if (!cancelled) setDepositAccounts(Array.isArray(data) ? data : [])
-      })
-      .catch(() => {
-        if (!cancelled) setDepositAccounts([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!consolidated && !sale) return
-    const defaultId =
-      consolidated?.default_deposit_account_id ??
-      consolidated?.pending_bank_review?.deposit_account_id ??
-      sale?.deposit_account_id ??
-      null
-    if (defaultId != null) setDepositAccountId(String(defaultId))
-  }, [consolidated, sale?.deposit_account_id, sale?.id])
-
-  const depositSelectOptions = useMemo(() => {
-    const map = new Map()
-    for (const a of depositAccounts) {
-      const cur = normalizeCurrencyCode(a.currency || 'USD', 'USD')
-      if (!map.has(cur)) map.set(cur, [])
-      map.get(cur).push(a)
-    }
-    const opts = []
-    for (const [cur, list] of [...map.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      opts.push({ value: `__hdr_${cur}`, label: `— ${cur} —`, disabled: true })
-      for (const a of list) {
-        opts.push({
-          value: String(a.id),
-          label: `${a.name}${a.account_number ? ` · ${a.account_number}` : ''} (${cur})`,
-        })
-      }
-    }
-    return opts
-  }, [depositAccounts])
 
   const cur = consolidated?.currency ?? sale?.currency ?? 'USD'
   const staffAction = consolidated?.staff_review_action ?? saleStaffReviewAction(sale)
@@ -134,17 +85,6 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
   const showGeneralAbonoHint =
     !hasLegacyPendingBank && Boolean(saleReceiptUrl)
 
-  const showDepositAccountSelect =
-    hasLegacyPendingBank || consolidated?.default_deposit_account_id != null || sale?.deposit_account_id != null
-
-  function handleConfirm() {
-    if (showDepositAccountSelect && !depositAccountId) {
-      window.alert('Selecciona la cuenta bancaria donde ingresó el dinero.')
-      return
-    }
-    onConfirm?.(depositAccountId ? Number(depositAccountId) : null)
-  }
-
   return (
     <div
       className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
@@ -156,7 +96,6 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
         className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-200/80 overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
@@ -178,7 +117,6 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
           </button>
         </div>
 
-        {/* Body */}
         <div className="px-6 py-5 space-y-4">
           {loading && (
             <div className="flex items-center justify-center gap-2 py-8 text-slate-400 text-sm">
@@ -299,29 +237,10 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
                   </div>
                 )}
               </div>
-
-              {showDepositAccountSelect ? (
-                <div className="space-y-1.5 pt-1">
-                  <label className="block text-xs font-semibold text-slate-700">Cuenta a acreditar</label>
-                  <SearchableSelect
-                    value={depositAccountId}
-                    onChange={(v) => setDepositAccountId(String(v ?? ''))}
-                    options={depositSelectOptions}
-                    placeholder="Seleccionar cuenta bancaria"
-                    clearLabel="Seleccionar cuenta bancaria"
-                    disabled={activating}
-                  />
-                  <p className="text-[11px] leading-relaxed text-slate-600">
-                    Si el depósito real fue en otra cuenta distinta a la declarada por el cliente, corrígela aquí antes
-                    de aprobar.
-                  </p>
-                </div>
-              ) : null}
             </>
           )}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-4 bg-slate-50/80 border-t border-slate-100">
           <button
             type="button"
@@ -334,7 +253,7 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
           <button
             type="button"
             disabled={activating || loading || !!error}
-            onClick={handleConfirm}
+            onClick={onConfirm}
             className="inline-flex items-center gap-2 px-5 py-2 text-sm font-bold text-white
                        bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm
                        disabled:opacity-50 disabled:cursor-not-allowed transition-colors"

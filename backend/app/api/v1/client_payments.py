@@ -399,8 +399,6 @@ def approve_payment(
         if body.notes:
             p.notes = append_client_payment_notes_unique(p.notes, body.notes.strip())
 
-    override_account_id = body.override_account_id if body is not None else None
-
     existing_allocs = (
         db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == int(payment_id)).all()
     )
@@ -420,10 +418,7 @@ def approve_payment(
             ):
                 try:
                     approve_pending_linked_client_payments_for_sale(
-                        db,
-                        linked_sale,
-                        strict_accounting=True,
-                        override_account_id=override_account_id,
+                        db, linked_sale, strict_accounting=True
                     )
                 except HTTPException:
                     db.rollback()
@@ -451,7 +446,6 @@ def approve_payment(
             manual_rows=alloc_rows,
             fifo_fallback=True,
             strict_accounting=True,
-            override_account_id=override_account_id,
         )
     except HTTPException:
         db.rollback()
