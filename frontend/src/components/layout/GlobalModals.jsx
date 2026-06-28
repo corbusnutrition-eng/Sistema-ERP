@@ -57,6 +57,8 @@ export default function GlobalModals() {
     expenseOpen, closeNewExpense, expenseCb,
     transferOpen,
     transferPrefillSourceAccountId,
+    transferPrefillDestinationAccountId,
+    transferInterbankMode,
     closeTransferModal,
     transferCb,
     vendorFormOpen, closeVendorForm, vendorFormCb, vendorFormEditVendor,
