@@ -2,7 +2,7 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, RefreshCw, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, Check, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, RefreshCw, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
 import PortalAccordionSortableList from './PortalAccordionSortableList'
 import {
   filterVisiblePortalAccordionOrder,
@@ -451,6 +451,57 @@ function PortalScreenCredentialRow({ label, value, flashKey, copyFlashKey, onCop
       {copyFlashKey === flashKey ? (
         <span className="text-[11px] font-medium text-emerald-300">¡Copiado!</span>
       ) : null}
+    </div>
+  )
+}
+
+function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / referencia' }) {
+  const [isCopied, setIsCopied] = useState(false)
+  const copyTimeoutRef = useRef(null)
+  const val = String(accountNumber ?? '').trim()
+
+  useEffect(
+    () => () => {
+      if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current)
+    },
+    [],
+  )
+
+  const handleCopyAccount = useCallback(async () => {
+    if (!val) return
+    const ok = await copyPortalText(val)
+    if (!ok) return
+    setIsCopied(true)
+    if (copyTimeoutRef.current) window.clearTimeout(copyTimeoutRef.current)
+    copyTimeoutRef.current = window.setTimeout(() => {
+      setIsCopied(false)
+      copyTimeoutRef.current = null
+    }, 2000)
+  }, [val])
+
+  if (!val) return null
+
+  return (
+    <div
+      className="flex items-center justify-between gap-2"
+      style={{ margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', opacity: 0.92 }}
+    >
+      <span style={{ margin: 0, fontSize: 14, lineHeight: 1.55 }}>
+        {label}: <strong>{val}</strong>
+      </span>
+      <button
+        type="button"
+        onClick={() => void handleCopyAccount()}
+        className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-white/40 transition hover:bg-white/10 hover:text-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+        title={isCopied ? '¡Copiado!' : 'Copiar número de cuenta'}
+        aria-label={isCopied ? 'Copiado' : 'Copiar número de cuenta'}
+      >
+        {isCopied ? (
+          <Check size={16} className="text-green-400" strokeWidth={2.25} aria-hidden />
+        ) : (
+          <Copy size={16} aria-hidden />
+        )}
+      </button>
     </div>
   )
 }
@@ -5565,9 +5616,10 @@ function ClientPortalPageInner() {
       {debtPaymentAccounts.length === 1 && (
         <div style={{ padding: '12px 14px', borderRadius: 12, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 12, fontSize: 13 }}>
           <p style={{ margin: 0, fontWeight: 700 }}>{debtPaymentAccounts[0].bank_name}</p>
-          {debtPaymentAccounts[0].account_number && (
-            <p style={{ margin: '4px 0 0', opacity: 0.75 }}>Nº: {debtPaymentAccounts[0].account_number}</p>
-          )}
+          <PortalDepositAccountNumberRow
+            accountNumber={debtPaymentAccounts[0].account_number}
+            label="Nº cuenta / referencia"
+          />
         </div>
       )}
 
@@ -6259,11 +6311,7 @@ function ClientPortalPageInner() {
                               }}
                             >
                               <p style={{ margin: 0, fontWeight: 700 }}>{d.bank_name}</p>
-                              {d.account_number ?
-                                <p style={{ margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', opacity: 0.92 }}>
-                                  Nº cuenta / referencia: <strong>{d.account_number}</strong>
-                                </p>
-                              : null}
+                              <PortalDepositAccountNumberRow accountNumber={d.account_number} />
                               <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {d.currency}</p>
                             </div>
                           ))
@@ -6872,11 +6920,7 @@ function ClientPortalPageInner() {
                                   }}
                                 >
                                   <p style={{ margin: 0, fontWeight: 700 }}>{d.bank_name}</p>
-                                  {d.account_number ? (
-                                    <p style={{ margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', opacity: 0.92 }}>
-                                      Nº cuenta / referencia: <strong>{d.account_number}</strong>
-                                    </p>
-                                  ) : null}
+                                  <PortalDepositAccountNumberRow accountNumber={d.account_number} />
                                   <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {d.currency}</p>
                                 </div>
                               ))
