@@ -168,6 +168,28 @@ class ClientArBalanceRow(BaseModel):
     )
 
 
+class ListClassificationRow(BaseModel):
+    """Fila agrupada por ítem de lista (clase, método de pago, moneda o etiqueta)."""
+
+    item_id: Optional[int] = Field(default=None, description="ID del ítem en catálogo (null si no aplica).")
+    item_key: Optional[str] = Field(default=None, description="Clave alternativa (p. ej. código ISO de moneda).")
+    item_name: str
+    transaction_count: int = Field(ge=0)
+    total_amount_usd: Decimal
+
+
+class ListClassificationReportResponse(BaseModel):
+    """Totales de transacciones agrupados por dimensión de lista."""
+
+    start_date: date
+    end_date: date
+    list_type: str
+    list_type_label: str
+    rows: list[ListClassificationRow] = Field(default_factory=list)
+    grand_total_count: int = Field(ge=0)
+    grand_total_amount_usd: Decimal
+
+
 class AccountsReceivableReportResponse(BaseModel):
     """Resumen de cuentas por cobrar agrupado por cliente."""
 

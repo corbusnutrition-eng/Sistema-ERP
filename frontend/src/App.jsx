@@ -34,6 +34,7 @@ import DistributorsBaaSPage from './features/settings/DistributorsBaaS'
 import DistributorTreeMap from './features/settings/DistributorTreeMap'
 import ReportsDashboard from './features/reports/ReportsDashboard'
 import ReportStandardPlaceholder from './features/reports/ReportStandardPlaceholder'
+import ListClassificationReport from './features/reports/ListClassificationReport'
 import ClassList from './features/reports/ClassList'
 import ListsDashboard from './features/lists/ListsDashboard'
 import PaymentMethodsList from './features/lists/PaymentMethodsList'
@@ -141,6 +142,10 @@ function AppRoutes() {
                     <Route
                       path="/informes/standard/:sectionId/:reportId"
                       element={<PermissionRoute permission={PERMS.REPORTS_FINANCIAL_VIEW}><ReportStandardPlaceholder /></PermissionRoute>}
+                    />
+                    <Route
+                      path="/informes/clasificacion-listas"
+                      element={<PermissionRoute permission={PERMS.REPORTS_FINANCIAL_VIEW}><ListClassificationReport /></PermissionRoute>}
                     />
                     <Route path="/informes/clases" element={<PermissionRoute permission={PERMS.REPORTS_CLASSES_VIEW}><ClassList /></PermissionRoute>} />
                     <Route path="/listas" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><ListsDashboard /></PermissionRoute>} />

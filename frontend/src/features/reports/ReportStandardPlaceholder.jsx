@@ -3,6 +3,7 @@ import { BarChart3 } from 'lucide-react'
 import { REPORT_SECTIONS } from './reportCatalog'
 import ProfitAndLossReport from './ProfitAndLossReport'
 import AccountsReceivableReport from './AccountsReceivableReport'
+import ListClassificationReport from './ListClassificationReport'
 
 export default function ReportStandardPlaceholder() {
   const navigate = useNavigate()
@@ -14,6 +15,7 @@ export default function ReportStandardPlaceholder() {
 
   const isPnl = reportId === 'pnl' || reportId === 'pnl-corp'
   const isArSummary = reportId === 'ar-aging'
+  const isListClassification = reportId === 'list-classification'
 
   if (isPnl) {
     return <ProfitAndLossReport />
@@ -21,6 +23,10 @@ export default function ReportStandardPlaceholder() {
 
   if (isArSummary) {
     return <AccountsReceivableReport />
+  }
+
+  if (isListClassification) {
+    return <ListClassificationReport />
   }
 
   return (

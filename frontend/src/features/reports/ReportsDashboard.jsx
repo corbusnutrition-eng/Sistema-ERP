@@ -132,6 +132,26 @@ export default function ReportsDashboard() {
         </Link>
       </div>
 
+      <Link
+        to="/informes/clasificacion-listas"
+        className="block rounded-2xl border border-green-200 bg-gradient-to-br from-green-50 to-white shadow-sm px-5 py-4 hover:border-green-300 hover:shadow-md transition-all group"
+      >
+        <div className="flex items-start gap-3">
+          <div className="shrink-0 rounded-xl bg-green-100 p-2.5 text-green-800 group-hover:bg-green-200 transition-colors">
+            <BarChart3 size={22} />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-gray-900 group-hover:text-green-950">
+              Reporte por Clasificación (Listas)
+            </p>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Filtra por fechas, agrupa por clases, métodos de pago, monedas o etiquetas y exporta a CSV.
+            </p>
+          </div>
+          <ChevronRight size={20} className="shrink-0 text-green-600 mt-1 opacity-70 group-hover:opacity-100" />
+        </div>
+      </Link>
+
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
         <input

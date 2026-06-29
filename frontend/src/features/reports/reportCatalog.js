@@ -30,6 +30,7 @@ export const REPORT_SECTIONS = [
     title: 'Ventas y clientes',
     defaultExpanded: false,
     reports: [
+      { id: 'list-classification', title: 'Reporte por Clasificación (Listas)', defaultFavorite: false },
       { id: 'sales-by-customer', title: 'Ventas por cliente', defaultFavorite: false },
       { id: 'sales-by-product', title: 'Resumen de ventas por producto/servicio', defaultFavorite: false },
     ],

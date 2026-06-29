@@ -26,6 +26,8 @@ from app.schemas.reports_financial import (
     ClientArBalanceRow,
     ExpenseJournalCreate,
     ExpenseJournalResponse,
+    ListClassificationReportResponse,
+    ListClassificationRow,
     PnlLine,
     PnlResponse,
     PnlSection,
@@ -43,6 +45,10 @@ from app.services.client_payment_service import (
     linked_payments_for_sale,
     list_client_ar_open_obligations,
     list_client_credit_balance_rows,
+)
+from app.services.list_classification_report import (
+    LIST_TYPE_LABELS,
+    build_list_classification_report,
 )
 from app.timezone_utils import now_ecuador
 
@@ -513,4 +519,45 @@ def get_accounts_receivable_summary(
         total_amount_due=total_due,
         total_credit_balance=total_credit,
         totals_by_currency=totals_by_currency,
+    )
+
+
+@router.get(
+    "/list-classification",
+    response_model=ListClassificationReportResponse,
+    summary="Informe agrupado por listas (clases, métodos de pago, monedas, etiquetas)",
+)
+def list_classification_report(
+    db: DbDep,
+    _: ReportsFinancialViewDep,
+    start_date: date = Query(..., description="Fecha inicial (inclusive)."),
+    end_date: date = Query(..., description="Fecha final (inclusive)."),
+    list_type: Literal["class", "payment_method", "currency", "tag"] = Query(
+        ...,
+        description="Dimensión de agrupación.",
+    ),
+) -> ListClassificationReportResponse:
+    if list_type not in LIST_TYPE_LABELS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"list_type debe ser uno de: {', '.join(LIST_TYPE_LABELS)}",
+        )
+    try:
+        payload = build_list_classification_report(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+            list_type=list_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return ListClassificationReportResponse(
+        start_date=payload["start_date"],
+        end_date=payload["end_date"],
+        list_type=payload["list_type"],
+        list_type_label=payload["list_type_label"],
+        rows=[ListClassificationRow(**row) for row in payload["rows"]],
+        grand_total_count=payload["grand_total_count"],
+        grand_total_amount_usd=payload["grand_total_amount_usd"],
     )
