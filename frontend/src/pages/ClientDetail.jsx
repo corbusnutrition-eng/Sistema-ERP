@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
   ChevronDown,
+  ChevronRight,
   Clipboard,
   DollarSign,
   Eye,
@@ -210,7 +211,21 @@ export default function ClientDetail() {
   const [revertTarget, setRevertTarget] = useState(null)
   const [revertConfirmOpen, setRevertConfirmOpen] = useState(false)
   const [revertLoading, setRevertLoading] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [expandedRowId, setExpandedRowId] = useState(null)
   const txnMenuRef = useRef(null)
+
+  const HISTORY_PAGE_SIZE = 10
+  const historyTotalPages = Math.max(1, Math.ceil(ledger.length / HISTORY_PAGE_SIZE))
+  const paginatedLedger = useMemo(() => {
+    const start = (currentPage - 1) * HISTORY_PAGE_SIZE
+    return ledger.slice(start, start + HISTORY_PAGE_SIZE)
+  }, [ledger, currentPage])
+
+  useEffect(() => {
+    setCurrentPage(1)
+    setExpandedRowId(null)
+  }, [ledger.length, idNum])
 
   const toastInfo = useCallback((msg) => setDevToast(msg), [])
 
@@ -868,30 +883,28 @@ export default function ClientDetail() {
             </div>
           ) : (
           <div className="rounded-xl border border-gray-200 bg-white shadow-md">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto w-full whitespace-nowrap">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50/80 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                    <th className="px-2 py-3 w-10" aria-label="Expandir fila" />
                     <th className="px-4 py-3 whitespace-nowrap">FECHA</th>
                     <th className="px-4 py-3 whitespace-nowrap">TIPO</th>
                     <th className="px-4 py-3 whitespace-nowrap">N.º</th>
-                    <th className="px-4 py-3 min-w-[140px]">NOTA</th>
-                    <th className="px-4 py-3 text-right whitespace-nowrap">CRÉDITOS</th>
                     <th className="px-4 py-3 text-right whitespace-nowrap">IMPORTE</th>
                     <th className="px-4 py-3 whitespace-nowrap">ESTADO</th>
                     <th className="px-4 py-3 text-center whitespace-nowrap w-[7.5rem]">COMPROBANTE</th>
-                    <th className="px-4 py-3 text-right whitespace-nowrap">ACCIÓN</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {ledger.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="px-4 py-12 text-center text-gray-500">
+                      <td colSpan={7} className="px-4 py-12 text-center text-gray-500 whitespace-normal">
                         No hay movimientos en el historial de este cliente.
                       </td>
                     </tr>
                   )}
-                  {ledger.map((entry) => {
+                  {paginatedLedger.map((entry) => {
                     const isPayment = entry.type === 'Pago'
                     const isRecharge =
                       entry.type === 'RECARGA'
@@ -919,124 +932,224 @@ export default function ClientDetail() {
                     const rowKey = entry.entity_kind === 'wallet_transfer'
                       ? `wt-${entry.wallet_transaction_id ?? entry.entity_id}`
                       : `${entry.entity_kind}-${entry.entity_id}`
+                    const isExpanded = expandedRowId === rowKey
                     return (
-                      <tr
-                        key={rowKey}
-                        className={rowHighlight}
-                      >
-                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
-                          {formatDateTimeEcuador(entry.date)}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <span
-                            className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${
-                              isPayment
-                                ? 'bg-indigo-100 text-indigo-800'
-                                : isRecharge
-                                  ? 'bg-fuchsia-100 text-fuchsia-900 ring-1 ring-fuchsia-200/80'
-                                  : isBaasTransfer || isTransferRevert
-                                    ? 'bg-orange-100 text-orange-900 ring-1 ring-orange-200/80'
-                                    : 'bg-slate-100 text-slate-700'
-                            }`}
-                          >
-                            {entry.type}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-gray-900 font-medium whitespace-nowrap tabular-nums">
-                          {entry.ref_number}
-                        </td>
-                        <td className="px-4 py-3 text-gray-600 align-top text-xs leading-relaxed">
-                          <p>{entry.note || '—'}</p>
-                          {related.length > 0 && (
-                            <p className="mt-1.5 text-indigo-700">
-                              {isPayment ? 'Aplicado a: ' : 'Pagos: '}
-                              {related
-                                .map((r) =>
-                                  `${r.type} ${r.ref_number} (${formatLedgerMoney(r.amount, entry.currency)})`,
-                                )
-                                .join(' · ')}
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right whitespace-nowrap align-top">
-                          <LedgerCreditsCell entry={entry} />
-                        </td>
-                        <td className="px-4 py-3 text-right whitespace-nowrap font-semibold tabular-nums text-gray-900">
-                          {formatLedgerMoney(entry.amount, entry.currency)}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap align-top">
-                          <span
-                            className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                              isPayment
-                                ? 'bg-sky-50 text-sky-800 ring-1 ring-sky-100'
-                                : isRecharge
-                                  ? walletRechargeLedgerStatusClass(entry.status)
-                                  : saleStatusBadgeClass(entry.status)
-                            }`}
-                          >
-                            {isPayment ? entry.status : isRecharge ? entry.status : saleStatusLabel(entry.status)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center whitespace-nowrap align-middle w-[7.5rem]">
-                          {saleForRow ? (
-                            <SaleReceiptProofLink sale={saleForRow} />
-                          ) : isPayment || isRecharge ? (
-                            <PaymentReceiptProofLink receiptPath={entry.receipt_file_url} />
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right whitespace-nowrap">
-                          {saleForRow ? (
+                      <Fragment key={rowKey}>
+                        <tr className={rowHighlight}>
+                          <td className="px-2 py-3 text-center align-middle">
                             <button
                               type="button"
-                              className="text-sm font-medium text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50"
-                              onClick={() => setEditSale(saleForRow)}
+                              onClick={() =>
+                                setExpandedRowId((prev) => (prev === rowKey ? null : rowKey))
+                              }
+                              className="inline-flex items-center justify-center rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+                              aria-expanded={isExpanded}
+                              aria-label={isExpanded ? 'Contraer detalles' : 'Expandir detalles'}
                             >
-                              {saleOpensReadOnly(saleForRow) ? 'Ver detalles' : 'Ver/editar'}
-                            </button>
-                          ) : isRecharge ? (
-                            <button
-                              type="button"
-                              disabled={walletRechargeModalLoadingId != null}
-                              className="text-sm font-medium text-fuchsia-700 hover:text-fuchsia-900 px-2 py-1 rounded-lg hover:bg-fuchsia-50 disabled:opacity-45 disabled:pointer-events-none"
-                              onClick={() => void openWalletRechargeViewer(Number(entry.entity_id))}
-                            >
-                              {walletRechargeModalLoadingId === Number(entry.entity_id) ? (
-                                <span className="inline-flex items-center gap-1.5 tabular-nums">
-                                  <Loader2 size={14} className="animate-spin shrink-0" aria-hidden />
-                                  Cargando…
-                                </span>
+                              {isExpanded ? (
+                                <ChevronDown size={16} aria-hidden />
                               ) : (
-                                'Ver detalles'
+                                <ChevronRight size={16} aria-hidden />
                               )}
                             </button>
-                          ) : isPayment ? (
-                            <button
-                              type="button"
-                              className="text-sm font-medium text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50"
-                              onClick={() => handleViewLedgerPayment(entry)}
+                          </td>
+                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                            {formatDateTimeEcuador(entry.date)}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span
+                              className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${
+                                isPayment
+                                  ? 'bg-indigo-100 text-indigo-800'
+                                  : isRecharge
+                                    ? 'bg-fuchsia-100 text-fuchsia-900 ring-1 ring-fuchsia-200/80'
+                                    : isBaasTransfer || isTransferRevert
+                                      ? 'bg-orange-100 text-orange-900 ring-1 ring-orange-200/80'
+                                      : 'bg-slate-100 text-slate-700'
+                              }`}
                             >
-                              Ver detalles
-                            </button>
-                          ) : entry.can_revert ? (
-                            <button
-                              type="button"
-                              className="text-xs font-semibold text-red-700 hover:text-red-800 px-2 py-1 rounded-lg hover:bg-red-50 ring-1 ring-red-200/80"
-                              onClick={() => openRevertTransferModal(entry)}
+                              {entry.type}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-gray-900 font-medium whitespace-nowrap tabular-nums">
+                            {entry.ref_number}
+                          </td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap font-semibold tabular-nums text-gray-900">
+                            {formatLedgerMoney(entry.amount, entry.currency)}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap align-top">
+                            <span
+                              className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                                isPayment
+                                  ? 'bg-sky-50 text-sky-800 ring-1 ring-sky-100'
+                                  : isRecharge
+                                    ? walletRechargeLedgerStatusClass(entry.status)
+                                    : saleStatusBadgeClass(entry.status)
+                              }`}
                             >
-                              Revertir
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-400">—</span>
-                          )}
-                        </td>
-                      </tr>
+                              {isPayment ? entry.status : isRecharge ? entry.status : saleStatusLabel(entry.status)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center whitespace-nowrap align-middle w-[7.5rem]">
+                            {saleForRow ? (
+                              <SaleReceiptProofLink sale={saleForRow} />
+                            ) : isPayment || isRecharge ? (
+                              <PaymentReceiptProofLink receiptPath={entry.receipt_file_url} />
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="bg-gray-50/80">
+                            <td colSpan={7} className="px-4 py-4 whitespace-normal border-t border-gray-100">
+                              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 text-sm">
+                                <div className="sm:col-span-2 lg:col-span-2">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                                    Nota
+                                  </p>
+                                  <p className="text-gray-700 text-xs leading-relaxed break-words">
+                                    {entry.note || '—'}
+                                  </p>
+                                  {related.length > 0 && (
+                                    <p className="mt-2 text-xs text-indigo-700 leading-relaxed break-words">
+                                      {isPayment ? 'Aplicado a: ' : 'Pagos: '}
+                                      {related
+                                        .map((r) =>
+                                          `${r.type} ${r.ref_number} (${formatLedgerMoney(r.amount, entry.currency)})`,
+                                        )
+                                        .join(' · ')}
+                                    </p>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                                    Créditos
+                                  </p>
+                                  <LedgerCreditsCell entry={entry} />
+                                </div>
+                                <div>
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                                    Acción
+                                  </p>
+                                  <div>
+                                    {saleForRow ? (
+                                      <button
+                                        type="button"
+                                        className="text-sm font-medium text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50"
+                                        onClick={() => setEditSale(saleForRow)}
+                                      >
+                                        {saleOpensReadOnly(saleForRow) ? 'Ver detalles' : 'Ver/editar'}
+                                      </button>
+                                    ) : isRecharge ? (
+                                      <button
+                                        type="button"
+                                        disabled={walletRechargeModalLoadingId != null}
+                                        className="text-sm font-medium text-fuchsia-700 hover:text-fuchsia-900 px-2 py-1 rounded-lg hover:bg-fuchsia-50 disabled:opacity-45 disabled:pointer-events-none"
+                                        onClick={() => void openWalletRechargeViewer(Number(entry.entity_id))}
+                                      >
+                                        {walletRechargeModalLoadingId === Number(entry.entity_id) ? (
+                                          <span className="inline-flex items-center gap-1.5 tabular-nums">
+                                            <Loader2 size={14} className="animate-spin shrink-0" aria-hidden />
+                                            Cargando…
+                                          </span>
+                                        ) : (
+                                          'Ver detalles'
+                                        )}
+                                      </button>
+                                    ) : isPayment ? (
+                                      <button
+                                        type="button"
+                                        className="text-sm font-medium text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50"
+                                        onClick={() => handleViewLedgerPayment(entry)}
+                                      >
+                                        Ver detalles
+                                      </button>
+                                    ) : entry.can_revert ? (
+                                      <button
+                                        type="button"
+                                        className="text-xs font-semibold text-red-700 hover:text-red-800 px-2 py-1 rounded-lg hover:bg-red-50 ring-1 ring-red-200/80"
+                                        onClick={() => openRevertTransferModal(entry)}
+                                      >
+                                        Revertir
+                                      </button>
+                                    ) : (
+                                      <span className="text-xs text-gray-400">—</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="sm:col-span-2 lg:col-span-3 pt-2 border-t border-gray-200/80">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                                    Detalles técnicos
+                                  </p>
+                                  <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 text-xs">
+                                    <div>
+                                      <dt className="text-gray-500">Entidad</dt>
+                                      <dd className="font-mono text-gray-800 mt-0.5">{entry.entity_kind || '—'}</dd>
+                                    </div>
+                                    <div>
+                                      <dt className="text-gray-500">ID entidad</dt>
+                                      <dd className="font-mono text-gray-800 mt-0.5 tabular-nums">{entry.entity_id ?? '—'}</dd>
+                                    </div>
+                                    {entry.wallet_transaction_id != null && (
+                                      <div>
+                                        <dt className="text-gray-500">ID transacción BaaS</dt>
+                                        <dd className="font-mono text-gray-800 mt-0.5 tabular-nums">
+                                          {entry.wallet_transaction_id}
+                                        </dd>
+                                      </div>
+                                    )}
+                                    <div>
+                                      <dt className="text-gray-500">Moneda</dt>
+                                      <dd className="font-mono text-gray-800 mt-0.5">{entry.currency || 'USD'}</dd>
+                                    </div>
+                                    <div>
+                                      <dt className="text-gray-500">Estado (API)</dt>
+                                      <dd className="font-mono text-gray-800 mt-0.5">{entry.status || '—'}</dd>
+                                    </div>
+                                  </dl>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     )
                   })}
                 </tbody>
               </table>
             </div>
+            {ledger.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-100 bg-gray-50/50">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => {
+                    setCurrentPage((p) => Math.max(1, p - 1))
+                    setExpandedRowId(null)
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  Anterior
+                </button>
+                <p className="text-sm text-gray-600 tabular-nums">
+                  Página {currentPage} de {historyTotalPages}
+                  <span className="text-gray-400 mx-1">·</span>
+                  {ledger.length} movimiento{ledger.length === 1 ? '' : 's'}
+                </p>
+                <button
+                  type="button"
+                  disabled={currentPage >= historyTotalPages}
+                  onClick={() => {
+                    setCurrentPage((p) => Math.min(historyTotalPages, p + 1))
+                    setExpandedRowId(null)
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  Siguiente
+                </button>
+              </div>
+            )}
           </div>
           )}
         </>
