@@ -31,3 +31,4 @@ reportlab==4.4.1             # PDF export (informes financieros)
 # ── Config ─────────────────────────────────────────────────────────────────────
 python-dotenv==1.2.1
 openai
+cloudinary
