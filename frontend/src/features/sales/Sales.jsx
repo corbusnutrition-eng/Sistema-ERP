@@ -42,7 +42,14 @@ import SalesTabs from './components/SalesTabs'
 import SalesTableSkeleton from './components/SalesTableSkeleton'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
 import { confirmVoidTransaction } from '../../utils/confirmVoidTransaction'
-import { useTableResize, SALES_TABLE_COLUMN_WIDTHS } from '../../hooks/useTableResize'
+import {
+  useTableResize,
+  SALES_TABLE_COLUMN_WIDTHS,
+  SALES_TABLE_REJECTED_COLUMN_WIDTHS,
+  TABLE_CELL,
+  TABLE_CELL_NOWRAP,
+  TABLE_CELL_TRUNC,
+} from '../../hooks/useTableResize'
 import ResizableTh from '../../components/ui/ResizableTh'
 import OcrSecurityBadges, { pickOcrFlagsFromSale, pickOcrSecurityFlags } from '../../components/OcrSecurityBadges'
 
@@ -1044,7 +1051,14 @@ export default function Sales() {
 
   const showRejectReasonCol = filter === 'rejected'
   const tableColSpan = showRejectReasonCol ? 13 : 12
-  const { columnWidths, startResize } = useTableResize(SALES_TABLE_COLUMN_WIDTHS)
+  const salesTableDefaultWidths = showRejectReasonCol
+    ? SALES_TABLE_REJECTED_COLUMN_WIDTHS
+    : SALES_TABLE_COLUMN_WIDTHS
+  const { columnWidths, startResize, setColumnWidths } = useTableResize(salesTableDefaultWidths)
+
+  useEffect(() => {
+    setColumnWidths(salesTableDefaultWidths)
+  }, [salesTableDefaultWidths, setColumnWidths])
 
   return (
     <>
@@ -1339,7 +1353,7 @@ export default function Sales() {
         {/* Solo la tabla reacciona al fetch de la pestaña activa */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden w-full min-h-[28rem] flex flex-col">
           <div className="w-full overflow-x-auto flex-1 min-h-[22rem]">
-            <table className="w-full min-w-max table-fixed text-sm">
+            <table className="w-full table-fixed text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <ResizableTh columnKey="fecha" width={columnWidths.fecha} onResizeStart={startResize}>
@@ -1442,52 +1456,57 @@ export default function Sales() {
                               : ''
                       }`}
                     >
-                      <td className="px-3 py-2.5 whitespace-nowrap text-gray-600 text-sm align-middle">
+                      <td className={`${TABLE_CELL_NOWRAP} text-gray-600 text-sm`}>
                         {formatSaleTableDate(sale.created_at)}
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap min-w-0 max-w-[11rem] align-middle">
-                        <div className="flex items-center gap-2 min-w-0">
+                      <td className={`${TABLE_CELL_TRUNC} align-middle`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
                           <div
-                            className="w-6 h-6 rounded-full bg-blue-100 flex items-center
+                            className="w-5 h-5 rounded-full bg-blue-100 flex items-center
                                         justify-center shrink-0"
                           >
-                            <span className="text-[10px] font-bold text-blue-600">
+                            <span className="text-[9px] font-bold text-blue-600">
                               {(sale.client_name || '?').charAt(0).toUpperCase()}
                             </span>
                           </div>
                           <span className="font-medium text-gray-800 truncate">{sale.client_name}</span>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap min-w-0 max-w-[9rem] align-middle">
-                        <span className="font-mono tabular-nums text-sm text-gray-700 truncate block">
-                          {sale.iptv_username && String(sale.iptv_username).trim()
-                            ? String(sale.iptv_username).trim()
-                            : '—'}
-                        </span>
+                      <td className={`${TABLE_CELL_TRUNC} font-mono tabular-nums text-sm text-gray-700`}>
+                        {sale.iptv_username && String(sale.iptv_username).trim()
+                          ? String(sale.iptv_username).trim()
+                          : '—'}
                       </td>
-                      <td className="px-2 py-2.5 whitespace-nowrap w-16 font-medium text-gray-800 tabular-nums text-sm align-middle">
+                      <td className={`${TABLE_CELL_NOWRAP} font-medium text-gray-800 tabular-nums text-sm`}>
                         {formatSaleDocNo(sale.id)}
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap min-w-0 max-w-[11rem] align-middle">
+                      <td className={`${TABLE_CELL_TRUNC} min-w-0 overflow-hidden`}>
                         <SaleListNotesCell notes={sale.notes} />
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-gray-700 text-sm align-middle">
+                      <td
+                        className={`${TABLE_CELL_NOWRAP} text-gray-700 text-sm truncate`}
+                        title={
+                          sale.payment_method && String(sale.payment_method).trim()
+                            ? String(sale.payment_method).trim()
+                            : undefined
+                        }
+                      >
                         {sale.payment_method && String(sale.payment_method).trim()
                           ? String(sale.payment_method).trim()
                           : '—'}
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap font-mono tabular-nums text-gray-800 text-sm align-middle">
+                      <td className={`${TABLE_CELL_NOWRAP} font-mono tabular-nums text-gray-800 text-sm`}>
                         {sale.currency ? String(sale.currency).toUpperCase() : '—'}
                       </td>
                       <td
-                        className="px-3 py-2.5 whitespace-nowrap text-gray-700 text-sm align-middle max-w-[14rem] truncate"
+                        className={`${TABLE_CELL} min-w-0 max-w-0 overflow-hidden text-gray-700 text-sm`}
                         title={
                           Array.isArray(sale.tags) && sale.tags.length
                             ? sale.tags.join(', ')
                             : undefined
                         }
                       >
-                        <div className="flex flex-wrap items-center gap-1">
+                        <div className="flex flex-wrap items-center gap-0.5 max-w-full overflow-hidden">
                           {/* 1. Badge Morado con el Nombre del Producto/Descripción */}
                           {(sale.product_name || (sale.invoice_lines && sale.invoice_lines[0]?.description)) ? (
                             <span className="inline-flex px-2 py-1 text-xs font-medium rounded-md bg-purple-50 text-purple-700 border border-purple-200 whitespace-nowrap shadow-sm">
@@ -1507,13 +1526,13 @@ export default function Sales() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-right align-middle">
+                      <td className={`${TABLE_CELL_NOWRAP} text-right`}>
                         <div className="inline-block text-right">
                           <SaleAmountCell sale={sale} />
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 align-middle min-w-[108px] max-w-[220px]">
-                        <div className="flex flex-col items-center gap-1 min-w-0">
+                      <td className={`${TABLE_CELL} min-w-0 max-w-0 overflow-hidden`}>
+                        <div className="flex flex-col items-center gap-0.5 min-w-0">
                           <StatusBadge status={sale.status} />
                           {sale.status === 'payment_submitted' ? (
                             <OcrSecurityBadges
@@ -1538,11 +1557,11 @@ export default function Sales() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-center align-middle w-14">
+                      <td className={`${TABLE_CELL_NOWRAP} text-center`}>
                         <SaleReceiptProofLink sale={sale} />
                       </td>
                       {showRejectReasonCol ? (
-                        <td className="px-3 py-2.5 align-top text-xs text-slate-700 max-w-[18rem]">
+                        <td className={`${TABLE_CELL} align-top text-xs text-slate-700 min-w-0 max-w-0 overflow-hidden`}>
                           {sale.status === 'rejected' && sale.rejection_reason ? (
                             <span
                               className="line-clamp-4 whitespace-pre-wrap break-words"
@@ -1565,7 +1584,7 @@ export default function Sales() {
                           ) : null}
                         </td>
                       ) : null}
-                      <td className="px-3 py-2.5 whitespace-nowrap text-right align-middle min-w-[220px]">
+                      <td className={`${TABLE_CELL} min-w-0 max-w-0 text-right overflow-hidden`}>
                         <SaleRowActions
                           sale={sale}
                           onActivate={handleActivate}
@@ -1600,30 +1619,32 @@ export default function Sales() {
                     })
                     return (
                       <tr key={`payment-${p.id}`} className="bg-indigo-50/35 hover:bg-indigo-50/55 transition-colors">
-                        <td className="px-3 py-2.5 whitespace-nowrap text-gray-600 text-sm">{dtStr}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap min-w-0 max-w-[11rem]">
+                        <td className={`${TABLE_CELL_NOWRAP} text-gray-600 text-sm`}>{dtStr}</td>
+                        <td className={TABLE_CELL_TRUNC}>
                           <span className="font-medium text-gray-800 truncate block">{p.client_name || '—'}</span>
                         </td>
-                        <td className="px-3 py-2.5 text-gray-400 text-sm">—</td>
-                        <td className="px-2 py-2.5 font-mono text-sm font-semibold text-indigo-800">
+                        <td className={`${TABLE_CELL} text-gray-400 text-sm`}>—</td>
+                        <td className={`${TABLE_CELL_NOWRAP} font-mono text-sm font-semibold text-indigo-800`}>
                           {p.payment_number || `PAG-${p.id}`}
                         </td>
-                        <td className="px-3 py-2.5 text-xs text-gray-600 max-w-[11rem] truncate" title={p.notes}>
+                        <td className={`${TABLE_CELL_TRUNC} text-xs text-gray-600`} title={p.notes}>
                           {p.notes || 'Abono portal'}
                         </td>
-                        <td className="px-3 py-2.5 text-sm">{p.payment_method || '—'}</td>
-                        <td className="px-3 py-2.5 font-mono text-sm">{p.currency || 'USD'}</td>
-                        <td className="px-3 py-2.5">
+                        <td className={`${TABLE_CELL_NOWRAP} text-sm truncate`} title={p.payment_method || undefined}>
+                          {p.payment_method || '—'}
+                        </td>
+                        <td className={`${TABLE_CELL_NOWRAP} font-mono text-sm`}>{p.currency || 'USD'}</td>
+                        <td className={TABLE_CELL}>
                           <span className="text-[10px] font-bold uppercase text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
                             Pago
                           </span>
                         </td>
-                        <td className="px-3 py-2.5 text-right font-bold tabular-nums text-sm">
+                        <td className={`${TABLE_CELL_NOWRAP} text-right font-bold tabular-nums text-sm`}>
                           {Number.isFinite(amt) ? amt.toFixed(2) : '—'}
                         </td>
-                        <td className="px-3 py-2.5 max-w-[220px]">
-                          <div className="flex flex-col items-center gap-1 min-w-0">
-                            <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-1 rounded-full ring-1 ring-sky-100">
+                        <td className={`${TABLE_CELL} min-w-0 max-w-0 overflow-hidden`}>
+                          <div className="flex flex-col items-center gap-0.5 min-w-0">
+                            <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-1 rounded-full ring-1 ring-sky-100 whitespace-nowrap">
                               En revisión
                             </span>
                             <OcrSecurityBadges
@@ -1635,7 +1656,7 @@ export default function Sales() {
                             />
                           </div>
                         </td>
-                        <td className="px-3 py-2.5 text-center">
+                        <td className={`${TABLE_CELL} text-center`}>
                           {p.receipt_file_url ? (
                             <a
                               href={`${API_BASE}${p.receipt_file_url}`}
@@ -1656,8 +1677,8 @@ export default function Sales() {
                             <span className="text-xs text-gray-400">—</span>
                           )}
                         </td>
-                        {showRejectReasonCol ? <td className="px-3 py-2.5 text-gray-400">—</td> : null}
-                        <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                        {showRejectReasonCol ? <td className={`${TABLE_CELL} text-gray-400`}>—</td> : null}
+                        <td className={`${TABLE_CELL} min-w-0 max-w-0 text-right overflow-hidden`}>
                           <button
                             type="button"
                             onClick={() => handleReviewPayment(p)}

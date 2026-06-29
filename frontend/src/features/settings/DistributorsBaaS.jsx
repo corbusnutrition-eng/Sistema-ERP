@@ -29,7 +29,7 @@ import { useAuth } from '../../context/AuthContext'
 import { notifyAccountsReceivableStale } from '../../utils/arReportEvents'
 import StatusFilterTabs from '../../components/ui/StatusFilterTabs'
 import ResizableTh from '../../components/ui/ResizableTh'
-import { useTableResize, BAAS_RECHARGE_TABLE_COLUMN_WIDTHS } from '../../hooks/useTableResize'
+import { useTableResize, BAAS_RECHARGE_TABLE_COLUMN_WIDTHS, TABLE_CELL, TABLE_CELL_NOWRAP, TABLE_CELL_TRUNC } from '../../hooks/useTableResize'
 import NewRechargeModal, { normalizeClienteDesdeWebhook, newRechargeLineRow } from './NewRechargeModal'
 import UpdateClientPricesModal from './UpdateClientPricesModal'
 import { currencyFromLastSelectedDepositIds } from '../../lib/accountCurrencyCascade'
@@ -1713,7 +1713,7 @@ export default function DistributorsBaaSPage() {
             </div>
           ) : (
             <div className="w-full overflow-x-auto">
-              <table className="w-full min-w-max table-fixed text-sm">
+              <table className="w-full table-fixed text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
                     <ResizableTh
@@ -1820,16 +1820,16 @@ export default function DistributorsBaaSPage() {
                           : ''
                       }`}
                     >
-                      <td className="px-3 py-2.5 whitespace-nowrap text-gray-600 text-sm align-middle">
+                      <td className={`${TABLE_CELL_NOWRAP} text-gray-600 text-sm`}>
                         {formatSaleTableDate(r.created_at)}
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap min-w-0 max-w-[11rem] align-middle">
-                        <div className="flex items-center gap-2 min-w-0">
+                      <td className={`${TABLE_CELL_TRUNC} align-middle`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
                           <div
-                            className="w-6 h-6 rounded-full bg-blue-100 flex items-center
+                            className="w-5 h-5 rounded-full bg-blue-100 flex items-center
                                         justify-center shrink-0"
                           >
-                            <span className="text-[10px] font-bold text-blue-600">
+                            <span className="text-[9px] font-bold text-blue-600">
                               {(r.client_name || '?').charAt(0).toUpperCase()}
                             </span>
                           </div>
@@ -1838,36 +1838,34 @@ export default function DistributorsBaaSPage() {
                           </span>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap min-w-0 max-w-[9rem] align-middle">
-                        <span className="font-mono tabular-nums text-sm text-gray-700 truncate block">
-                          {r.client_username && String(r.client_username).trim()
-                            ? String(r.client_username).trim()
-                            : '—'}
-                        </span>
+                      <td className={`${TABLE_CELL_TRUNC} font-mono tabular-nums text-sm text-gray-700`}>
+                        {r.client_username && String(r.client_username).trim()
+                          ? String(r.client_username).trim()
+                          : '—'}
                       </td>
-                      <td className="px-2 py-2.5 whitespace-nowrap w-16 font-medium text-gray-800 tabular-nums text-sm align-middle">
+                      <td className={`${TABLE_CELL_NOWRAP} font-medium text-gray-800 tabular-nums text-sm`}>
                         {formatSaleDocNo(r.id)}
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap min-w-0 max-w-[11rem] align-middle">
+                      <td className={`${TABLE_CELL_TRUNC} min-w-0 overflow-hidden`}>
                         <SaleListNotesCell notes={r.notes_preview} />
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-gray-700 text-sm align-middle">
+                      <td
+                        className={`${TABLE_CELL_NOWRAP} text-gray-700 text-sm truncate`}
+                        title={r.payment_methods_display?.trim?.() ? r.payment_methods_display.trim() : undefined}
+                      >
                         {r.payment_methods_display?.trim?.() ? r.payment_methods_display.trim() : '—'}
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap font-mono tabular-nums text-gray-800 text-sm align-middle">
+                      <td className={`${TABLE_CELL_NOWRAP} font-mono tabular-nums text-gray-800 text-sm`}>
                         {r.recharge_currency ? String(r.recharge_currency).toUpperCase() : '—'}
                       </td>
-                      <td
-                        className="px-3 py-2.5 whitespace-nowrap text-gray-700 text-sm align-middle max-w-[14rem] truncate"
-                        title="Recarga, BaaS"
-                      >
+                      <td className={`${TABLE_CELL_TRUNC} text-gray-700 text-sm`} title="Recarga, BaaS">
                         Recarga, BaaS
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-right align-middle">
+                      <td className={`${TABLE_CELL_NOWRAP} text-right`}>
                         <RechargeAmountCell row={r} />
                       </td>
-                      <td className="px-3 py-2.5 align-middle min-w-[108px] max-w-[220px]">
-                        <div className="flex flex-col items-center gap-1 min-w-0">
+                      <td className={`${TABLE_CELL} min-w-0 max-w-0 overflow-hidden`}>
+                        <div className="flex flex-col items-center gap-0.5 min-w-0">
                           <RechargeStatusBadge status={r.status} />
                           {r.status === 'in_review' ? (
                             <OcrSecurityBadges
@@ -1878,14 +1876,14 @@ export default function DistributorsBaaSPage() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 whitespace-nowrap text-center align-middle w-14">
+                      <td className={`${TABLE_CELL_NOWRAP} text-center`}>
                         <SaleReceiptProofLink
                           sale={{
                             payment_receipt: r.receipt_url || r.admin_precheck_receipt_url,
                           }}
                         />
                       </td>
-                      <td className="px-3 py-2.5 text-right whitespace-nowrap align-middle min-w-[200px]">
+                      <td className={`${TABLE_CELL} min-w-0 max-w-0 text-right overflow-hidden`}>
                         <div className="flex flex-wrap items-center justify-end gap-3">
                           {r.status === 'pending' ? (
                             <>
