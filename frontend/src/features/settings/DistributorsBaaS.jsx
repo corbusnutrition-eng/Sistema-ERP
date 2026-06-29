@@ -29,7 +29,16 @@ import { useAuth } from '../../context/AuthContext'
 import { notifyAccountsReceivableStale } from '../../utils/arReportEvents'
 import StatusFilterTabs from '../../components/ui/StatusFilterTabs'
 import ResizableTh from '../../components/ui/ResizableTh'
-import { useTableResize, BAAS_RECHARGE_TABLE_COLUMN_WIDTHS, TABLE_CELL, TABLE_CELL_NOWRAP, TABLE_CELL_TRUNC } from '../../hooks/useTableResize'
+import {
+  useTableResize,
+  BAAS_RECHARGE_TABLE_COLUMN_WIDTHS,
+  TABLE_CELL,
+  TABLE_CELL_NOWRAP,
+  TABLE_CELL_TRUNC,
+  TABLE_STICKY_ACTIONS_TH_CLASS,
+  TABLE_STICKY_ACTIONS_TD_CLASS,
+  TABLE_ACTIONS_COLUMN_MIN_WIDTH,
+} from '../../hooks/useTableResize'
 import NewRechargeModal, { normalizeClienteDesdeWebhook, newRechargeLineRow } from './NewRechargeModal'
 import UpdateClientPricesModal from './UpdateClientPricesModal'
 import { currencyFromLastSelectedDepositIds } from '../../lib/accountCurrencyCascade'
@@ -280,7 +289,9 @@ export default function DistributorsBaaSPage() {
   /** Coincide con valores canónicos del backend (pending, in_review, …). */
   const [rechargeActiveTab, setRechargeActiveTab] = useState('in_review')
   const { columnWidths: rechargeColumnWidths, startResize: startRechargeColumnResize } =
-    useTableResize(BAAS_RECHARGE_TABLE_COLUMN_WIDTHS)
+    useTableResize(BAAS_RECHARGE_TABLE_COLUMN_WIDTHS, {
+      columnMinWidths: { acciones: TABLE_ACTIONS_COLUMN_MIN_WIDTH },
+    })
 
   const [toast, setToast] = useState('')
   const [processingReqId, setProcessingReqId] = useState(null)
@@ -1801,6 +1812,7 @@ export default function DistributorsBaaSPage() {
                       width={rechargeColumnWidths.acciones}
                       onResizeStart={startRechargeColumnResize}
                       align="right"
+                      className={TABLE_STICKY_ACTIONS_TH_CLASS}
                     >
                       ACCIONES
                     </ResizableTh>
@@ -1883,7 +1895,7 @@ export default function DistributorsBaaSPage() {
                           }}
                         />
                       </td>
-                      <td className={`${TABLE_CELL} min-w-0 max-w-0 text-right overflow-hidden`}>
+                      <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
                         <div className="flex flex-wrap items-center justify-end gap-3">
                           {r.status === 'pending' ? (
                             <>

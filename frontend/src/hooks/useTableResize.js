@@ -9,6 +9,7 @@ const MIN_COLUMN_WIDTH = 60
  */
 export function useTableResize(initialWidths, options = {}) {
   const minWidth = options.minWidth ?? MIN_COLUMN_WIDTH
+  const columnMinWidths = options.columnMinWidths ?? {}
   const [columnWidths, setColumnWidths] = useState(initialWidths)
   const resizingRef = useRef(null)
 
@@ -30,7 +31,8 @@ export function useTableResize(initialWidths, options = {}) {
         const state = resizingRef.current
         if (!state) return
         const currentX = moveEvent.clientX
-        const newWidth = Math.max(minWidth, state.startWidth + (currentX - state.startX))
+        const colMin = columnMinWidths[state.columnKey] ?? minWidth
+        const newWidth = Math.max(colMin, state.startWidth + (currentX - state.startX))
         setColumnWidths((prev) => ({
           ...prev,
           [state.columnKey]: newWidth,
@@ -50,7 +52,7 @@ export function useTableResize(initialWidths, options = {}) {
       window.addEventListener('mousemove', onMouseMove)
       window.addEventListener('mouseup', onMouseUp)
     },
-    [minWidth],
+    [minWidth, columnMinWidths],
   )
 
   return { columnWidths, startResize, setColumnWidths }
@@ -60,6 +62,14 @@ export function useTableResize(initialWidths, options = {}) {
 export const TABLE_CELL = 'px-3 py-2 align-middle min-w-0 overflow-hidden'
 export const TABLE_CELL_NOWRAP = `${TABLE_CELL} whitespace-nowrap truncate`
 export const TABLE_CELL_TRUNC = `${TABLE_CELL} truncate`
+
+/** Columna ACCIONES fija a la derecha (header y celdas). */
+export const TABLE_STICKY_ACTIONS_TH_CLASS =
+  'sticky right-0 bg-white z-20 shadow-[-4px_0_6px_-1px_rgba(0,0,0,0.05)]'
+export const TABLE_STICKY_ACTIONS_TD_CLASS =
+  'sticky right-0 bg-white z-10 shadow-[-4px_0_6px_-1px_rgba(0,0,0,0.05)] px-3 py-2 align-middle overflow-visible'
+
+export const TABLE_ACTIONS_COLUMN_MIN_WIDTH = 140
 
 /**
  * Anchos iniciales (px) — tabla principal de Ventas (12 columnas).
@@ -76,7 +86,7 @@ export const SALES_TABLE_COLUMN_WIDTHS = {
   importe: 130,
   estado: 130,
   comprobante: 100,
-  acciones: 100,
+  acciones: 140,
 }
 
 /** Ventas — pestaña rechazadas (+ columna motivo). */
@@ -85,7 +95,7 @@ export const SALES_TABLE_REJECTED_COLUMN_WIDTHS = {
   nota: 90,
   etiquetas: 120,
   comprobante: 90,
-  acciones: 90,
+  acciones: 140,
   motivo: 200,
 }
 
@@ -102,5 +112,5 @@ export const BAAS_RECHARGE_TABLE_COLUMN_WIDTHS = {
   importe: '9%',
   estado: '9%',
   comprobante: '4%',
-  acciones: '7%',
+  acciones: 140,
 }

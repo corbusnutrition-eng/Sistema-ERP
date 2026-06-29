@@ -50,6 +50,9 @@ import {
   TABLE_CELL,
   TABLE_CELL_NOWRAP,
   TABLE_CELL_TRUNC,
+  TABLE_STICKY_ACTIONS_TH_CLASS,
+  TABLE_STICKY_ACTIONS_TD_CLASS,
+  TABLE_ACTIONS_COLUMN_MIN_WIDTH,
 } from '../../hooks/useTableResize'
 import ResizableTh from '../../components/ui/ResizableTh'
 import OcrSecurityBadges, { pickOcrFlagsFromSale, pickOcrSecurityFlags } from '../../components/OcrSecurityBadges'
@@ -1055,7 +1058,9 @@ export default function Sales() {
   const salesTableDefaultWidths = showRejectReasonCol
     ? SALES_TABLE_REJECTED_COLUMN_WIDTHS
     : SALES_TABLE_COLUMN_WIDTHS
-  const { columnWidths, startResize, setColumnWidths } = useTableResize(salesTableDefaultWidths)
+  const { columnWidths, startResize, setColumnWidths } = useTableResize(salesTableDefaultWidths, {
+    columnMinWidths: { acciones: TABLE_ACTIONS_COLUMN_MIN_WIDTH },
+  })
 
   useEffect(() => {
     setColumnWidths(salesTableDefaultWidths)
@@ -1410,6 +1415,7 @@ export default function Sales() {
                     width={columnWidths.acciones}
                     onResizeStart={startResize}
                     align="right"
+                    className={TABLE_STICKY_ACTIONS_TH_CLASS}
                   >
                     ACCIONES
                   </ResizableTh>
@@ -1585,7 +1591,7 @@ export default function Sales() {
                           ) : null}
                         </td>
                       ) : null}
-                      <td className={`${TABLE_CELL} min-w-0 max-w-0 text-right overflow-hidden`}>
+                      <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
                         <SaleRowActions
                           sale={sale}
                           onActivate={handleActivate}
@@ -1679,7 +1685,7 @@ export default function Sales() {
                           )}
                         </td>
                         {showRejectReasonCol ? <td className={`${TABLE_CELL} text-gray-400`}>—</td> : null}
-                        <td className={`${TABLE_CELL} min-w-0 max-w-0 text-right overflow-hidden`}>
+                        <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
                           <button
                             type="button"
                             onClick={() => handleReviewPayment(p)}
