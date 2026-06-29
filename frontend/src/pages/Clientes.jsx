@@ -1111,7 +1111,27 @@ function normalizeClientStatusApi(status) {
   return status === 'Inactivo' ? 'Inactivo' : 'Activo'
 }
 
+function pickClientPanelCreds(client) {
+  if (!client) return { user: '', pass: '' }
+  const user = String(
+    client.last_normal_credit_username ??
+      client.lastNormalCreditUsername ??
+      client.last_iptv_username ??
+      client.lastIptvUsername ??
+      '',
+  ).trim()
+  const pass = String(
+    client.last_normal_credit_password ??
+      client.lastNormalCreditPassword ??
+      client.last_iptv_password ??
+      client.lastIptvPassword ??
+      '',
+  ).trim()
+  return { user, pass }
+}
+
 function clientToEditForm(client) {
+  const { user: panelUser, pass: panelPass } = pickClientPanelCreds(client)
   return {
     username: client.username ?? '',
     name:     client.name ?? '',
@@ -1119,6 +1139,8 @@ function clientToEditForm(client) {
     phone:    client.phone ?? '',
     country:  client.country ?? '',
     status:   normalizeClientStatusApi(client.status),
+    last_iptv_username: panelUser,
+    last_iptv_password: panelPass,
     note:     client.note ?? '',
   }
 }
@@ -1156,6 +1178,8 @@ export function EditClientModal({ client, onClose, onSave, onSuccess }) {
         phone:    form.phone.trim()       || null,
         country:  form.country.trim()     || null,
         status:   form.status,
+        last_iptv_username: form.last_iptv_username.trim() || null,
+        last_iptv_password: form.last_iptv_password.trim() || null,
         note:     form.note.trim() || null,
       }
       await onSave(client.id, payload)
@@ -1245,6 +1269,33 @@ export function EditClientModal({ client, onClose, onSave, onSuccess }) {
                 options={STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
                 hideClear
                 disabled={loading}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 pt-3 border-t border-gray-100">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">Usuario del Panel</label>
+              <input
+                type="text"
+                name="last_iptv_username"
+                value={form.last_iptv_username}
+                onChange={handleChange}
+                placeholder="Usuario del panel activo"
+                className={inputCls}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">Contraseña del Panel</label>
+              <input
+                type="text"
+                name="last_iptv_password"
+                value={form.last_iptv_password}
+                onChange={handleChange}
+                placeholder="Contraseña del panel activo"
+                className={inputCls}
+                autoComplete="off"
               />
             </div>
           </div>

@@ -59,6 +59,16 @@ class ClientUpdate(BaseModel):
     custom_fields: Optional[Dict[str, Any]] = None
     note: Optional[str] = None
     tags: Optional[List[str]] = None
+    last_iptv_username: Optional[str] = Field(
+        default=None,
+        max_length=120,
+        description="Usuario del panel IPTV activo (crédito normal).",
+    )
+    last_iptv_password: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        description="Contraseña del panel IPTV activo (crédito normal).",
+    )
 
     @field_validator("name", mode="before")
     @classmethod
