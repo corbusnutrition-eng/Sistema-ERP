@@ -28,6 +28,7 @@ import {
   SaleAmountCell,
   SaleListNotesCell,
   SaleReceiptProofLink,
+  saleReceiptHref,
   saleOpensReadOnly,
   formatSaleDocNo,
   formatSaleTableDate,
@@ -1659,7 +1660,7 @@ export default function Sales() {
                         <td className={`${TABLE_CELL} text-center`}>
                           {p.receipt_file_url ? (
                             <a
-                              href={`${API_BASE}${p.receipt_file_url}`}
+                              href={saleReceiptHref({ receipt_url: p.receipt_file_url })}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-xs text-blue-600 hover:underline font-semibold"

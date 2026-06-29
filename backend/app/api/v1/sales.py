@@ -2518,15 +2518,13 @@ async def _persist_receipt_upload(file: UploadFile) -> str:
             detail="El archivo supera el límite de 20 MB.",
         )
 
-    suffix = Path(file.filename or "receipt").suffix.lower()
-    if suffix not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"):
-        suffix = ".pdf" if ctype == "application/pdf" else ".jpg"
+    from app.cloudinary_storage import upload_comprobante
 
-    filename = f"{uuid.uuid4().hex}{suffix}"
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    (UPLOAD_DIR / filename).write_bytes(raw)
-
-    return f"/uploads/{filename}"
+    return upload_comprobante(
+        raw,
+        content_type=ctype,
+        filename=file.filename,
+    )
 
 
 REJECTION_IMAGE_MAX_BYTES = 20 * 1024 * 1024

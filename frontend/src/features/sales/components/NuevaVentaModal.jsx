@@ -2556,10 +2556,9 @@ export default function NuevaVentaModal({
     handleChange({ target: { name: 'service_value', value: v } })
   }
 
-  const apiOrigin = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
   const existingReceiptAbsoluteUrl =
     isEditing && initialSale?.receipt_url && !receiptServerCleared
-      ? `${String(apiOrigin).replace(/\/$/, '')}${initialSale.receipt_url}`
+      ? absMediaUrl(initialSale.receipt_url)
       : null
 
   function clearReceiptAttachment() {

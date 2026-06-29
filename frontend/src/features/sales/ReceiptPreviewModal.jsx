@@ -1,6 +1,5 @@
 import { ExternalLink, X } from 'lucide-react'
-
-const BACKEND_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+import { saleReceiptHref } from './saleTableHelpers'
 
 export function receiptIsPdf(sale) {
   return String(sale?.receipt_url || '')
@@ -11,7 +10,8 @@ export function receiptIsPdf(sale) {
 /** Vista previa de comprobante (imagen o PDF) — misma UX que la tabla de Ventas. */
 export function ReceiptPreviewModal({ sale, onClose }) {
   if (!sale?.receipt_url) return null
-  const url = `${BACKEND_URL}${sale.receipt_url}`
+  const url = saleReceiptHref(sale)
+  if (!url) return null
   const pdf = receiptIsPdf(sale)
 
   return (

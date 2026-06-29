@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import uuid
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 
-from app.upload_paths import UPLOAD_ROOT
+from app.cloudinary_storage import upload_comprobante
 
-UPLOAD_DIR = UPLOAD_ROOT
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
     "image/png",
@@ -28,8 +24,8 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
 )
 async def upload_receipt(file: UploadFile) -> JSONResponse:
     """
-    Recibe una imagen de comprobante de pago, la guarda en uploads/
-    y devuelve la URL relativa accesible via /uploads/<filename>.
+    Recibe una imagen de comprobante de pago, la sube a Cloudinary
+    y devuelve la URL HTTPS pública (``secure_url``).
     Endpoint público – no requiere autenticación.
     """
     if file.content_type not in ALLOWED_CONTENT_TYPES:
@@ -45,13 +41,10 @@ async def upload_receipt(file: UploadFile) -> JSONResponse:
             detail="El archivo supera el límite de 10 MB.",
         )
 
-    suf = Path(file.filename or "receipt").suffix.lower()
-    suffix = suf if suf in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf") else (
-        ".pdf" if file.content_type == "application/pdf" else ".jpg"
+    file_url = upload_comprobante(
+        content,
+        content_type=file.content_type or "",
+        filename=file.filename,
     )
-    filename = f"{uuid.uuid4().hex}{suffix}"
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dest = UPLOAD_DIR / filename
-    dest.write_bytes(content)
 
-    return JSONResponse({"receipt_url": f"/uploads/{filename}"})
+    return JSONResponse({"receipt_url": file_url})

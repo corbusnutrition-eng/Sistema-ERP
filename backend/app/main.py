@@ -5,10 +5,14 @@ from pathlib import Path
 try:
     from dotenv import load_dotenv
 
-    _env_file = Path(__file__).resolve().parent.parent.parent / ".env"
-    if _env_file.exists():
-        load_dotenv(_env_file, override=False)
-        print(f"INFO: .env cargado desde {_env_file}")
+    _backend_env = Path(__file__).resolve().parent.parent / ".env"
+    _root_env = Path(__file__).resolve().parent.parent.parent / ".env"
+    if _backend_env.exists():
+        load_dotenv(_backend_env, override=False)
+        print(f"INFO: .env cargado desde {_backend_env}")
+    elif _root_env.exists():
+        load_dotenv(_root_env, override=False)
+        print(f"INFO: .env cargado desde {_root_env}")
     else:
         load_dotenv(override=False)
 except ImportError:
@@ -57,8 +61,16 @@ app.add_middleware(
     max_age=600,
 )
 
-# Archivos estáticos antes de la API (comprobantes en /uploads/…)
+# Archivos estáticos antes de la API (logos y comprobantes legados en /uploads/…)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+try:
+    from app.cloudinary_storage import configure_cloudinary
+
+    configure_cloudinary()
+    print("INFO: Cloudinary configurado.")
+except RuntimeError as exc:
+    print(f"WARN: Cloudinary no disponible: {exc}")
 
 # Routers (después de CORS y estáticos)
 from app.api.v1 import accounting as accounting_router
