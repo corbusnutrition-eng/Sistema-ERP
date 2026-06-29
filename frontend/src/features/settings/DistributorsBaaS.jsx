@@ -28,6 +28,8 @@ import {
 import { useAuth } from '../../context/AuthContext'
 import { notifyAccountsReceivableStale } from '../../utils/arReportEvents'
 import StatusFilterTabs from '../../components/ui/StatusFilterTabs'
+import ResizableTh from '../../components/ui/ResizableTh'
+import { useTableResize, BAAS_RECHARGE_TABLE_COLUMN_WIDTHS } from '../../hooks/useTableResize'
 import NewRechargeModal, { normalizeClienteDesdeWebhook, newRechargeLineRow } from './NewRechargeModal'
 import UpdateClientPricesModal from './UpdateClientPricesModal'
 import { currencyFromLastSelectedDepositIds } from '../../lib/accountCurrencyCascade'
@@ -51,20 +53,6 @@ import OcrSecurityBadges, {
 } from '../../components/OcrSecurityBadges'
 
 const NotificationManagementPanel = lazy(() => import('./NotificationManagementPanel'))
-
-function ResizableTh({ children, align = 'left', className = '' }) {
-  const ta =
-    align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
-  return (
-    <th
-      className={`px-3 py-2 ${ta} text-[11px] font-semibold text-gray-500 uppercase tracking-wider ${className}`}
-    >
-      <div className="resize-x overflow-hidden whitespace-nowrap min-w-[100px] inline-block align-middle">
-        {children}
-      </div>
-    </th>
-  )
-}
 
 /** Pestañas de estado BaaS — mismo componente que Ventas (`StatusFilterTabs`). */
 const RECHARGE_FILTERS = [
@@ -291,6 +279,8 @@ export default function DistributorsBaaSPage() {
   const rechargeFetchGenRef = useRef(0)
   /** Coincide con valores canónicos del backend (pending, in_review, …). */
   const [rechargeActiveTab, setRechargeActiveTab] = useState('in_review')
+  const { columnWidths: rechargeColumnWidths, startResize: startRechargeColumnResize } =
+    useTableResize(BAAS_RECHARGE_TABLE_COLUMN_WIDTHS)
 
   const [toast, setToast] = useState('')
   const [processingReqId, setProcessingReqId] = useState(null)
@@ -1723,21 +1713,95 @@ export default function DistributorsBaaSPage() {
             </div>
           ) : (
             <div className="w-full overflow-x-auto">
-              <table className="w-full table-auto text-sm">
+              <table className="w-full min-w-max table-fixed text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
-                    <ResizableTh>FECHA</ResizableTh>
-                    <ResizableTh className="min-w-0">CLIENTE</ResizableTh>
-                    <ResizableTh className="min-w-0">USUARIO</ResizableTh>
-                    <ResizableTh className="!px-2 w-16">N.º REF</ResizableTh>
-                    <ResizableTh className="min-w-0 max-w-[11rem]">NOTA</ResizableTh>
-                    <ResizableTh>MÉTODO DE PAGO</ResizableTh>
-                    <ResizableTh>MONEDA</ResizableTh>
-                    <ResizableTh>ETIQUETAS</ResizableTh>
-                    <ResizableTh align="right">IMPORTE</ResizableTh>
-                    <ResizableTh className="min-w-[108px]">ESTADO</ResizableTh>
-                    <ResizableTh className="w-14 text-center">COMPROBANTE</ResizableTh>
-                    <ResizableTh align="right" className="min-w-[200px]">
+                    <ResizableTh
+                      columnKey="fecha"
+                      width={rechargeColumnWidths.fecha}
+                      onResizeStart={startRechargeColumnResize}
+                    >
+                      FECHA
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="cliente"
+                      width={rechargeColumnWidths.cliente}
+                      onResizeStart={startRechargeColumnResize}
+                    >
+                      CLIENTE
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="usuario"
+                      width={rechargeColumnWidths.usuario}
+                      onResizeStart={startRechargeColumnResize}
+                    >
+                      USUARIO
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="numeroRef"
+                      width={rechargeColumnWidths.numeroRef}
+                      onResizeStart={startRechargeColumnResize}
+                      className="!px-2"
+                    >
+                      N.º REF
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="nota"
+                      width={rechargeColumnWidths.nota}
+                      onResizeStart={startRechargeColumnResize}
+                    >
+                      NOTA
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="metodoPago"
+                      width={rechargeColumnWidths.metodoPago}
+                      onResizeStart={startRechargeColumnResize}
+                    >
+                      MÉTODO DE PAGO
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="moneda"
+                      width={rechargeColumnWidths.moneda}
+                      onResizeStart={startRechargeColumnResize}
+                    >
+                      MONEDA
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="etiquetas"
+                      width={rechargeColumnWidths.etiquetas}
+                      onResizeStart={startRechargeColumnResize}
+                    >
+                      ETIQUETAS
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="importe"
+                      width={rechargeColumnWidths.importe}
+                      onResizeStart={startRechargeColumnResize}
+                      align="right"
+                    >
+                      IMPORTE
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="estado"
+                      width={rechargeColumnWidths.estado}
+                      onResizeStart={startRechargeColumnResize}
+                    >
+                      ESTADO
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="comprobante"
+                      width={rechargeColumnWidths.comprobante}
+                      onResizeStart={startRechargeColumnResize}
+                      align="center"
+                    >
+                      COMPROBANTE
+                    </ResizableTh>
+                    <ResizableTh
+                      columnKey="acciones"
+                      width={rechargeColumnWidths.acciones}
+                      onResizeStart={startRechargeColumnResize}
+                      align="right"
+                    >
                       ACCIONES
                     </ResizableTh>
                   </tr>

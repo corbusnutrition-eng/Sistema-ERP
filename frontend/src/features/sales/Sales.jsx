@@ -42,6 +42,8 @@ import SalesTabs from './components/SalesTabs'
 import SalesTableSkeleton from './components/SalesTableSkeleton'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
 import { confirmVoidTransaction } from '../../utils/confirmVoidTransaction'
+import { useTableResize, SALES_TABLE_COLUMN_WIDTHS } from '../../hooks/useTableResize'
+import ResizableTh from '../../components/ui/ResizableTh'
 import OcrSecurityBadges, { pickOcrFlagsFromSale, pickOcrSecurityFlags } from '../../components/OcrSecurityBadges'
 
 const ITEMS_PER_PAGE = 10
@@ -205,20 +207,6 @@ function Toast({ message, onDismiss }) {
         ×
       </button>
     </div>
-  )
-}
-
-function ResizableTh({ children, align = 'left', className = '' }) {
-  const ta =
-    align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
-  return (
-    <th
-      className={`px-3 py-2 ${ta} text-[11px] font-semibold text-gray-500 uppercase tracking-wider ${className}`}
-    >
-      <div className="resize-x overflow-hidden whitespace-nowrap min-w-[100px] inline-block align-middle">
-        {children}
-      </div>
-    </th>
   )
 }
 
@@ -1056,6 +1044,7 @@ export default function Sales() {
 
   const showRejectReasonCol = filter === 'rejected'
   const tableColSpan = showRejectReasonCol ? 13 : 12
+  const { columnWidths, startResize } = useTableResize(SALES_TABLE_COLUMN_WIDTHS)
 
   return (
     <>
@@ -1350,24 +1339,63 @@ export default function Sales() {
         {/* Solo la tabla reacciona al fetch de la pestaña activa */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden w-full min-h-[28rem] flex flex-col">
           <div className="w-full overflow-x-auto flex-1 min-h-[22rem]">
-            <table className="w-full table-auto text-sm">
+            <table className="w-full min-w-max table-fixed text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
-                  <ResizableTh>FECHA</ResizableTh>
-                  <ResizableTh className="min-w-0">CLIENTE</ResizableTh>
-                  <ResizableTh className="min-w-0">USUARIO</ResizableTh>
-                  <ResizableTh className="!px-2 w-16">N.º</ResizableTh>
-                  <ResizableTh className="min-w-0 max-w-[11rem]">NOTA</ResizableTh>
-                  <ResizableTh>MÉTODO DE PAGO</ResizableTh>
-                  <ResizableTh>MONEDA</ResizableTh>
-                  <ResizableTh>ETIQUETAS</ResizableTh>
-                  <ResizableTh align="right">IMPORTE</ResizableTh>
-                  <ResizableTh className="min-w-[108px]">ESTADO</ResizableTh>
-                  <ResizableTh className="w-14 text-center">COMPROBANTE</ResizableTh>
+                  <ResizableTh columnKey="fecha" width={columnWidths.fecha} onResizeStart={startResize}>
+                    FECHA
+                  </ResizableTh>
+                  <ResizableTh columnKey="cliente" width={columnWidths.cliente} onResizeStart={startResize}>
+                    CLIENTE
+                  </ResizableTh>
+                  <ResizableTh columnKey="usuario" width={columnWidths.usuario} onResizeStart={startResize}>
+                    USUARIO
+                  </ResizableTh>
+                  <ResizableTh columnKey="numero" width={columnWidths.numero} onResizeStart={startResize} className="!px-2">
+                    N.º
+                  </ResizableTh>
+                  <ResizableTh columnKey="nota" width={columnWidths.nota} onResizeStart={startResize}>
+                    NOTA
+                  </ResizableTh>
+                  <ResizableTh columnKey="metodoPago" width={columnWidths.metodoPago} onResizeStart={startResize}>
+                    MÉTODO DE PAGO
+                  </ResizableTh>
+                  <ResizableTh columnKey="moneda" width={columnWidths.moneda} onResizeStart={startResize}>
+                    MONEDA
+                  </ResizableTh>
+                  <ResizableTh columnKey="etiquetas" width={columnWidths.etiquetas} onResizeStart={startResize}>
+                    ETIQUETAS
+                  </ResizableTh>
+                  <ResizableTh
+                    columnKey="importe"
+                    width={columnWidths.importe}
+                    onResizeStart={startResize}
+                    align="right"
+                  >
+                    IMPORTE
+                  </ResizableTh>
+                  <ResizableTh columnKey="estado" width={columnWidths.estado} onResizeStart={startResize}>
+                    ESTADO
+                  </ResizableTh>
+                  <ResizableTh
+                    columnKey="comprobante"
+                    width={columnWidths.comprobante}
+                    onResizeStart={startResize}
+                    align="center"
+                  >
+                    COMPROBANTE
+                  </ResizableTh>
                   {showRejectReasonCol ? (
-                    <ResizableTh className="min-w-[12rem] max-w-[18rem]">MOTIVO / EVIDENCIA</ResizableTh>
+                    <ResizableTh columnKey="motivo" width={columnWidths.motivo} onResizeStart={startResize}>
+                      MOTIVO / EVIDENCIA
+                    </ResizableTh>
                   ) : null}
-                  <ResizableTh align="right" className="min-w-[220px]">
+                  <ResizableTh
+                    columnKey="acciones"
+                    width={columnWidths.acciones}
+                    onResizeStart={startResize}
+                    align="right"
+                  >
                     ACCIONES
                   </ResizableTh>
                 </tr>
