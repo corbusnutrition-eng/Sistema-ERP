@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
+  Ban,
   ChevronDown,
   ChevronRight,
   Clipboard,
@@ -18,6 +19,7 @@ import api from '../api/axios'
 import { useModal } from '../context/ModalContext'
 import usePermissions from '../hooks/usePermissions'
 import { PERMS } from '../lib/permissions'
+import { confirmVoidTransaction } from '../utils/confirmVoidTransaction'
 import NuevaVentaModal from '../features/sales/components/NuevaVentaModal'
 import {
   ClientDetailNotesCell,
@@ -181,12 +183,38 @@ function DevToast({ message, onDone }) {
   )
 }
 
+function ledgerEntryIsVoidable(entry) {
+  if (!entry) return false
+  const st = String(entry.status || '').toLowerCase()
+  if (entry.entity_kind === 'sale') {
+    return st === 'approved' || st === 'partially_paid'
+  }
+  if (entry.entity_kind === 'payment') {
+    return st === 'approved' || st === 'aprobado' || st === 'pending_review' || st === 'en revisión'
+  }
+  return false
+}
+
+function formatApiErrorDetail(err, fallback) {
+  const d = err?.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) {
+    const parts = d.map((x) =>
+      typeof x === 'object' && x != null && 'msg' in x ? x.msg : JSON.stringify(x),
+    )
+    return parts.length ? parts.join(' · ') : fallback
+  }
+  return fallback
+}
+
 export default function ClientDetail() {
   const { clientId } = useParams()
   const navigate = useNavigate()
   const { openNewSale, openReceivePayment } = useModal()
   const { hasPermission } = usePermissions()
   const canEdit = hasPermission(PERMS.CLIENTS_EDIT)
+  const canVoidSales = hasPermission(PERMS.SALES_INVOICES_EDIT)
+  const canVoidPayments = hasPermission(PERMS.ACCOUNTING_RECEIVABLES_EDIT)
 
   const idNum = Number(clientId)
   const invalidId = !Number.isFinite(idNum) || idNum < 1
@@ -213,6 +241,7 @@ export default function ClientDetail() {
   const [revertLoading, setRevertLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [expandedRowId, setExpandedRowId] = useState(null)
+  const [voidingKey, setVoidingKey] = useState(null)
   const txnMenuRef = useRef(null)
 
   const HISTORY_PAGE_SIZE = 10
@@ -300,8 +329,58 @@ export default function ClientDetail() {
   }, [invalidId, idNum])
 
   const reloadClientFinancials = useCallback(async () => {
-    await Promise.all([fetchClient(), fetchLedger()])
-  }, [fetchClient, fetchLedger])
+    await Promise.all([fetchClient(), fetchSales(), fetchLedger()])
+  }, [fetchClient, fetchSales, fetchLedger])
+
+  const handleVoidLedgerSale = useCallback(
+    async (entry) => {
+      const saleId = Number(entry?.entity_id)
+      if (!Number.isFinite(saleId) || saleId < 1) return
+      const confirmed = await confirmVoidTransaction({
+        entityLabel: `factura ${entry.ref_number || saleId}`,
+        includeInventoryNote: true,
+      })
+      if (!confirmed) return
+
+      const rowKey = `sale-${saleId}`
+      setVoidingKey(rowKey)
+      try {
+        await api.post(`/api/v1/sales/${saleId}/void`)
+        toastInfo('Factura anulada. Inventario devuelto y asientos revertidos.')
+        await reloadClientFinancials()
+      } catch (err) {
+        window.alert(formatApiErrorDetail(err, 'No se pudo anular la factura.'))
+      } finally {
+        setVoidingKey(null)
+      }
+    },
+    [reloadClientFinancials, toastInfo],
+  )
+
+  const handleVoidLedgerPayment = useCallback(
+    async (entry) => {
+      const paymentId = Number(entry?.payment_id ?? entry?.entity_id)
+      if (!Number.isFinite(paymentId) || paymentId < 1) return
+      const confirmed = await confirmVoidTransaction({
+        entityLabel: `pago ${entry.ref_number || paymentId}`,
+        includeInventoryNote: false,
+      })
+      if (!confirmed) return
+
+      const rowKey = `payment-${paymentId}`
+      setVoidingKey(rowKey)
+      try {
+        await api.post(`/api/v1/payments/${paymentId}/void`)
+        toastInfo('Pago anulado. Asientos contables revertidos.')
+        await reloadClientFinancials()
+      } catch (err) {
+        window.alert(formatApiErrorDetail(err, 'No se pudo anular el pago.'))
+      } finally {
+        setVoidingKey(null)
+      }
+    },
+    [reloadClientFinancials, toastInfo],
+  )
 
   const confirmRevertTransfer = useCallback(async () => {
     const txId = revertTarget?.wallet_transaction_id ?? revertTarget?.entity_id
@@ -894,12 +973,13 @@ export default function ClientDetail() {
                     <th className="px-4 py-3 text-right whitespace-nowrap">IMPORTE</th>
                     <th className="px-4 py-3 whitespace-nowrap">ESTADO</th>
                     <th className="px-4 py-3 text-center whitespace-nowrap w-[7.5rem]">COMPROBANTE</th>
+                    <th className="px-4 py-3 text-center whitespace-nowrap w-[4.5rem]">ACCIONES</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {ledger.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-gray-500 whitespace-normal">
+                      <td colSpan={8} className="px-4 py-12 text-center text-gray-500 whitespace-normal">
                         No hay movimientos en el historial de este cliente.
                       </td>
                     </tr>
@@ -933,6 +1013,11 @@ export default function ClientDetail() {
                       ? `wt-${entry.wallet_transaction_id ?? entry.entity_id}`
                       : `${entry.entity_kind}-${entry.entity_id}`
                     const isExpanded = expandedRowId === rowKey
+                    const voidable =
+                      ledgerEntryIsVoidable(entry)
+                      && ((entry.entity_kind === 'sale' && canVoidSales)
+                        || (entry.entity_kind === 'payment' && canVoidPayments))
+                    const isVoiding = voidingKey === rowKey
                     return (
                       <Fragment key={rowKey}>
                         <tr className={rowHighlight}>
@@ -999,10 +1084,37 @@ export default function ClientDetail() {
                               '—'
                             )}
                           </td>
+                          <td className="px-4 py-3 text-center whitespace-nowrap align-middle w-[4.5rem]">
+                            {voidable ? (
+                              <button
+                                type="button"
+                                disabled={isVoiding}
+                                onClick={() => {
+                                  if (entry.entity_kind === 'sale') {
+                                    void handleVoidLedgerSale(entry)
+                                  } else {
+                                    void handleVoidLedgerPayment(entry)
+                                  }
+                                }}
+                                className="inline-flex items-center justify-center p-1.5 rounded-lg text-red-500
+                                           hover:text-red-700 hover:bg-red-50 transition-colors
+                                           disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Anular transacción"
+                              >
+                                {isVoiding ? (
+                                  <Loader2 size={15} className="animate-spin" aria-hidden />
+                                ) : (
+                                  <Ban size={15} aria-hidden />
+                                )}
+                              </button>
+                            ) : (
+                              <span className="text-gray-300 select-none">—</span>
+                            )}
+                          </td>
                         </tr>
                         {isExpanded && (
                           <tr className="bg-gray-50/80">
-                            <td colSpan={7} className="px-4 py-4 whitespace-normal border-t border-gray-100">
+                            <td colSpan={8} className="px-4 py-4 whitespace-normal border-t border-gray-100">
                               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 text-sm">
                                 <div className="sm:col-span-2 lg:col-span-2">
                                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
@@ -1034,13 +1146,32 @@ export default function ClientDetail() {
                                   </p>
                                   <div>
                                     {saleForRow ? (
-                                      <button
-                                        type="button"
-                                        className="text-sm font-medium text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50"
-                                        onClick={() => setEditSale(saleForRow)}
-                                      >
-                                        {saleOpensReadOnly(saleForRow) ? 'Ver detalles' : 'Ver/editar'}
-                                      </button>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <button
+                                          type="button"
+                                          className="text-sm font-medium text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50"
+                                          onClick={() => setEditSale(saleForRow)}
+                                        >
+                                          {saleOpensReadOnly(saleForRow) ? 'Ver detalles' : 'Ver/editar'}
+                                        </button>
+                                        {canVoidSales && ledgerEntryIsVoidable(entry) && (
+                                          <button
+                                            type="button"
+                                            disabled={voidingKey === rowKey}
+                                            className="inline-flex items-center gap-1 text-xs font-semibold text-red-700
+                                                       hover:text-red-800 px-2 py-1 rounded-lg hover:bg-red-50 ring-1 ring-red-200/80
+                                                       disabled:opacity-45 disabled:pointer-events-none"
+                                            onClick={() => void handleVoidLedgerSale(entry)}
+                                          >
+                                            {voidingKey === rowKey ? (
+                                              <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
+                                            ) : (
+                                              <Ban size={13} aria-hidden />
+                                            )}
+                                            Anular
+                                          </button>
+                                        )}
+                                      </div>
                                     ) : isRecharge ? (
                                       <button
                                         type="button"
@@ -1058,13 +1189,32 @@ export default function ClientDetail() {
                                         )}
                                       </button>
                                     ) : isPayment ? (
-                                      <button
-                                        type="button"
-                                        className="text-sm font-medium text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50"
-                                        onClick={() => handleViewLedgerPayment(entry)}
-                                      >
-                                        Ver detalles
-                                      </button>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <button
+                                          type="button"
+                                          className="text-sm font-medium text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50"
+                                          onClick={() => handleViewLedgerPayment(entry)}
+                                        >
+                                          Ver detalles
+                                        </button>
+                                        {canVoidPayments && ledgerEntryIsVoidable(entry) && (
+                                          <button
+                                            type="button"
+                                            disabled={voidingKey === rowKey}
+                                            className="inline-flex items-center gap-1 text-xs font-semibold text-red-700
+                                                       hover:text-red-800 px-2 py-1 rounded-lg hover:bg-red-50 ring-1 ring-red-200/80
+                                                       disabled:opacity-45 disabled:pointer-events-none"
+                                            onClick={() => void handleVoidLedgerPayment(entry)}
+                                          >
+                                            {voidingKey === rowKey ? (
+                                              <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
+                                            ) : (
+                                              <Ban size={13} aria-hidden />
+                                            )}
+                                            Anular
+                                          </button>
+                                        )}
+                                      </div>
                                     ) : entry.can_revert ? (
                                       <button
                                         type="button"

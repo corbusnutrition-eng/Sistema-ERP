@@ -5,7 +5,22 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class VoidTransactionBody(BaseModel):
+    """Cuerpo opcional para anular facturas o pagos."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    reason: Optional[str] = Field(default=None, max_length=2000)
+
+
+class VoidTransactionResponse(BaseModel):
+    message: str
+    status: str = "voided"
+    sale_id: Optional[int] = None
+    payment_id: Optional[int] = None
 
 
 class PaymentAllocationOut(BaseModel):

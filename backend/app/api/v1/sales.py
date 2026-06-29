@@ -42,6 +42,7 @@ from app.models.sale import Sale, SaleStatus
 from app.models.sale_transaction_tag import SaleTransactionTag
 from app.models.transaction_class import TransactionClass
 from app.schemas.portal_public import PortalInstantActivationResponse
+from app.schemas.client_payments import VoidTransactionBody
 from app.schemas.sales import (
     LinkedPaymentOut,
     PendingReviewPaymentOut,
@@ -3557,6 +3558,20 @@ def approve_sale(sale_id: int, db: DbDep) -> SaleResponse:
     return _activate_sale_record(db, sale_id)
 
 
+@router.post(
+    "/{sale_id}/void",
+    response_model=SaleResponse,
+    summary="Anular factura activa (reverso contable + devolución de inventario)",
+)
+def void_sale(
+    sale_id: int,
+    db: DbDep,
+    body: Optional[VoidTransactionBody] = None,
+) -> SaleResponse:
+    reason = (body.reason if body else None) or ""
+    return _void_active_sale_record(db, sale_id, reason=reason)
+
+
 @router.put(
     "/{sale_id}/status",
     response_model=SaleResponse,
@@ -4524,8 +4539,22 @@ def _reject_pending_sale_record(
     return _build_response(sale, client, screen, product, stock_row=stock, db=db)
 
 
-def _annul_approved_sale_record(db: Session, sale_id: int) -> SaleResponse:
-    """Cancela una venta ya activada: inventario vuelve a disponible y asiento contable eliminado."""
+_VOIDABLE_SALE_STATUSES = frozenset({SaleStatus.approved, SaleStatus.partially_paid})
+_TERMINAL_SALE_STATUSES = frozenset(
+    {
+        SaleStatus.annulled,
+        SaleStatus.cancelled,
+        SaleStatus.rejected,
+        SaleStatus.expired,
+    }
+)
+
+
+def _void_active_sale_record(db: Session, sale_id: int, *, reason: str = "") -> SaleResponse:
+    """
+    Anula una factura activa dentro de una transacción: reversa contabilidad,
+    pagos vinculados e inventario (créditos/pantallas a bodega).
+    """
     sale = (
         db.query(Sale)
         .options(
@@ -4544,21 +4573,26 @@ def _annul_approved_sale_record(db: Session, sale_id: int) -> SaleResponse:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Venta con id {sale_id} no encontrada.",
         )
-    if sale.status != SaleStatus.approved:
+    if sale.status in _TERMINAL_SALE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta factura ya está anulada o no admite anulación.",
+        )
+    if sale.status not in _VOIDABLE_SALE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Solo se pueden cancelar ventas activadas.",
+            detail="Solo se pueden anular facturas activadas (approved o partially_paid).",
         )
+
+    ref = f"FAC-{int(sale.id):04d}"
+    rev_reason = (reason or "").strip() or f"Reversión por anulación de Factura #{ref}"
+
     cli = sale.client if sale.client else db.get(Client, sale.client_id)
     _reverse_approved_sale_inventory(db, sale, target=SaleStatus.annulled)
     if cli is not None:
         _reverse_client_sale_activation(cli, sale)
 
-    void_sale_accounting_state(
-        db,
-        sale,
-        reason=f"Anulación venta FAC-{int(sale.id):04d}",
-    )
+    void_sale_accounting_state(db, sale, reason=rev_reason)
 
     sale.status = SaleStatus.annulled
     db.commit()
@@ -4578,6 +4612,15 @@ def _annul_approved_sale_record(db: Session, sale_id: int) -> SaleResponse:
     )
     stock = db.get(ScreenStock, sale.screen_stock_id) if sale.screen_stock_id else None
     return _build_response(sale, client, screen, product, stock_row=stock, db=db)
+
+
+def _annul_approved_sale_record(db: Session, sale_id: int) -> SaleResponse:
+    """Cancela una venta ya activada: inventario vuelve a disponible y asiento contable revertido."""
+    return _void_active_sale_record(
+        db,
+        sale_id,
+        reason=f"Reversión por anulación de Factura #FAC-{int(sale_id):04d}",
+    )
 
 
 def _approve_pending_payment_events(sale: Sale) -> None:

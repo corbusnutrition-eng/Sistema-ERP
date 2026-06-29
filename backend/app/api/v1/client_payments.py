@@ -29,6 +29,8 @@ from app.schemas.client_payments import (
     PaymentApproveBody,
     PaymentCreateBody,
     PortalAbonoResponse,
+    VoidTransactionBody,
+    VoidTransactionResponse,
 )
 from app.services.client_payment_service import (
     add_payment_remainder_to_client_credit_balance,
@@ -481,3 +483,44 @@ def reject_payment(payment_id: int, db: DbDep, _: ReceivablesEditDep) -> dict:
 
     db.commit()
     return {"message": "Pago rechazado, asientos revertidos y saldo restaurado.", "payment_id": payment_id}
+
+
+@router.post("/{payment_id}/void", response_model=VoidTransactionResponse)
+def void_payment(
+    payment_id: int,
+    db: DbDep,
+    _: ReceivablesEditDep,
+    body: Optional[VoidTransactionBody] = None,
+) -> VoidTransactionResponse:
+    """Anula un pago CxC: revierte asientos contables y restaura saldos / CxC."""
+    p = db.get(ClientPayment, payment_id)
+    if p is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado.")
+
+    if p.status == ClientPaymentStatus.rejected:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El pago ya está anulado.")
+    if is_wallet_recharge_client_payment(p):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Las recargas BaaS no se anulan desde pagos CxC; use el módulo de recargas.",
+        )
+
+    pnum = (p.payment_number or f"PAG-{payment_id}").strip()
+    rev_reason = (body.reason if body else None) or f"Reversión por anulación de Pago #{pnum}"
+
+    try:
+        void_client_payment(
+            db,
+            p,
+            reason=rev_reason,
+            allow_approved_non_credit=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    db.commit()
+    return VoidTransactionResponse(
+        message="Pago anulado. Asientos revertidos y saldos actualizados.",
+        status="voided",
+        payment_id=payment_id,
+    )

@@ -41,6 +41,7 @@ import SalesFilters from './components/SalesFilters'
 import SalesTabs from './components/SalesTabs'
 import SalesTableSkeleton from './components/SalesTableSkeleton'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
+import { confirmVoidTransaction } from '../../utils/confirmVoidTransaction'
 import OcrSecurityBadges, { pickOcrFlagsFromSale, pickOcrSecurityFlags } from '../../components/OcrSecurityBadges'
 
 const ITEMS_PER_PAGE = 10
@@ -265,6 +266,7 @@ function SaleRowActions({
   const staffAction = saleStaffReviewAction(sale)
   const staffPrimaryLabel = staffReviewPrimaryLabel(staffAction)
   const isApproved = sale.status === 'approved'
+  const isVoidable = sale.status === 'approved' || sale.status === 'partially_paid'
   const archived = saleOpensReadOnly(sale)
 
   return (
@@ -353,14 +355,14 @@ function SaleRowActions({
         >
           <MessageSquare size={14} />
         </button>
-        {isApproved && (
+        {isVoidable && (
           <button
             type="button"
             disabled={cancellingId === sale.id}
             onClick={() => onCancelApproved(sale)}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors
+            className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors
                        disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Anular venta y devolver inventario a bodega"
+            title="Anular factura (reverso contable e inventario)"
           >
             {cancellingId === sale.id ? (
               <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-red-400 border-t-transparent animate-spin" />
@@ -889,44 +891,24 @@ export default function Sales() {
   }
 
   async function handleCancelApproved(sale) {
-    if (sale.status !== 'approved') return
+    if (sale.status !== 'approved' && sale.status !== 'partially_paid') return
 
-    const first = await Swal.fire({
-      title: '¿Cancelar esta venta activa?',
-      html:
-        '<p class="text-sm text-slate-700 text-left">El inventario se devolverá a la bodega (pantallas y créditos según corresponda).</p>',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#dc2626',
-      cancelButtonColor: '#64748b',
-      confirmButtonText: 'Continuar',
-      cancelButtonText: 'Volver',
+    const confirmed = await confirmVoidTransaction({
+      entityLabel: `factura ${formatSaleDocNo(sale)}`,
+      includeInventoryNote: true,
     })
-    if (!first.isConfirmed) return
-
-    const second = await Swal.fire({
-      title: 'Confirmación final',
-      html:
-        '<p class="text-sm text-red-800 text-left font-medium">¿Estás seguro de cancelar esta venta activa? El inventario se devolverá a la bodega. Esta acción deja la venta como cancelada.</p>',
-      icon: 'error',
-      showCancelButton: true,
-      confirmButtonColor: '#b91c1c',
-      cancelButtonColor: '#64748b',
-      confirmButtonText: 'Sí, cancelar venta',
-      cancelButtonText: 'No',
-    })
-    if (!second.isConfirmed) return
+    if (!confirmed) return
 
     setCancellingId(sale.id)
     try {
-      await api.put(`/api/v1/sales/${sale.id}/status`, { status: 'annulled' })
+      await api.post(`/api/v1/sales/${sale.id}/void`)
       await fetchSales()
       await refreshInventoryData()
       setFilter('cancelled')
-      setToast('Venta cancelada. El inventario asociado quedó disponible en bodega.')
+      setToast('Factura anulada. Inventario devuelto y asientos contables revertidos.')
       setTimeout(() => setToast(null), 4800)
     } catch (err) {
-      const msg = formatApiError(err, 'No se pudo anular la venta.')
+      const msg = formatApiError(err, 'No se pudo anular la factura.')
       setToast(msg)
       setTimeout(() => setToast(null), 7000)
     } finally {
