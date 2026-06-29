@@ -1477,7 +1477,25 @@ export default function Sales() {
                             : undefined
                         }
                       >
-                        {Array.isArray(sale.tags) && sale.tags.length ? sale.tags.join(', ') : '—'}
+                        <div className="flex flex-wrap items-center gap-1">
+                          {/* 1. Badge Morado con el Nombre del Producto/Descripción */}
+                          {(sale.product_name || (sale.invoice_lines && sale.invoice_lines[0]?.description)) ? (
+                            <span className="inline-flex px-2 py-1 text-xs font-medium rounded-md bg-purple-50 text-purple-700 border border-purple-200 whitespace-nowrap shadow-sm">
+                              {sale.product_name || sale.invoice_lines[0].description}
+                            </span>
+                          ) : null}
+
+                          {/* 2. Las etiquetas normales (si existen) */}
+                          {Array.isArray(sale.tags) && sale.tags.length > 0 ? (
+                            sale.tags.map(tag => (
+                              <span key={tag} className="inline-flex px-2 py-1 text-xs font-medium rounded-md bg-gray-100 text-gray-700 border border-gray-200 whitespace-nowrap">
+                                {tag}
+                              </span>
+                            ))
+                          ) : (!(sale.product_name || (sale.invoice_lines && sale.invoice_lines[0]?.description))) ? (
+                            <span className="text-gray-400">-</span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap text-right align-middle">
                         <div className="inline-block text-right">
