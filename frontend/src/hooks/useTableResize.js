@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 
-const MIN_COLUMN_WIDTH = 48
+const MIN_COLUMN_WIDTH = 60
 
 /**
  * Hook para redimensionar columnas de tablas arrastrando el borde del header.
@@ -29,11 +29,11 @@ export function useTableResize(initialWidths, options = {}) {
       const onMouseMove = (moveEvent) => {
         const state = resizingRef.current
         if (!state) return
-        const delta = moveEvent.clientX - state.startX
-        const nextWidth = Math.max(minWidth, state.startWidth + delta)
+        const currentX = moveEvent.clientX
+        const newWidth = Math.max(minWidth, state.startWidth + (currentX - state.startX))
         setColumnWidths((prev) => ({
           ...prev,
-          [state.columnKey]: nextWidth,
+          [state.columnKey]: newWidth,
         }))
       }
 
@@ -57,47 +57,39 @@ export function useTableResize(initialWidths, options = {}) {
 }
 
 /** Clases base para celdas de tablas redimensionables */
-export const TABLE_CELL = 'px-2 py-2 align-middle'
-export const TABLE_CELL_NOWRAP = `${TABLE_CELL} whitespace-nowrap`
-export const TABLE_CELL_TRUNC = `${TABLE_CELL} min-w-0 max-w-0 truncate`
+export const TABLE_CELL = 'px-3 py-2 align-middle min-w-0 overflow-hidden'
+export const TABLE_CELL_NOWRAP = `${TABLE_CELL} whitespace-nowrap truncate`
+export const TABLE_CELL_TRUNC = `${TABLE_CELL} truncate`
 
 /**
- * Anchos iniciales (% del ancho total) — tabla principal de Ventas (12 columnas).
- * Suma 100%.
+ * Anchos iniciales (px) — tabla principal de Ventas (12 columnas).
  */
 export const SALES_TABLE_COLUMN_WIDTHS = {
-  fecha: '10%',
-  cliente: '14%',
-  usuario: '11%',
-  numero: '5%',
-  nota: '5%',
-  metodoPago: '12%',
-  moneda: '5%',
-  etiquetas: '10%',
-  importe: '9%',
-  estado: '9%',
-  comprobante: '4%',
-  acciones: '7%',
+  fecha: 140,
+  cliente: 180,
+  usuario: 160,
+  numero: 80,
+  nota: 100,
+  metodoPago: 180,
+  moneda: 80,
+  etiquetas: 140,
+  importe: 130,
+  estado: 130,
+  comprobante: 100,
+  acciones: 100,
 }
 
-/** Ventas — pestaña rechazadas (+ columna motivo). Suma 100%. */
+/** Ventas — pestaña rechazadas (+ columna motivo). */
 export const SALES_TABLE_REJECTED_COLUMN_WIDTHS = {
-  fecha: '9%',
-  cliente: '12%',
-  usuario: '10%',
-  numero: '5%',
-  nota: '4%',
-  metodoPago: '11%',
-  moneda: '5%',
-  etiquetas: '8%',
-  importe: '8%',
-  estado: '8%',
-  comprobante: '4%',
-  motivo: '8%',
-  acciones: '8%',
+  ...SALES_TABLE_COLUMN_WIDTHS,
+  nota: 90,
+  etiquetas: 120,
+  comprobante: 90,
+  acciones: 90,
+  motivo: 200,
 }
 
-/** Anchos iniciales (%) — solicitudes de recarga BaaS. Suma 100%. */
+/** Anchos iniciales (%) — solicitudes de recarga BaaS. */
 export const BAAS_RECHARGE_TABLE_COLUMN_WIDTHS = {
   fecha: '10%',
   cliente: '14%',

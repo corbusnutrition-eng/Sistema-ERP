@@ -20,10 +20,10 @@ export default function ResizableTh({
 
   return (
     <th
-      className={`relative px-2 py-1.5 ${textAlign} text-[10px] font-semibold text-gray-500 uppercase tracking-wide overflow-hidden ${className}`}
+      className={`relative px-3 py-2 ${textAlign} text-[11px] font-semibold text-gray-500 uppercase tracking-wide overflow-hidden ${className}`}
       style={widthStyle}
     >
-      <span className="block truncate pr-1.5 leading-tight">{children}</span>
+      <span className="block truncate pr-2 leading-tight">{children}</span>
       {resizable && columnKey && onResizeStart ? (
         <span
           role="separator"

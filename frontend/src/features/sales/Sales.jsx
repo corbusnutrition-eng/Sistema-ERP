@@ -1352,8 +1352,8 @@ export default function Sales() {
 
         {/* Solo la tabla reacciona al fetch de la pestaña activa */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden w-full min-h-[28rem] flex flex-col">
-          <div className="w-full overflow-x-auto flex-1 min-h-[22rem]">
-            <table className="w-full table-fixed text-sm">
+          <div className="overflow-x-auto w-full flex-1 min-h-[22rem]">
+            <table className="w-full table-fixed min-w-[1200px] text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <ResizableTh columnKey="fecha" width={columnWidths.fecha} onResizeStart={startResize}>
@@ -1365,7 +1365,7 @@ export default function Sales() {
                   <ResizableTh columnKey="usuario" width={columnWidths.usuario} onResizeStart={startResize}>
                     USUARIO
                   </ResizableTh>
-                  <ResizableTh columnKey="numero" width={columnWidths.numero} onResizeStart={startResize} className="!px-2">
+                  <ResizableTh columnKey="numero" width={columnWidths.numero} onResizeStart={startResize}>
                     N.º
                   </ResizableTh>
                   <ResizableTh columnKey="nota" width={columnWidths.nota} onResizeStart={startResize}>
@@ -1499,7 +1499,7 @@ export default function Sales() {
                         {sale.currency ? String(sale.currency).toUpperCase() : '—'}
                       </td>
                       <td
-                        className={`${TABLE_CELL} min-w-0 max-w-0 overflow-hidden text-gray-700 text-sm`}
+                        className={`${TABLE_CELL} min-w-0 overflow-hidden text-ellipsis text-gray-700 text-sm`}
                         title={
                           Array.isArray(sale.tags) && sale.tags.length
                             ? sale.tags.join(', ')
