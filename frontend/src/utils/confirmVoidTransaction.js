@@ -1,5 +1,7 @@
 import Swal from 'sweetalert2'
 
+const VOID_AUTHORIZATION_PASSWORD = '301985'
+
 /**
  * Doble confirmación para anular facturas o pagos.
  * @param {{ entityLabel?: string, includeInventoryNote?: boolean }} [options]
@@ -28,10 +30,10 @@ export async function confirmVoidTransaction({
   const second = await Swal.fire({
     title: 'Confirmación de seguridad',
     html:
-      '<p class="text-sm text-slate-700 text-left mb-2">Para evitar anulaciones accidentales, escribe <strong>ANULAR</strong> en el campo:</p>',
-    input: 'text',
-    inputPlaceholder: 'ANULAR',
-    inputAttributes: { autocapitalize: 'characters', autocorrect: 'off' },
+      '<p class="text-sm text-slate-700 text-left mb-2">Ingresa la contraseña de autorización para confirmar la anulación:</p>',
+    input: 'password',
+    inputPlaceholder: 'Ingresa la contraseña de autorización',
+    inputAttributes: { autocapitalize: 'off', autocorrect: 'off', autocomplete: 'off' },
     icon: 'error',
     showCancelButton: true,
     confirmButtonColor: '#b91c1c',
@@ -39,8 +41,10 @@ export async function confirmVoidTransaction({
     confirmButtonText: 'Confirmar anulación',
     cancelButtonText: 'Cancelar',
     preConfirm: (value) => {
-      if (String(value || '').trim().toUpperCase() !== 'ANULAR') {
-        Swal.showValidationMessage('Debes escribir ANULAR exactamente.')
+      if (String(value || '') !== VOID_AUTHORIZATION_PASSWORD) {
+        Swal.showValidationMessage(
+          'Contraseña incorrecta. No tienes autorización para anular esta transacción.',
+        )
         return false
       }
       return true
