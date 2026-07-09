@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, Loader2 } from 'lucide-react'
+import { ChevronLeft, Eye, EyeOff, Loader2 } from 'lucide-react'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import PermissionMatrix from './components/PermissionMatrix'
 import { createTeamUser, fetchPermissionsMatrix, fetchTeamUser, updateTeamUser } from '../../api/users'
@@ -41,6 +41,14 @@ function parseErrorDetail(err) {
   return 'No se pudo guardar el usuario.'
 }
 
+const PASSWORD_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+
+function generateRandomPassword() {
+  const length = 8 + (crypto.getRandomValues(new Uint8Array(1))[0] % 3)
+  const bytes = crypto.getRandomValues(new Uint8Array(length))
+  return Array.from(bytes, (b) => PASSWORD_CHARSET[b % PASSWORD_CHARSET.length]).join('')
+}
+
 function buildUserPayload(args) {
   return buildUserApiPayload(args)
 }
@@ -59,6 +67,7 @@ export default function UserFormPage() {
   const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [roleTemplate, setRoleTemplate] = useState('')
   const [granted, setGranted] = useState([])
   const [rawUserPermissions, setRawUserPermissions] = useState(null)
@@ -189,6 +198,11 @@ export default function UserFormPage() {
     [allMatrixKeys, matrixData.predefined_roles],
   )
 
+  const handleGeneratePassword = useCallback(() => {
+    setPassword(generateRandomPassword())
+    setShowPassword(true)
+  }, [])
+
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
@@ -288,6 +302,9 @@ export default function UserFormPage() {
                 className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600 bg-white"
                 placeholder="juan@empresa.com"
               />
+              <p className="text-[11px] text-gray-500 mt-1">
+                Este correo es el usuario de acceso al sistema
+              </p>
             </div>
           </div>
 
@@ -296,17 +313,41 @@ export default function UserFormPage() {
               <label className="block text-xs font-medium text-gray-600 mb-1.5">
                 {isEdit ? 'Nueva contraseña (opcional)' : 'Contraseña (opcional)'}
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600 bg-white"
-                placeholder={
-                  isEdit
-                    ? 'Dejar en blanco para no cambiar'
-                    : 'Vacío = contraseña temporal generada por el sistema'
-                }
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3 py-2.5 pr-10 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600 bg-white"
+                  placeholder={
+                    isEdit
+                      ? 'Dejar en blanco para no cambiar'
+                      : 'Vacío = contraseña temporal generada por el sistema'
+                  }
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  aria-pressed={showPassword}
+                  tabIndex={-1}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 transition-colors rounded-r-md"
+                >
+                  {showPassword ? (
+                    <EyeOff size={18} aria-hidden strokeWidth={2} />
+                  ) : (
+                    <Eye size={18} aria-hidden strokeWidth={2} />
+                  )}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={handleGeneratePassword}
+                className="mt-1.5 text-xs font-medium text-emerald-700 hover:text-emerald-800 transition-colors"
+              >
+                Generar contraseña
+              </button>
               {!isEdit && (
                 <p className="text-[11px] text-gray-500 mt-1">
                   Flujo «Enviar invitación»: puedes dejarla vacía; el backend asignará una clave temporal.
