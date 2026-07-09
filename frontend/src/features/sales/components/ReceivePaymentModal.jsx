@@ -207,6 +207,7 @@ function ClientCombobox({ clients, value, onChange, onAddNew, disabled }) {
  */
 export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, prefill = null }) {
   const { openNewClient } = useModal()
+  const isExistingPayment = Boolean(prefill?.paymentId)
   const viewMode = Boolean(prefill?.viewMode && prefill?.paymentId)
   const reviewMode = Boolean(prefill?.paymentId && !viewMode)
 
@@ -221,7 +222,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   const saveMenuRef = useRef(null)
 
   const [clientId, setClientId] = useState(() => {
-    if (prefill?.viewMode) return ''
+    if (prefill?.viewMode && prefill?.paymentId) return ''
     if (prefill?.clientId != null) return String(prefill.clientId)
     return ''
   })
@@ -237,6 +238,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [loadingPaymentView, setLoadingPaymentView] = useState(false)
+  const [existingPaymentLoaded, setExistingPaymentLoaded] = useState(false)
   const [viewPaymentMeta, setViewPaymentMeta] = useState(null)
   const [receiptFile, setReceiptFile] = useState(null)
   const [receiptDragOver, setReceiptDragOver] = useState(false)
@@ -246,19 +248,32 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   const [paidBySale, setPaidBySale] = useState({})
   const skipFifoRef = useRef(false)
   const prefillAppliedRef = useRef(false)
-  const viewLoadedRef = useRef(false)
+  const paymentLoadedRef = useRef(false)
+
+  const paymentStatus = String(viewPaymentMeta?.status ?? '').toLowerCase()
+  const isPendingReviewPayment = isExistingPayment && paymentStatus === 'pending_review'
+  const isHistoricalView =
+    viewMode
+    || (isExistingPayment && Boolean(paymentStatus) && paymentStatus !== 'pending_review')
+  const formReadOnly = isHistoricalView
+  const allocationsReadOnly = isHistoricalView
+  const showSaveActions =
+    !isHistoricalView && (!isExistingPayment || (existingPaymentLoaded && isPendingReviewPayment))
 
   /** Moneda del cobro: prioridad cuenta «Depositar en» (`account.currency`), luego facturas / prefill. */
   const paymentCurrency = useMemo(() => {
     if (depositAccountId) {
       return currencyCodeFromAccountId(depositAccounts, depositAccountId, 'USD')
     }
+    if (viewPaymentMeta?.currency) {
+      return normalizeCurrencyCode(viewPaymentMeta.currency, 'USD')
+    }
     if (unpaidInvoices[0]?.currency) {
       return normalizeCurrencyCode(unpaidInvoices[0].currency, 'USD')
     }
     if (prefill?.currency) return normalizeCurrencyCode(prefill.currency, 'USD')
     return 'USD'
-  }, [depositAccountId, depositAccounts, unpaidInvoices, prefill?.currency])
+  }, [depositAccountId, depositAccounts, unpaidInvoices, prefill?.currency, viewPaymentMeta?.currency])
 
   const displayCurrency = paymentCurrency
 
@@ -267,18 +282,18 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   }, [])
 
   useExchangeRateForCurrency(paymentCurrency, applyPaymentExchangeRate, {
-    enabled: !viewMode,
+    enabled: !formReadOnly,
   })
 
   const handleDepositAccountChange = useCallback(
     (v) => {
       const id = String(v ?? '')
       setDepositAccountId(id)
-      if (!id || viewMode) return
+      if (!id || formReadOnly) return
       const cur = currencyCodeFromAccountId(depositAccounts, id, 'USD')
       if (cur === 'USD') setExchangeRateStr('1')
     },
-    [depositAccounts, viewMode],
+    [depositAccounts, formReadOnly],
   )
 
   const amountNum = Number.parseFloat(String(amountStr).replace(',', '.'))
@@ -313,17 +328,17 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
 
   const unappliedAmount = Math.max(0, Math.round((headerAmount - totalApplied) * 100) / 100)
 
-  const showReceiptUpload = !viewMode && !reviewMode
+  const showReceiptUpload = !formReadOnly && !isPendingReviewPayment
   const viewReceiptUrl = receiptFullUrl(
     viewPaymentMeta?.receipt_file_url || prefill?.receiptUrl || null,
   )
 
   /** Notas combinadas vista API + prefill tabla (hay contexto antes de GET /payments/{id}). */
   const mergedReviewNotes =
-    reviewMode || viewMode ? String(viewPaymentMeta?.notes ?? prefill?.notes ?? '') : ''
+    isExistingPayment ? String(viewPaymentMeta?.notes ?? prefill?.notes ?? '') : ''
 
   const isPortalSaldoCrossNoReceipt =
-    reviewMode || viewMode
+    isExistingPayment
       ? isPortalSaldoCrossSinComprobante({
           receiptFileUrlOrPath: viewPaymentMeta?.receipt_file_url ?? prefill?.receiptUrl,
           notes: mergedReviewNotes,
@@ -395,7 +410,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
         const { data } = await api.get(`/api/v1/payments/${pid}`)
         setViewPaymentMeta(data)
         setClientId(String(data.client_id))
-        setAmountStr(String(data.amount))
+        setAmountStr(String(Number(data.amount)))
         setReferenceNo(data.reference_number || '')
         if (data.deposit_account_id != null) setDepositAccountId(String(data.deposit_account_id))
         setNote(data.notes || '')
@@ -409,24 +424,30 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
             /* keep default */
           }
         }
+        const status = String(data.status || '').toLowerCase()
+        const isHistorical = status && status !== 'pending_review'
         const rows = (data.allocations || []).map((a) => ({
           sale_id: a.sale_id,
           reference: a.sale_ref,
           date: a.sale_date,
           total_amount: a.invoice_total ?? a.amount_applied,
-          open_balance: a.open_balance ?? a.amount_applied,
+          open_balance: isHistorical ? 0 : (a.open_balance ?? a.amount_applied),
           currency: a.currency || data.currency,
+          historical_applied: Number(a.amount_applied),
         }))
         skipFifoRef.current = true
         setUnpaidInvoices(rows)
         const paid = {}
         for (const a of data.allocations || []) {
-          paid[String(a.sale_id)] = String(Number(a.amount_applied))
+          const applied = Number(a.amount_applied)
+          paid[String(a.sale_id)] = Number.isFinite(applied) ? String(applied) : ''
         }
         setPaidBySale(paid)
-        viewLoadedRef.current = true
+        paymentLoadedRef.current = true
+        setExistingPaymentLoaded(true)
       } catch {
         onToast?.('No se pudo cargar el detalle del pago.', 'error')
+        setExistingPaymentLoaded(false)
       } finally {
         setLoadingPaymentView(false)
       }
@@ -435,7 +456,8 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   )
 
   useEffect(() => {
-    viewLoadedRef.current = false
+    paymentLoadedRef.current = false
+    setExistingPaymentLoaded(false)
     prefillAppliedRef.current = false
     setViewPaymentMeta(null)
     if (!prefill?.viewMode && prefill?.clientId != null && !prefill?.paymentId) {
@@ -444,13 +466,13 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   }, [prefill?.paymentId, prefill?.clientId, prefill?.viewMode])
 
   useEffect(() => {
-    if (viewMode && prefill?.paymentId && !viewLoadedRef.current) {
-      loadPaymentView(prefill.paymentId)
+    if (isExistingPayment && !paymentLoadedRef.current) {
+      void loadPaymentView(prefill.paymentId)
     }
-  }, [viewMode, prefill?.paymentId, loadPaymentView])
+  }, [isExistingPayment, prefill?.paymentId, loadPaymentView])
 
   useEffect(() => {
-    if (viewMode) return
+    if (formReadOnly || isExistingPayment) return
     if (!prefill || prefillAppliedRef.current) return
     if (prefill.clientId != null) setClientId(String(prefill.clientId))
     if (prefill.amount != null) setAmountStr(String(prefill.amount))
@@ -458,10 +480,10 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
     if (prefill.depositAccountId != null) setDepositAccountId(String(prefill.depositAccountId))
     if (prefill.notes) setNote(String(prefill.notes))
     prefillAppliedRef.current = true
-  }, [prefill, viewMode])
+  }, [prefill, formReadOnly, isExistingPayment])
 
   useEffect(() => {
-    if (viewMode) return
+    if (isExistingPayment) return
     if (!clientId) {
       setUnpaidInvoices([])
       setPaidBySale({})
@@ -470,16 +492,17 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
     const fifoAmt =
       reviewMode && prefill?.amount != null ? Number(prefill.amount) : undefined
     loadUnpaidInvoices(clientId, { autoFifoAmount: fifoAmt })
-  }, [clientId, reviewMode, prefill?.amount, loadUnpaidInvoices, viewMode])
+  }, [clientId, reviewMode, prefill?.amount, isExistingPayment, loadUnpaidInvoices])
 
   useEffect(() => {
     if (skipFifoRef.current) {
       skipFifoRef.current = false
       return
     }
+    if (isExistingPayment) return
     if (!Number.isFinite(amountNum) || amountNum <= 0 || unpaidInvoices.length === 0) return
     setPaidBySale(fifoDistribute(amountNum, unpaidInvoices))
-  }, [amountStr, amountNum, unpaidInvoices])
+  }, [amountStr, amountNum, unpaidInvoices, isExistingPayment])
 
   function buildAllocationsPayload() {
     const rows = []
@@ -612,15 +635,15 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
           <div className="flex min-w-0 items-center gap-3">
             <Clock className="h-7 w-7 shrink-0 text-gray-700" strokeWidth={1.75} aria-hidden />
             <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-              {viewMode
+              {isHistoricalView
                 ? `Pago ${viewPaymentMeta?.payment_number || prefill?.paymentNumber || ''}`.trim()
-                : reviewMode
-                  ? `Revisar pago ${prefill?.paymentNumber || ''}`.trim()
+                : isPendingReviewPayment
+                  ? `Revisar pago ${prefill?.paymentNumber || viewPaymentMeta?.payment_number || ''}`.trim()
                   : 'Recibir pago'}
             </h1>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {!viewMode && (
+            {showSaveActions && (
               <button
                 type="button"
                 onClick={() => setCommentsOpen((v) => !v)}
@@ -657,9 +680,9 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 value={clientId}
                 onChange={setClientId}
                 onAddNew={() => openNewClient(loadCatalogs)}
-                disabled={reviewMode || viewMode}
+                disabled={isExistingPayment}
               />
-              {(reviewMode || viewMode) ?
+              {isExistingPayment ?
                 (() => {
                   const relPath = viewPaymentMeta?.receipt_file_url ?? prefill?.receiptUrl ?? null
                   const receiptDisplayUrl = receiptFullUrl(relPath)
@@ -728,8 +751,8 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 value={paymentDate}
                 onChange={(e) => setPaymentDate(e.target.value)}
                 className={field}
-                readOnly={viewMode}
-                disabled={viewMode}
+                readOnly={formReadOnly}
+                disabled={formReadOnly}
               />
             </div>
 
@@ -740,9 +763,9 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 inputMode="decimal"
                 value={amountStr}
                 onChange={(e) => setAmountStr(e.target.value)}
-                readOnly={viewMode}
-                disabled={viewMode}
-                className={`${field} mt-1 max-w-[220px] text-right text-xl font-bold tabular-nums ${viewMode ? 'bg-gray-50' : ''}`}
+                readOnly={formReadOnly}
+                disabled={formReadOnly}
+                className={`${field} mt-1 max-w-[220px] text-right text-xl font-bold tabular-nums ${formReadOnly ? 'bg-gray-50' : ''}`}
                 placeholder="0.00"
               />
               <p className="mt-2 text-xs text-gray-500">
@@ -758,7 +781,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {!reviewMode ? (
+            {(!isPendingReviewPayment || isHistoricalView) ? (
             <div>
               <label className={labelCls}>Depositar en</label>
               <SearchableSelect
@@ -767,7 +790,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 options={receiveDepositSelectOptions}
                 placeholder="Seleccionar cuenta"
                 clearLabel="Seleccionar cuenta"
-                disabled={viewMode}
+                disabled={formReadOnly}
               />
             </div>
             ) : null}
@@ -778,8 +801,8 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 value={referenceNo}
                 onChange={(e) => setReferenceNo(e.target.value)}
                 className={field}
-                readOnly={viewMode}
-                disabled={viewMode}
+                readOnly={formReadOnly}
+                disabled={formReadOnly}
               />
             </div>
             {displayCurrency !== 'USD' ? (
@@ -795,8 +818,8 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                   value={exchangeRateStr}
                   onChange={(e) => setExchangeRateStr(e.target.value)}
                   className={field}
-                  readOnly={viewMode}
-                  disabled={viewMode}
+                  readOnly={formReadOnly}
+                  disabled={formReadOnly}
                 />
               </div>
             ) : null}
@@ -809,14 +832,16 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
               onChange={(e) => setNote(e.target.value)}
               rows={2}
               className={`${field} resize-y py-2`}
-              readOnly={viewMode}
-              disabled={viewMode}
+              readOnly={formReadOnly}
+              disabled={formReadOnly}
             />
           </div>
 
           <div className="mt-8">
             <div className="mb-3 flex items-center justify-between gap-4">
-              <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700">Facturas pendientes</h2>
+              <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700">
+                {isHistoricalView ? 'Distribución del pago' : 'Facturas pendientes'}
+              </h2>
               {(loadingInvoices || loadingPaymentView) && (
                 <span className="text-xs text-gray-500">Cargando facturas…</span>
               )}
@@ -824,11 +849,19 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
 
             {!clientId ? (
               <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                Selecciona un cliente para ver sus facturas con saldo pendiente.
+                {loadingPaymentView
+                  ? 'Cargando detalle del pago…'
+                  : 'Selecciona un cliente para ver sus facturas con saldo pendiente.'}
               </p>
-            ) : unpaidInvoices.length === 0 && !loadingInvoices ? (
+            ) : unpaidInvoices.length === 0 && !loadingInvoices && !loadingPaymentView ? (
               <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                Este cliente no tiene facturas aprobadas con saldo pendiente.
+                {isHistoricalView
+                  ? 'Este pago no tiene facturas asociadas registradas.'
+                  : 'Este cliente no tiene facturas aprobadas con saldo pendiente.'}
+              </p>
+            ) : unpaidInvoices.length === 0 && (loadingInvoices || loadingPaymentView) ? (
+              <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
+                Cargando facturas del pago…
               </p>
             ) : (
               <div className="overflow-x-auto rounded-lg border border-gray-300">
@@ -858,7 +891,11 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                             {formatMoneyDisplay(inv.total_amount, inv.currency || displayCurrency)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-900">
-                            {formatMoneyDisplay(inv.open_balance, inv.currency || displayCurrency)}
+                            {isHistoricalView ? (
+                              <span className="text-gray-400 font-normal">—</span>
+                            ) : (
+                              formatMoneyDisplay(inv.open_balance, inv.currency || displayCurrency)
+                            )}
                           </td>
                           <td className="px-3 py-2">
                             <input
@@ -869,9 +906,9 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                                 skipFifoRef.current = true
                                 setPaidBySale((p) => ({ ...p, [sid]: e.target.value }))
                               }}
-                              readOnly={viewMode}
-                              disabled={viewMode}
-                              className={`${field} text-right tabular-nums h-9 ${viewMode ? 'bg-gray-50' : ''}`}
+                              readOnly={allocationsReadOnly}
+                              disabled={allocationsReadOnly}
+                              className={`${field} text-right tabular-nums h-9 ${allocationsReadOnly ? 'bg-gray-50' : ''}`}
                               placeholder="0.00"
                             />
                           </td>
@@ -956,7 +993,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
             </div>
           )}
 
-          {viewMode && viewReceiptUrl && (
+          {isHistoricalView && viewReceiptUrl && (
             <div className="mt-6 rounded-lg border border-gray-200 bg-slate-50 px-4 py-3">
               <a
                 href={viewReceiptUrl}
@@ -974,9 +1011,9 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
         <footer className="shrink-0 border-t border-gray-300 bg-white px-6 py-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" onClick={onClose} className="text-sm font-semibold text-[#1b5e20] hover:underline">
-              {viewMode ? 'Cerrar' : 'Cancelar'}
+              {isHistoricalView ? 'Cerrar' : 'Cancelar'}
             </button>
-            {!viewMode && (
+            {showSaveActions && (
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
