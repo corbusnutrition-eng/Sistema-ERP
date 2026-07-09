@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.v1.dependencies import AdminDep, require_permission
-from app.permissions import BAAS_TREE_EDIT
+from app.permissions import BAAS_SALE_PRICES_EDIT, BAAS_SALE_PRICES_VIEW, BAAS_TREE_EDIT
 from app.database import get_db
 from app.models.client import CLIENT_STATUSES, Client
 from app.models.wallet_transaction import WalletTransaction
@@ -46,6 +46,8 @@ router = APIRouter(prefix="/admin/clients", tags=["admin"])
 
 DbDep = Annotated[Session, Depends(get_db)]
 BaasTreeEditDep = Annotated[dict, Depends(require_permission(BAAS_TREE_EDIT))]
+BaasSalePricesViewDep = Annotated[dict, Depends(require_permission(BAAS_SALE_PRICES_VIEW))]
+BaasSalePricesEditDep = Annotated[dict, Depends(require_permission(BAAS_SALE_PRICES_EDIT))]
 
 MASTER_ADMIN_PIN = (os.getenv("MASTER_ADMIN_PIN") or "301985").strip()
 TX_ADMIN_ADJUST = "admin_adjust"
@@ -178,7 +180,7 @@ def admin_adjust_client_balance(
 def admin_list_client_assigned_package_prices(
     client_id: int,
     db: DbDep,
-    _: AdminDep,
+    _: BaasSalePricesViewDep,
 ) -> list[AdminClientAssignedPackagePrice]:
     """Solo precios ya asignados al cliente (sin catálogo global)."""
     client = db.get(Client, int(client_id))
@@ -204,7 +206,7 @@ def admin_list_client_assigned_package_prices(
 def admin_list_client_package_prices(
     client_id: int,
     db: DbDep,
-    _: AdminDep,
+    _: BaasSalePricesViewDep,
 ) -> list[AdminClientPackagePriceRow]:
     """Catálogo global (crédito por pantalla) LEFT JOIN precios locales del cliente."""
     rows = list_admin_client_package_price_matrix(db, int(client_id))
@@ -216,7 +218,7 @@ def admin_upsert_client_package_prices(
     client_id: int,
     payload: AdminClientPackagePricesUpsertBody,
     db: DbDep,
-    _: AdminDep,
+    _: BaasSalePricesEditDep,
 ) -> AdminClientPackagePricesUpsertResponse:
     """Upsert masivo de precios de venta locales por paquete Flujo."""
     if not payload.prices:

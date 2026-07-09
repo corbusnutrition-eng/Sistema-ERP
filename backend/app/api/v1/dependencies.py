@@ -91,3 +91,34 @@ def require_permission(permission: str) -> Callable[..., dict]:
         return current_user
 
     return _dependency
+
+
+def require_any_permission(*permissions: str) -> Callable[..., dict]:
+    """Factory: exige al menos uno de los permisos indicados (admin omite verificación)."""
+
+    def _dependency(current_user: UserDep, db: DbDep) -> dict:
+        role = str(current_user.get("role") or "")
+        if role == "admin":
+            return current_user
+
+        db_user = _resolve_db_user(db, current_user)
+        if db_user is None or not db_user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para realizar esta acción.",
+            )
+
+        for permission in permissions:
+            if user_has_permission(
+                role=role,
+                permissions=db_user.permissions,
+                permission=permission,
+            ):
+                return current_user
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para realizar esta acción.",
+        )
+
+    return _dependency

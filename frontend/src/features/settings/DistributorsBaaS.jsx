@@ -275,6 +275,8 @@ export default function DistributorsBaaSPage() {
   const canEditRecharge = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_EDIT)
   const canApproveRecharge = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_APPROVE)
   const canViewTree = hasPermission(PERMS.BAAS_TREE_VIEW)
+  const canViewSalePrices = hasPermission(PERMS.BAAS_SALE_PRICES_VIEW)
+  const canEditSalePrices = hasPermission(PERMS.BAAS_SALE_PRICES_EDIT)
 
   const [tab, setTab] = useState(() => allowedTabs[0] ?? 'users')
 
@@ -1633,13 +1635,15 @@ export default function DistributorsBaaSPage() {
                       </td>
                       <td className="px-6 py-3 text-right">
                         <div className="inline-flex flex-wrap items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openPricesModalForClient(u)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-violet-800 bg-violet-50 hover:bg-violet-100 border border-violet-200"
-                          >
-                            🏷️ Precios
-                          </button>
+                          {canViewSalePrices || canEditSalePrices ? (
+                            <button
+                              type="button"
+                              onClick={() => openPricesModalForClient(u)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-violet-800 bg-violet-50 hover:bg-violet-100 border border-violet-200"
+                            >
+                              🏷️ Precios
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => openLinkModalForClient(u)}
@@ -2203,6 +2207,7 @@ export default function DistributorsBaaSPage() {
       <UpdateClientPricesModal
         open={Boolean(pricesModalClient)}
         client={pricesModalClient}
+        canEdit={canEditSalePrices}
         onClose={closePricesModal}
         onSaved={() => fetchUsers()}
         onToast={showToast}

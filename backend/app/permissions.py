@@ -102,12 +102,13 @@ PERMISSION_MATRIX: list[dict[str, Any]] = [
     {
         "id": "baas",
         "label": "Billeteras BaaS",
-        "features_summary": ["Distribuidores", "Solicitudes de recarga", "Notificaciones", "Árbol genealógico"],
+        "features_summary": ["Distribuidores", "Solicitudes de recarga", "Notificaciones", "Árbol genealógico", "Precios de venta"],
         "rows": [
             _row("baas", "distributors", "Distribuidores"),
             _row("baas", "recharge_requests", "Solicitudes de recarga", actions=["view", "create", "edit", "delete", "approve"]),
             _row("baas", "notifications", "Gestión de notificaciones"),
             _row("baas", "tree", "Árbol genealógico", actions=["view", "edit"]),
+            _row("baas", "sale_prices", "Precios de venta", actions=["view", "edit"]),
         ],
     },
     {
@@ -248,6 +249,9 @@ BAAS_NOTIFICATIONS_DELETE = "baas:notifications:delete"
 
 BAAS_TREE_VIEW = "baas:tree:view"
 BAAS_TREE_EDIT = "baas:tree:edit"
+
+BAAS_SALE_PRICES_VIEW = "baas:sale_prices:view"
+BAAS_SALE_PRICES_EDIT = "baas:sale_prices:edit"
 
 PERMISSION_GROUPS: list[dict[str, Any]] = [
     {

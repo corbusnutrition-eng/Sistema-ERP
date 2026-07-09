@@ -31,7 +31,7 @@ function findAssignedPrice(clientPrices, catalogPkgId) {
   )
 }
 
-export default function UpdateClientPricesModal({ open, client, onClose, onSaved, onToast }) {
+export default function UpdateClientPricesModal({ open, client, canEdit = false, onClose, onSaved, onToast }) {
   const [catalog, setCatalog] = useState([])
   const [clientPrices, setClientPrices] = useState([])
   const [priceDraft, setPriceDraft] = useState({})
@@ -100,7 +100,7 @@ export default function UpdateClientPricesModal({ open, client, onClose, onSaved
   }
 
   async function handleSave() {
-    if (!clientId) return
+    if (!clientId || !canEdit) return
     const payload = []
     for (const pkg of catalog) {
       const pkgId = packageCatalogId(pkg)
@@ -163,6 +163,11 @@ export default function UpdateClientPricesModal({ open, client, onClose, onSaved
                 </span>
               ) : null}
             </p>
+            {!canEdit ? (
+              <p className="mt-1 text-xs text-amber-700">
+                Solo lectura: no tienes permiso para editar precios de venta.
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -245,10 +250,10 @@ export default function UpdateClientPricesModal({ open, client, onClose, onSaved
                             type="text"
                             inputMode="decimal"
                             value={raw}
-                            disabled={saving}
+                            disabled={saving || !canEdit}
                             onChange={(e) => updatePrice(pkgId, e.target.value)}
                             placeholder="—"
-                            className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm tabular-nums text-gray-800 focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400"
+                            className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm tabular-nums text-gray-800 focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-400 disabled:bg-gray-50 disabled:text-gray-500"
                           />
                         </td>
                       </tr>
@@ -269,15 +274,17 @@ export default function UpdateClientPricesModal({ open, client, onClose, onSaved
           >
             Cancelar
           </button>
-          <button
-            type="button"
-            disabled={saving || loading || !catalog.length}
-            onClick={() => void handleSave()}
-            className="px-4 py-2 text-sm rounded-xl font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-2"
-          >
-            {saving ? <Loader2 size={16} className="animate-spin" /> : null}
-            {saving ? 'Guardando…' : 'Guardar precios'}
-          </button>
+          {canEdit ? (
+            <button
+              type="button"
+              disabled={saving || loading || !catalog.length}
+              onClick={() => void handleSave()}
+              className="px-4 py-2 text-sm rounded-xl font-semibold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 inline-flex items-center gap-2"
+            >
+              {saving ? <Loader2 size={16} className="animate-spin" /> : null}
+              {saving ? 'Guardando…' : 'Guardar precios'}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

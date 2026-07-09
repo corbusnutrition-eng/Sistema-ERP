@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.account_constants import is_liquid_deposit_account
 from app.currency_utils import normalize_currency_code
-from app.api.v1.dependencies import require_permission
+from app.api.v1.dependencies import require_any_permission, require_permission
 from app.permissions import (
     BAAS_DISTRIBUTORS_EDIT,
     BAAS_DISTRIBUTORS_VIEW,
@@ -25,6 +25,7 @@ from app.permissions import (
     BAAS_RECHARGE_REQUESTS_CREATE,
     BAAS_RECHARGE_REQUESTS_EDIT,
     BAAS_RECHARGE_REQUESTS_VIEW,
+    BAAS_SALE_PRICES_VIEW,
     BAAS_TREE_VIEW,
 )
 from app.api.v1.sales import _persist_receipt_upload
@@ -103,6 +104,10 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 BaasDistributorsViewDep = Annotated[dict, Depends(require_permission(BAAS_DISTRIBUTORS_VIEW))]
 BaasDistributorsEditDep = Annotated[dict, Depends(require_permission(BAAS_DISTRIBUTORS_EDIT))]
+BaasCatalogForPricingDep = Annotated[
+    dict,
+    Depends(require_any_permission(BAAS_DISTRIBUTORS_VIEW, BAAS_SALE_PRICES_VIEW)),
+]
 BaasRechargeViewDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_REQUESTS_VIEW))]
 BaasRechargeCreateDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_REQUESTS_CREATE))]
 BaasRechargeEditDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_REQUESTS_EDIT))]
@@ -1487,7 +1492,7 @@ def cancel_wallet_recharge_request(request_id: int, db: DbDep, _: BaasRechargeEd
 @router.get("/screen-catalog-products", response_model=list[FlujoPackageForPricing])
 def list_screen_catalog_products_for_admin_pricing(
     db: DbDep,
-    _: BaasDistributorsViewDep,
+    _: BaasCatalogForPricingDep,
 ) -> list[FlujoPackageForPricing]:
     """Catálogo global de paquetes «crédito por pantalla» activos (costo base y stock libre)."""
     return list_screen_catalog_products_for_pricing(db)
