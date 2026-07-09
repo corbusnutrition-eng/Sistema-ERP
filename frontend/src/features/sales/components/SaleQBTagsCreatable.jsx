@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import CreatableSelect from 'react-select/creatable'
 import api from '../../../api/axios'
+import { createSaleTag } from '../saleCatalog'
 
 /**
  * Etiquetas de **venta** (tabla `sale_tags`, ids enteros) — mismas APIs que TagManagerPanel:
@@ -84,10 +85,7 @@ export default function SaleQBTagsCreatable({
       if (!name || !defaultGroupId || creating || disabled) return
       setCreating(true)
       try {
-        const { data } = await api.post('/api/v1/sale-tags/', {
-          name,
-          group_id: defaultGroupId,
-        })
+        const data = await createSaleTag({ name, group_id: defaultGroupId })
         const nid = data?.id != null ? Number(data.id) : null
         if (useExternalGroups) {
           await onCatalogRefresh?.()

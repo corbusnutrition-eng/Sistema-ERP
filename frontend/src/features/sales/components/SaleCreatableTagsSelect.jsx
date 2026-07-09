@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from 'react'
 import { X, Plus } from 'lucide-react'
-import api from '../../../api/axios'
+import { createSaleTag } from '../saleCatalog'
 
 /**
  * Multi-select de etiquetas estilo QuickBooks: busca en el catálogo, permite crear nuevas (POST /sale-tags).
@@ -93,10 +93,7 @@ export default function SaleCreatableTagsSelect({
     setCreating(true)
     setCreateErr('')
     try {
-      const { data } = await api.post('/api/v1/sale-tags/', {
-        name: qTrim,
-        group_id: defaultGroupId,
-      })
+      const data = await createSaleTag({ name: qTrim, group_id: defaultGroupId })
       const nid = data?.id != null ? Number(data.id) : null
       if (nid != null && Number.isFinite(nid)) {
         const next = new Set(selectedSet)

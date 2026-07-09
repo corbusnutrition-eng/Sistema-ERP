@@ -17,6 +17,7 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 
 @router.get("", response_model=list[SaleTagCatalogResponse])
+@router.get("/", response_model=list[SaleTagCatalogResponse])
 def list_sale_tags(db: DbDep, group_id: Optional[int] = Query(default=None, ge=1)) -> list[SaleTagCatalogResponse]:
     q = db.query(SaleTransactionTag).order_by(SaleTransactionTag.name)
     if group_id is not None:
@@ -26,6 +27,7 @@ def list_sale_tags(db: DbDep, group_id: Optional[int] = Query(default=None, ge=1
 
 
 @router.post("", response_model=SaleTagCatalogResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=SaleTagCatalogResponse, status_code=status.HTTP_201_CREATED)
 def create_sale_tag(payload: SaleTagCatalogCreate, db: DbDep) -> SaleTransactionTag:
     grp = db.get(TagGroup, payload.group_id)
     if not grp:

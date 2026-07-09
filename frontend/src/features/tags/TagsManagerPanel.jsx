@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import api from '../../api/axios'
 import SearchableSelect from '../../components/ui/SearchableSelect'
+import { createSaleTag, deleteSaleTag, updateSaleTag } from '../sales/saleCatalog'
 
 /** Paleta estilo QuickBooks */
 export const QB_TAG_COLORS = [
@@ -139,7 +140,7 @@ export default function TagsManagerPanel({
     setSaving(true)
     setError('')
     try {
-      await api.post('/api/v1/sale-tags/', { name, group_id: gid })
+      await createSaleTag({ name, group_id: gid })
       setNewTagName('')
       await fetchGroups()
       setView('list')
@@ -180,10 +181,7 @@ export default function TagsManagerPanel({
     setSaving(true)
     setError('')
     try {
-      await api.patch(`/api/v1/sale-tags/${editTagRow.id}`, {
-        name,
-        group_id: gid,
-      })
+      await updateSaleTag(editTagRow.id, { name, group_id: gid })
       setEditTagRow(null)
       await fetchGroups()
     } catch (err) {
@@ -212,7 +210,7 @@ export default function TagsManagerPanel({
     setSaving(true)
     setError('')
     try {
-      await api.delete(`/api/v1/sale-tags/${t.id}`)
+      await deleteSaleTag(t.id)
       await fetchGroups()
     } catch (err) {
       setError(formatApiDetail(err, 'No se pudo eliminar la etiqueta.'))
@@ -222,6 +220,12 @@ export default function TagsManagerPanel({
   }
 
   const sortedGroups = useMemo(() => groups, [groups])
+
+  const openCreateTagForGroup = (groupId) => {
+    setNewTagGroupId(String(groupId))
+    setNewTagName('')
+    setView('newTag')
+  }
 
   const inner = (
     <div
@@ -536,6 +540,15 @@ export default function TagsManagerPanel({
                       </div>
                       {isOpen && (
                         <ul className="border-t border-gray-100 bg-white px-3 py-2 space-y-1">
+                          <li>
+                            <button
+                              type="button"
+                              className="w-full text-left text-xs font-medium text-blue-600 hover:text-blue-800 px-2 py-1.5 rounded-lg hover:bg-blue-50"
+                              onClick={() => openCreateTagForGroup(g.id)}
+                            >
+                              + Añadir etiqueta
+                            </button>
+                          </li>
                           {!tags.length ? (
                             <li className="text-xs text-gray-400 py-2 px-2">Sin etiquetas en este grupo.</li>
                           ) : (
