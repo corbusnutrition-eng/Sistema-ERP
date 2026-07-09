@@ -195,6 +195,28 @@ function ledgerEntryIsVoidable(entry) {
   return false
 }
 
+function classifyLedgerEntry(entry) {
+  const isPayment = entry?.type === 'Pago' || entry?.entity_kind === 'payment'
+  const isRecharge =
+    entry?.type === 'RECARGA'
+    || entry?.type === 'Recarga BaaS'
+    || entry?.entity_kind === 'wallet_recharge'
+    || entry?.entity_kind === 'wallet_recharge_payment'
+  const isSale = entry?.entity_kind === 'sale'
+  const isBaasTransfer =
+    entry?.entity_kind === 'wallet_transfer'
+    && String(entry?.type || '').toLowerCase().includes('transferencia baas')
+  const isTransferRevert =
+    entry?.entity_kind === 'wallet_transfer'
+    && String(entry?.type || '').toLowerCase().includes('reversión')
+  return { isPayment, isRecharge, isSale, isBaasTransfer, isTransferRevert }
+}
+
+function ledgerEntrySupportsDetailModal(entry) {
+  const { isPayment, isRecharge, isSale } = classifyLedgerEntry(entry)
+  return isPayment || isRecharge || isSale
+}
+
 function formatApiErrorDetail(err, fallback) {
   const d = err?.response?.data?.detail
   if (typeof d === 'string') return d
@@ -215,6 +237,10 @@ export default function ClientDetail() {
   const canEdit = hasPermission(PERMS.CLIENTS_EDIT)
   const canVoidSales = hasPermission(PERMS.SALES_INVOICES_EDIT)
   const canVoidPayments = hasPermission(PERMS.ACCOUNTING_RECEIVABLES_EDIT)
+  const canViewSalesDetail = hasPermission(PERMS.SALES_INVOICES_VIEW)
+  const canEditPayments =
+    hasPermission(PERMS.ACCOUNTING_RECEIVABLES_EDIT) || hasPermission(PERMS.SALES_RECEIPTS_EDIT)
+  const canViewRechargeDetail = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_VIEW)
 
   const idNum = Number(clientId)
   const invalidId = !Number.isFinite(idNum) || idNum < 1
@@ -284,20 +310,6 @@ export default function ClientDetail() {
       setWalletRechargeModalLoadingId(null)
     }
   }, [])
-
-  const handleViewLedgerPayment = useCallback(
-    (entry) => {
-      const paymentId = entry.payment_id ?? entry.entity_id
-      if (!paymentId) return
-      openReceivePayment(null, {
-        viewMode: true,
-        paymentId,
-        paymentNumber: entry.ref_number,
-        receiptUrl: entry.receipt_file_url,
-      })
-    },
-    [openReceivePayment],
-  )
 
   const copyCredToClipboard = useCallback(async (label, raw) => {
     const text = String(raw ?? '').trim()
@@ -544,6 +556,69 @@ export default function ClientDetail() {
   const refreshAfterClientTransaction = useCallback(async () => {
     await Promise.all([fetchSales(), fetchClient(), fetchLedger()])
   }, [fetchSales, fetchClient, fetchLedger])
+
+  const handleOpenTransactionDetails = useCallback(
+    async (entry) => {
+      if (!entry) return
+      const { isPayment, isRecharge, isSale } = classifyLedgerEntry(entry)
+
+      if (isSale) {
+        if (!canViewSalesDetail) {
+          toastInfo('No tienes permiso para ver facturas.')
+          return
+        }
+        const saleId = Number(entry.entity_id)
+        if (!Number.isFinite(saleId) || saleId < 1) return
+        let sale = sales.find((s) => Number(s.id) === saleId)
+        if (!sale) {
+          try {
+            const { data } = await api.get(`/api/v1/sales/${saleId}`)
+            sale = data
+          } catch (err) {
+            window.alert(formatApiErrorDetail(err, 'No se pudo cargar la factura.'))
+            return
+          }
+        }
+        setEditSale(sale)
+        return
+      }
+
+      if (isPayment) {
+        const paymentId = entry.payment_id ?? entry.entity_id
+        if (!paymentId) return
+        openReceivePayment(refreshAfterClientTransaction, {
+          ...(canEditPayments ? {} : { viewMode: true }),
+          paymentId,
+          paymentNumber: entry.ref_number,
+          clientId: idNum,
+          receiptUrl: entry.receipt_file_url,
+        })
+        return
+      }
+
+      if (isRecharge) {
+        if (!canViewRechargeDetail) {
+          toastInfo('No tienes permiso para ver recargas BaaS.')
+          return
+        }
+        await openWalletRechargeViewer(Number(entry.entity_id))
+        return
+      }
+
+      toastInfo('Este tipo de movimiento no tiene detalle editable.')
+    },
+    [
+      canEditPayments,
+      canViewRechargeDetail,
+      canViewSalesDetail,
+      idNum,
+      openReceivePayment,
+      openWalletRechargeViewer,
+      refreshAfterClientTransaction,
+      sales,
+      toastInfo,
+    ],
+  )
 
   function handleNewInvoice() {
     setTxnMenuOpen(false)
@@ -973,7 +1048,7 @@ export default function ClientDetail() {
                     <th className="px-4 py-3 text-right whitespace-nowrap">IMPORTE</th>
                     <th className="px-4 py-3 whitespace-nowrap">ESTADO</th>
                     <th className="px-4 py-3 text-center whitespace-nowrap w-[7.5rem]">COMPROBANTE</th>
-                    <th className="px-4 py-3 text-center whitespace-nowrap w-[4.5rem]">ACCIONES</th>
+                    <th className="px-4 py-3 text-center whitespace-nowrap w-[6.5rem]">ACCIONES</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -985,21 +1060,11 @@ export default function ClientDetail() {
                     </tr>
                   )}
                   {paginatedLedger.map((entry) => {
-                    const isPayment = entry.type === 'Pago'
-                    const isRecharge =
-                      entry.type === 'RECARGA'
-                      || entry.type === 'Recarga BaaS'
-                      || entry.entity_kind === 'wallet_recharge'
-                      || entry.entity_kind === 'wallet_recharge_payment'
-                    const isBaasTransfer =
-                      entry.entity_kind === 'wallet_transfer'
-                      && String(entry.type || '').toLowerCase().includes('transferencia baas')
-                    const isTransferRevert =
-                      entry.entity_kind === 'wallet_transfer'
-                      && String(entry.type || '').toLowerCase().includes('reversión')
+                    const { isPayment, isRecharge, isSale, isBaasTransfer, isTransferRevert } =
+                      classifyLedgerEntry(entry)
                     const related = Array.isArray(entry.related_docs) ? entry.related_docs : []
                     const saleForRow =
-                      entry.entity_kind === 'sale'
+                      isSale
                         ? sales.find((s) => Number(s.id) === Number(entry.entity_id))
                         : null
                     const rowHighlight = isPayment
@@ -1018,9 +1083,22 @@ export default function ClientDetail() {
                       && ((entry.entity_kind === 'sale' && canVoidSales)
                         || (entry.entity_kind === 'payment' && canVoidPayments))
                     const isVoiding = voidingKey === rowKey
+                    const showDetailAction = ledgerEntrySupportsDetailModal(entry)
+                    const detailLoading =
+                      isRecharge && walletRechargeModalLoadingId === Number(entry.entity_id)
                     return (
                       <Fragment key={rowKey}>
-                        <tr className={rowHighlight}>
+                        <tr
+                          className={`${rowHighlight} ${showDetailAction ? 'cursor-pointer' : ''}`}
+                          onClick={
+                            showDetailAction
+                              ? (e) => {
+                                  if (e.target.closest('button, a, input, label')) return
+                                  void handleOpenTransactionDetails(entry)
+                                }
+                              : undefined
+                          }
+                        >
                           <td className="px-2 py-3 text-center align-middle">
                             <button
                               type="button"
@@ -1084,32 +1162,66 @@ export default function ClientDetail() {
                               '—'
                             )}
                           </td>
-                          <td className="px-4 py-3 text-center whitespace-nowrap align-middle w-[4.5rem]">
-                            {voidable ? (
-                              <button
-                                type="button"
-                                disabled={isVoiding}
-                                onClick={() => {
-                                  if (entry.entity_kind === 'sale') {
-                                    void handleVoidLedgerSale(entry)
-                                  } else {
-                                    void handleVoidLedgerPayment(entry)
+                          <td className="px-4 py-3 text-center whitespace-nowrap align-middle w-[6.5rem]">
+                            <div className="inline-flex items-center justify-center gap-1">
+                              {showDetailAction ? (
+                                <button
+                                  type="button"
+                                  disabled={detailLoading}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void handleOpenTransactionDetails(entry)
+                                  }}
+                                  className="inline-flex items-center justify-center p-1.5 rounded-lg text-slate-500
+                                             hover:text-emerald-700 hover:bg-emerald-50 transition-colors
+                                             disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={
+                                    isSale
+                                      ? saleForRow && saleOpensReadOnly(saleForRow)
+                                        ? 'Ver factura'
+                                        : 'Ver / editar factura'
+                                      : isPayment
+                                        ? canEditPayments
+                                          ? 'Ver / editar pago'
+                                          : 'Ver pago'
+                                        : 'Ver recarga'
                                   }
-                                }}
-                                className="inline-flex items-center justify-center p-1.5 rounded-lg text-red-500
-                                           hover:text-red-700 hover:bg-red-50 transition-colors
-                                           disabled:opacity-40 disabled:cursor-not-allowed"
-                                title="Anular transacción"
-                              >
-                                {isVoiding ? (
-                                  <Loader2 size={15} className="animate-spin" aria-hidden />
-                                ) : (
-                                  <Ban size={15} aria-hidden />
-                                )}
-                              </button>
-                            ) : (
-                              <span className="text-gray-300 select-none">—</span>
-                            )}
+                                >
+                                  {detailLoading ? (
+                                    <Loader2 size={15} className="animate-spin" aria-hidden />
+                                  ) : (
+                                    <Pencil size={15} aria-hidden />
+                                  )}
+                                </button>
+                              ) : null}
+                              {voidable ? (
+                                <button
+                                  type="button"
+                                  disabled={isVoiding}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (entry.entity_kind === 'sale') {
+                                      void handleVoidLedgerSale(entry)
+                                    } else {
+                                      void handleVoidLedgerPayment(entry)
+                                    }
+                                  }}
+                                  className="inline-flex items-center justify-center p-1.5 rounded-lg text-red-500
+                                             hover:text-red-700 hover:bg-red-50 transition-colors
+                                             disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title="Anular transacción"
+                                >
+                                  {isVoiding ? (
+                                    <Loader2 size={15} className="animate-spin" aria-hidden />
+                                  ) : (
+                                    <Ban size={15} aria-hidden />
+                                  )}
+                                </button>
+                              ) : null}
+                              {!showDetailAction && !voidable ? (
+                                <span className="text-gray-300 select-none">—</span>
+                              ) : null}
+                            </div>
                           </td>
                         </tr>
                         {isExpanded && (
@@ -1150,7 +1262,7 @@ export default function ClientDetail() {
                                         <button
                                           type="button"
                                           className="text-sm font-medium text-emerald-600 hover:text-emerald-700 px-2 py-1 rounded-lg hover:bg-emerald-50"
-                                          onClick={() => setEditSale(saleForRow)}
+                                          onClick={() => void handleOpenTransactionDetails(entry)}
                                         >
                                           {saleOpensReadOnly(saleForRow) ? 'Ver detalles' : 'Ver/editar'}
                                         </button>
@@ -1177,7 +1289,7 @@ export default function ClientDetail() {
                                         type="button"
                                         disabled={walletRechargeModalLoadingId != null}
                                         className="text-sm font-medium text-fuchsia-700 hover:text-fuchsia-900 px-2 py-1 rounded-lg hover:bg-fuchsia-50 disabled:opacity-45 disabled:pointer-events-none"
-                                        onClick={() => void openWalletRechargeViewer(Number(entry.entity_id))}
+                                        onClick={() => void handleOpenTransactionDetails(entry)}
                                       >
                                         {walletRechargeModalLoadingId === Number(entry.entity_id) ? (
                                           <span className="inline-flex items-center gap-1.5 tabular-nums">
@@ -1193,9 +1305,9 @@ export default function ClientDetail() {
                                         <button
                                           type="button"
                                           className="text-sm font-medium text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50"
-                                          onClick={() => handleViewLedgerPayment(entry)}
+                                          onClick={() => void handleOpenTransactionDetails(entry)}
                                         >
-                                          Ver detalles
+                                          {canEditPayments ? 'Ver/editar' : 'Ver detalles'}
                                         </button>
                                         {canVoidPayments && ledgerEntryIsVoidable(entry) && (
                                           <button
@@ -1375,9 +1487,7 @@ export default function ClientDetail() {
           onClose={() => setEditSale(null)}
           onSuccess={async () => {
             setEditSale(null)
-            await fetchSales()
-            await fetchClient()
-            await fetchLedger()
+            await reloadClientFinancials()
           }}
           onToast={(msg, variant) => {
             if (variant === 'error') window.alert(msg)
