@@ -17,6 +17,7 @@ from app.models.payment_method import PaymentMethod
 from app.models.sale import Sale, SaleStatus
 from app.models.sale_transaction_tag import SaleTransactionTag, sale_tag_association
 from app.models.transaction_class import TransactionClass
+from app.models.client import Client
 
 ListType = Literal["class", "payment_method", "currency", "tag"]
 
@@ -334,6 +335,7 @@ def build_list_classification_report(
     start_date: date,
     end_date: date,
     list_type: ListType,
+    include_transactions: bool = False,
 ) -> dict:
     if start_date > end_date:
         raise ValueError("La fecha inicial no puede ser posterior a la final.")
@@ -349,16 +351,27 @@ def build_list_classification_report(
     else:
         raise ValueError(f"Tipo de lista no soportado: {list_type}")
 
-    rows = [
-        {
+    rows = []
+    for b in buckets:
+        row = {
             "item_id": b.item_id,
             "item_key": b.item_key,
             "item_name": b.item_name,
             "transaction_count": b.transaction_count,
             "total_amount_usd": _q2(b.total_amount_usd),
+            "transactions": [],
         }
-        for b in buckets
-    ]
+        if include_transactions:
+            row["transactions"] = fetch_list_classification_row_transactions(
+                db,
+                start_date=start_date,
+                end_date=end_date,
+                list_type=list_type,
+                item_id=b.item_id,
+                item_key=b.item_key,
+                item_name=b.item_name,
+            )
+        rows.append(row)
 
     grand_count = sum(r["transaction_count"] for r in rows)
     grand_total = _q2(sum((r["total_amount_usd"] for r in rows), Decimal("0")))
@@ -372,3 +385,238 @@ def build_list_classification_report(
         "grand_total_count": grand_count,
         "grand_total_amount_usd": grand_total,
     }
+
+
+def _is_unassigned_row(item_id: Optional[int], item_key: Optional[str], item_name: Optional[str]) -> bool:
+    if item_id is not None or item_key is not None:
+        return False
+    return (item_name or UNASSIGNED_LABEL).strip() == UNASSIGNED_LABEL
+
+
+def _client_display_name(client: Optional[Client]) -> Optional[str]:
+    if client is None:
+        return None
+    return client.display_name()
+
+
+def _sale_reference(sale_id: int) -> str:
+    return f"FAC-{int(sale_id):04d}"
+
+
+def _serialize_sale_row(sale: Sale, client: Optional[Client]) -> dict:
+    txn_date = sale.created_at.date() if sale.created_at else date.today()
+    return {
+        "id": sale.id,
+        "type": "sale",
+        "client_id": sale.client_id,
+        "client_name": _client_display_name(client),
+        "date": txn_date,
+        "amount_usd": _q2(sale.amount),
+        "reference": _sale_reference(sale.id),
+    }
+
+
+def _serialize_payment_row(payment: ClientPayment, client: Optional[Client]) -> dict:
+    when = payment.approved_at or payment.created_at
+    txn_date = when.date() if when is not None else date.today()
+    rate = Decimal(str(payment.exchange_rate or 1))
+    if rate <= 0:
+        rate = Decimal("1")
+    amount_usd = _q2(Decimal(str(payment.amount)) / rate)
+    return {
+        "id": payment.id,
+        "type": "payment",
+        "client_id": payment.client_id,
+        "client_name": _client_display_name(client),
+        "date": txn_date,
+        "amount_usd": amount_usd,
+        "reference": payment.payment_number or f"PAY-{payment.id}",
+    }
+
+
+def _serialize_debt_payment_row(payment: ClientDebtPayment, client: Optional[Client]) -> dict:
+    when = payment.approved_at or payment.created_at
+    txn_date = when.date() if when is not None else date.today()
+    return {
+        "id": payment.id,
+        "type": "debt_payment",
+        "client_id": payment.client_id,
+        "client_name": _client_display_name(client),
+        "date": txn_date,
+        "amount_usd": _q2(payment.amount),
+        "reference": f"ABN-{payment.id:04d}",
+    }
+
+
+def _serialize_expense_line_row(line: ExpenseLine, expense: Expense, client: Optional[Client]) -> dict:
+    ref = (expense.reference_number or "").strip() or f"GAS-{expense.id:04d}"
+    return {
+        "id": expense.id,
+        "type": "expense",
+        "client_id": line.customer_id,
+        "client_name": _client_display_name(client),
+        "date": expense.payment_date,
+        "amount_usd": _q2(line.amount),
+        "reference": ref,
+    }
+
+
+def _sale_date_filters(start_date: date, end_date: date):
+    return (
+        func.date(Sale.created_at) >= start_date,
+        func.date(Sale.created_at) <= end_date,
+        Sale.status.in_(SALE_COUNTABLE_STATUSES),
+    )
+
+
+def _payment_date_filters(start_date: date, end_date: date):
+    when = func.coalesce(ClientPayment.approved_at, ClientPayment.created_at)
+    return (
+        ClientPayment.status == ClientPaymentStatus.approved,
+        when.isnot(None),
+        func.date(when) >= start_date,
+        func.date(when) <= end_date,
+    )
+
+
+def _debt_payment_date_filters(start_date: date, end_date: date):
+    when = func.coalesce(ClientDebtPayment.approved_at, ClientDebtPayment.created_at)
+    return (
+        ClientDebtPayment.status == DebtPaymentStatus.approved,
+        when.isnot(None),
+        func.date(when) >= start_date,
+        func.date(when) <= end_date,
+    )
+
+
+def fetch_list_classification_row_transactions(
+    db: Session,
+    *,
+    start_date: date,
+    end_date: date,
+    list_type: ListType,
+    item_id: Optional[int] = None,
+    item_key: Optional[str] = None,
+    item_name: Optional[str] = None,
+) -> list[dict]:
+    if start_date > end_date:
+        raise ValueError("La fecha inicial no puede ser posterior a la final.")
+
+    unassigned = _is_unassigned_row(item_id, item_key, item_name)
+    out: list[dict] = []
+
+    if list_type == "class":
+        sale_q = (
+            db.query(Sale, Client)
+            .join(Client, Client.id == Sale.client_id)
+            .filter(*_sale_date_filters(start_date, end_date))
+        )
+        if unassigned:
+            sale_q = sale_q.filter(Sale.class_id.is_(None))
+        else:
+            sale_q = sale_q.filter(Sale.class_id == item_id)
+        for sale, client in sale_q.all():
+            out.append(_serialize_sale_row(sale, client))
+
+        exp_q = (
+            db.query(ExpenseLine, Expense, Client)
+            .join(Expense, Expense.id == ExpenseLine.expense_id)
+            .outerjoin(Client, Client.id == ExpenseLine.customer_id)
+            .filter(
+                Expense.payment_date >= start_date,
+                Expense.payment_date <= end_date,
+                Expense.status == "posted",
+            )
+        )
+        if unassigned:
+            exp_q = exp_q.filter(ExpenseLine.class_id.is_(None))
+        else:
+            exp_q = exp_q.filter(ExpenseLine.class_id == item_id)
+        for line, expense, client in exp_q.all():
+            out.append(_serialize_expense_line_row(line, expense, client))
+
+    elif list_type == "payment_method":
+        sale_q = (
+            db.query(Sale, Client)
+            .join(Client, Client.id == Sale.client_id)
+            .filter(*_sale_date_filters(start_date, end_date))
+        )
+        if unassigned:
+            sale_q = sale_q.filter(Sale.payment_method_id.is_(None))
+        else:
+            sale_q = sale_q.filter(Sale.payment_method_id == item_id)
+        for sale, client in sale_q.all():
+            out.append(_serialize_sale_row(sale, client))
+
+        cp_q = (
+            db.query(ClientPayment, Client)
+            .join(Client, Client.id == ClientPayment.client_id)
+            .filter(*_payment_date_filters(start_date, end_date))
+        )
+        if unassigned:
+            cp_q = cp_q.filter(ClientPayment.payment_method_id.is_(None))
+        else:
+            cp_q = cp_q.filter(ClientPayment.payment_method_id == item_id)
+        for payment, client in cp_q.all():
+            out.append(_serialize_payment_row(payment, client))
+
+        dp_q = (
+            db.query(ClientDebtPayment, Client)
+            .join(Client, Client.id == ClientDebtPayment.client_id)
+            .filter(*_debt_payment_date_filters(start_date, end_date))
+        )
+        if unassigned:
+            dp_q = dp_q.filter(ClientDebtPayment.payment_method_id.is_(None))
+        else:
+            dp_q = dp_q.filter(ClientDebtPayment.payment_method_id == item_id)
+        for payment, client in dp_q.all():
+            out.append(_serialize_debt_payment_row(payment, client))
+
+    elif list_type == "currency":
+        code = (item_key or item_name or "USD").strip().upper() or "USD"
+        sale_q = (
+            db.query(Sale, Client)
+            .join(Client, Client.id == Sale.client_id)
+            .filter(*_sale_date_filters(start_date, end_date))
+            .filter(func.upper(Sale.currency) == code)
+        )
+        for sale, client in sale_q.all():
+            out.append(_serialize_sale_row(sale, client))
+
+        cp_q = (
+            db.query(ClientPayment, Client)
+            .join(Client, Client.id == ClientPayment.client_id)
+            .filter(*_payment_date_filters(start_date, end_date))
+            .filter(func.upper(ClientPayment.currency) == code)
+        )
+        for payment, client in cp_q.all():
+            out.append(_serialize_payment_row(payment, client))
+
+    elif list_type == "tag":
+        if unassigned:
+            sale_q = (
+                db.query(Sale, Client)
+                .join(Client, Client.id == Sale.client_id)
+                .outerjoin(sale_tag_association, sale_tag_association.c.sale_id == Sale.id)
+                .filter(
+                    sale_tag_association.c.tag_id.is_(None),
+                    *_sale_date_filters(start_date, end_date),
+                )
+            )
+        else:
+            sale_q = (
+                db.query(Sale, Client)
+                .join(Client, Client.id == Sale.client_id)
+                .join(sale_tag_association, sale_tag_association.c.sale_id == Sale.id)
+                .filter(
+                    sale_tag_association.c.tag_id == item_id,
+                    *_sale_date_filters(start_date, end_date),
+                )
+            )
+        for sale, client in sale_q.all():
+            out.append(_serialize_sale_row(sale, client))
+    else:
+        raise ValueError(f"Tipo de lista no soportado: {list_type}")
+
+    out.sort(key=lambda r: (r["date"], r["reference"]), reverse=True)
+    return out

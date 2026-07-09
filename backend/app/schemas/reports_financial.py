@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -168,6 +168,20 @@ class ClientArBalanceRow(BaseModel):
     )
 
 
+class ListClassificationTransactionOut(BaseModel):
+    """Transacción individual dentro de una fila agrupada del informe."""
+
+    id: int = Field(ge=1, description="ID de la entidad (venta, pago, gasto, etc.).")
+    type: Literal["sale", "payment", "debt_payment", "expense"] = Field(
+        description="Tipo de transacción subyacente.",
+    )
+    client_id: Optional[int] = Field(default=None, description="Cliente asociado, si aplica.")
+    client_name: Optional[str] = None
+    date: date
+    amount_usd: Decimal
+    reference: str
+
+
 class ListClassificationRow(BaseModel):
     """Fila agrupada por ítem de lista (clase, método de pago, moneda o etiqueta)."""
 
@@ -176,6 +190,22 @@ class ListClassificationRow(BaseModel):
     item_name: str
     transaction_count: int = Field(ge=0)
     total_amount_usd: Decimal
+    transactions: list[ListClassificationTransactionOut] = Field(
+        default_factory=list,
+        description="Detalle de transacciones (vacío salvo include_transactions=true).",
+    )
+
+
+class ListClassificationTransactionsResponse(BaseModel):
+    """Transacciones de una fila concreta del informe por clasificación."""
+
+    start_date: date
+    end_date: date
+    list_type: str
+    item_id: Optional[int] = None
+    item_key: Optional[str] = None
+    item_name: str
+    transactions: list[ListClassificationTransactionOut] = Field(default_factory=list)
 
 
 class ListClassificationReportResponse(BaseModel):

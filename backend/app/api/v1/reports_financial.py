@@ -28,6 +28,8 @@ from app.schemas.reports_financial import (
     ExpenseJournalResponse,
     ListClassificationReportResponse,
     ListClassificationRow,
+    ListClassificationTransactionOut,
+    ListClassificationTransactionsResponse,
     PnlLine,
     PnlResponse,
     PnlSection,
@@ -49,6 +51,7 @@ from app.services.client_payment_service import (
 from app.services.list_classification_report import (
     LIST_TYPE_LABELS,
     build_list_classification_report,
+    fetch_list_classification_row_transactions,
 )
 from app.timezone_utils import now_ecuador
 
@@ -536,6 +539,10 @@ def list_classification_report(
         ...,
         description="Dimensión de agrupación.",
     ),
+    include_transactions: bool = Query(
+        default=False,
+        description="Si es true, incluye el detalle de transacciones en cada fila.",
+    ),
 ) -> ListClassificationReportResponse:
     if list_type not in LIST_TYPE_LABELS:
         raise HTTPException(
@@ -548,6 +555,7 @@ def list_classification_report(
             start_date=start_date,
             end_date=end_date,
             list_type=list_type,
+            include_transactions=include_transactions,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -560,4 +568,51 @@ def list_classification_report(
         rows=[ListClassificationRow(**row) for row in payload["rows"]],
         grand_total_count=payload["grand_total_count"],
         grand_total_amount_usd=payload["grand_total_amount_usd"],
+    )
+
+
+@router.get(
+    "/list-classification/transactions",
+    response_model=ListClassificationTransactionsResponse,
+    summary="Detalle de transacciones de una fila del informe por clasificación",
+)
+def list_classification_row_transactions(
+    db: DbDep,
+    _: ReportsFinancialViewDep,
+    start_date: date = Query(..., description="Fecha inicial (inclusive)."),
+    end_date: date = Query(..., description="Fecha final (inclusive)."),
+    list_type: Literal["class", "payment_method", "currency", "tag"] = Query(
+        ...,
+        description="Dimensión de agrupación.",
+    ),
+    item_name: str = Query(..., description="Nombre mostrado de la fila agrupada."),
+    item_id: Optional[int] = Query(default=None, description="ID del ítem en catálogo, si aplica."),
+    item_key: Optional[str] = Query(default=None, description="Clave alternativa (p. ej. moneda ISO)."),
+) -> ListClassificationTransactionsResponse:
+    if list_type not in LIST_TYPE_LABELS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"list_type debe ser uno de: {', '.join(LIST_TYPE_LABELS)}",
+        )
+    try:
+        txns = fetch_list_classification_row_transactions(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+            list_type=list_type,
+            item_id=item_id,
+            item_key=item_key,
+            item_name=item_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return ListClassificationTransactionsResponse(
+        start_date=start_date,
+        end_date=end_date,
+        list_type=list_type,
+        item_id=item_id,
+        item_key=item_key,
+        item_name=item_name,
+        transactions=[ListClassificationTransactionOut(**t) for t in txns],
     )

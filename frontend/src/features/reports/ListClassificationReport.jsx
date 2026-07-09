@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart3, Download, Loader2 } from 'lucide-react'
+import { BarChart3, ChevronDown, ChevronRight, Download, ExternalLink, Loader2 } from 'lucide-react'
 import api from '../../api/axios'
 import SearchableSelect from '../../components/ui/SearchableSelect'
+import { useModal } from '../../context/ModalContext'
+import usePermissions from '../../hooks/usePermissions'
+import { PERMS } from '../../lib/permissions'
 import { todayIsoDateEcuador } from '../../utils/datetime'
+import NuevaVentaModal from '../sales/components/NuevaVentaModal'
+import { saleOpensReadOnly } from '../sales/saleTableHelpers'
 
 function pad2(n) {
   return String(n).padStart(2, '0')
@@ -86,8 +91,51 @@ function buildExportFilename(start, end, listType) {
   return `Reporte_Listas_${listType}_${start}_${end}.csv`
 }
 
+function buildRowKey(row) {
+  return `${row.item_id ?? '∅'}::${row.item_key ?? '∅'}::${row.item_name}`
+}
+
+function txnTypeLabel(type) {
+  switch (type) {
+    case 'sale':
+      return 'Factura'
+    case 'payment':
+      return 'Pago'
+    case 'debt_payment':
+      return 'Abono'
+    case 'expense':
+      return 'Gasto'
+    default:
+      return String(type || '—')
+  }
+}
+
+function formatTxnDate(value) {
+  if (!value) return '—'
+  const s = String(value).slice(0, 10)
+  const [y, m, d] = s.split('-')
+  if (!y || !m || !d) return s
+  return `${d}/${m}/${y}`
+}
+
+function formatApiErrorDetail(err, fallback) {
+  const d = err?.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) {
+    const parts = d.map((x) => (typeof x === 'object' && x != null && 'msg' in x ? x.msg : JSON.stringify(x)))
+    return parts.length ? parts.join(' · ') : fallback
+  }
+  return fallback
+}
+
 export default function ListClassificationReport() {
   const navigate = useNavigate()
+  const { openReceivePayment } = useModal()
+  const { hasPermission } = usePermissions()
+  const canViewSalesDetail = hasPermission(PERMS.SALES_INVOICES_VIEW)
+  const canEditPayments =
+    hasPermission(PERMS.ACCOUNTING_RECEIVABLES_EDIT) || hasPermission(PERMS.SALES_RECEIPTS_EDIT)
+  const canViewPayments = hasPermission(PERMS.ACCOUNTING_RECEIVABLES_VIEW) || canEditPayments
   const [preset, setPreset] = useState('this_month')
   const [customFrom, setCustomFrom] = useState(() => rangeForPreset('this_month').start)
   const [customTo, setCustomTo] = useState(() => rangeForPreset('this_month').end)
@@ -96,6 +144,11 @@ export default function ListClassificationReport() {
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
   const [data, setData] = useState(null)
+  const [expandedRowKey, setExpandedRowKey] = useState(null)
+  const [rowTransactions, setRowTransactions] = useState({})
+  const [loadingRowKey, setLoadingRowKey] = useState(null)
+  const [txnLoadError, setTxnLoadError] = useState('')
+  const [editSale, setEditSale] = useState(null)
 
   const activeRange = useMemo(() => {
     if (preset === 'custom') return { start: customFrom, end: customTo }
@@ -124,7 +177,104 @@ export default function ListClassificationReport() {
 
   useEffect(() => {
     void runReport()
+    setExpandedRowKey(null)
+    setRowTransactions({})
+    setTxnLoadError('')
   }, [runReport])
+
+  const fetchRowTransactions = useCallback(
+    async (row) => {
+      const key = buildRowKey(row)
+      setLoadingRowKey(key)
+      setTxnLoadError('')
+      try {
+        const params = {
+          start_date: activeRange.start,
+          end_date: activeRange.end,
+          list_type: listType,
+          item_name: row.item_name,
+        }
+        if (row.item_id != null) params.item_id = row.item_id
+        if (row.item_key != null) params.item_key = row.item_key
+        const { data: body } = await api.get('/api/v1/reports/list-classification/transactions', { params })
+        const txns = Array.isArray(body?.transactions) ? body.transactions : []
+        setRowTransactions((prev) => ({ ...prev, [key]: txns }))
+        return txns
+      } catch (err) {
+        setTxnLoadError(formatApiErrorDetail(err, 'No se pudo cargar el detalle de transacciones.'))
+        return []
+      } finally {
+        setLoadingRowKey(null)
+      }
+    },
+    [activeRange.end, activeRange.start, listType],
+  )
+
+  const toggleRowExpand = useCallback(
+    async (row) => {
+      const key = buildRowKey(row)
+      if (expandedRowKey === key) {
+        setExpandedRowKey(null)
+        return
+      }
+      setExpandedRowKey(key)
+      if (!rowTransactions[key]) {
+        await fetchRowTransactions(row)
+      }
+    },
+    [expandedRowKey, fetchRowTransactions, rowTransactions],
+  )
+
+  const handleOpenTransaction = useCallback(
+    async (txn) => {
+      if (!txn) return
+      if (txn.type === 'sale') {
+        if (!canViewSalesDetail) {
+          window.alert('No tienes permiso para ver facturas.')
+          return
+        }
+        const saleId = Number(txn.id)
+        if (!Number.isFinite(saleId) || saleId < 1) return
+        try {
+          const { data: sale } = await api.get(`/api/v1/sales/${saleId}`)
+          setEditSale(sale)
+        } catch (err) {
+          window.alert(formatApiErrorDetail(err, 'No se pudo cargar la factura.'))
+        }
+        return
+      }
+
+      if (txn.type === 'payment') {
+        if (!canViewPayments) {
+          window.alert('No tienes permiso para ver pagos.')
+          return
+        }
+        const paymentId = Number(txn.id)
+        const clientId = Number(txn.client_id)
+        if (!Number.isFinite(paymentId) || paymentId < 1) return
+        openReceivePayment(null, {
+          ...(canEditPayments ? {} : { viewMode: true }),
+          paymentId,
+          paymentNumber: txn.reference,
+          clientId: Number.isFinite(clientId) ? clientId : undefined,
+        })
+        return
+      }
+
+      if (txn.type === 'debt_payment' && txn.client_id) {
+        navigate(`/clientes/${txn.client_id}`)
+        return
+      }
+
+      if (txn.type === 'expense') {
+        navigate('/contabilidad/gastos')
+        return
+      }
+
+      window.alert('Este tipo de transacción no tiene detalle editable desde el informe.')
+    },
+    [canEditPayments, canViewPayments, canViewSalesDetail, navigate, openReceivePayment],
+  )
 
   const presetSelectOptions = useMemo(
     () => PRESETS.map((p) => ({ value: p.id, label: p.label })),
@@ -285,6 +435,12 @@ export default function ListClassificationReport() {
         </div>
       )}
 
+      {txnLoadError && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-sm px-4 py-3">
+          {txnLoadError}
+        </div>
+      )}
+
       {loading && !data && (
         <div className="mt-8 flex items-center justify-center gap-2 text-sm text-gray-500 py-12">
           <Loader2 className="animate-spin" size={18} />
@@ -328,17 +484,138 @@ export default function ListClassificationReport() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {data.rows.map((row) => {
-                    const rowKey = row.item_id ?? row.item_key ?? row.item_name
+                    const rowKey = buildRowKey(row)
+                    const isExpanded = expandedRowKey === rowKey
+                    const txns = rowTransactions[rowKey] || []
+                    const isLoadingTxns = loadingRowKey === rowKey
+                    const canExpand = row.transaction_count > 0
                     return (
-                      <tr key={rowKey} className="hover:bg-slate-50/60 transition-colors">
-                        <td className="px-5 py-3.5 font-medium text-gray-800">{row.item_name}</td>
-                        <td className="px-5 py-3.5 text-right tabular-nums text-gray-700">
-                          {row.transaction_count}
-                        </td>
-                        <td className="px-5 py-3.5 text-right tabular-nums text-gray-900 font-medium">
-                          {formatMoney(row.total_amount_usd)}
-                        </td>
-                      </tr>
+                      <Fragment key={rowKey}>
+                        <tr className="hover:bg-slate-50/60 transition-colors">
+                          <td className="px-5 py-3.5 font-medium text-gray-800">
+                            <div className="flex items-center gap-2">
+                              {canExpand ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void toggleRowExpand(row)}
+                                  className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 shrink-0"
+                                  aria-expanded={isExpanded}
+                                  aria-label={isExpanded ? 'Ocultar transacciones' : 'Ver transacciones'}
+                                >
+                                  {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                                </button>
+                              ) : (
+                                <span className="w-[18px] shrink-0" aria-hidden />
+                              )}
+                              <span>{row.item_name}</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-3.5 text-right tabular-nums">
+                            {canExpand ? (
+                              <button
+                                type="button"
+                                onClick={() => void toggleRowExpand(row)}
+                                className="text-blue-700 hover:text-blue-900 hover:underline font-medium cursor-pointer tabular-nums"
+                              >
+                                {row.transaction_count}
+                              </button>
+                            ) : (
+                              <span className="text-gray-700">{row.transaction_count}</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-right tabular-nums text-gray-900 font-medium">
+                            {formatMoney(row.total_amount_usd)}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="bg-slate-50/80">
+                            <td colSpan={3} className="px-5 py-3">
+                              {isLoadingTxns ? (
+                                <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                                  <Loader2 size={16} className="animate-spin" />
+                                  Cargando transacciones…
+                                </div>
+                              ) : txns.length === 0 ? (
+                                <p className="text-sm text-gray-500 py-2">No hay transacciones para mostrar.</p>
+                              ) : (
+                                <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="border-b border-gray-100 bg-gray-50/90">
+                                        <th className="text-left px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide">
+                                          Fecha
+                                        </th>
+                                        <th className="text-left px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide">
+                                          Tipo
+                                        </th>
+                                        <th className="text-left px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide">
+                                          Referencia
+                                        </th>
+                                        <th className="text-left px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide">
+                                          Cliente
+                                        </th>
+                                        <th className="text-right px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide">
+                                          Monto (USD)
+                                        </th>
+                                        <th className="text-right px-3 py-2 font-semibold text-gray-500 uppercase tracking-wide">
+                                          Acción
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-50">
+                                      {txns.map((txn) => {
+                                        const openable =
+                                          txn.type === 'sale'
+                                          || txn.type === 'payment'
+                                          || txn.type === 'debt_payment'
+                                          || txn.type === 'expense'
+                                        return (
+                                          <tr
+                                            key={`${txn.type}-${txn.id}-${txn.reference}`}
+                                            className={openable ? 'hover:bg-blue-50/40 cursor-pointer' : ''}
+                                            onClick={() => {
+                                              if (openable) void handleOpenTransaction(txn)
+                                            }}
+                                          >
+                                            <td className="px-3 py-2 tabular-nums text-gray-700 whitespace-nowrap">
+                                              {formatTxnDate(txn.date)}
+                                            </td>
+                                            <td className="px-3 py-2 text-gray-700">{txnTypeLabel(txn.type)}</td>
+                                            <td className="px-3 py-2 font-mono text-gray-800">{txn.reference || '—'}</td>
+                                            <td className="px-3 py-2 text-gray-700 max-w-[180px] truncate">
+                                              {txn.client_name || '—'}
+                                            </td>
+                                            <td className="px-3 py-2 text-right tabular-nums text-gray-900 font-medium whitespace-nowrap">
+                                              {formatMoney(txn.amount_usd)}
+                                            </td>
+                                            <td className="px-3 py-2 text-right">
+                                              {openable ? (
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation()
+                                                    void handleOpenTransaction(txn)
+                                                  }}
+                                                  className="inline-flex items-center gap-1 text-blue-700 hover:text-blue-900 font-medium"
+                                                >
+                                                  {txn.type === 'sale' ? 'Ver/editar' : 'Ver'}
+                                                  <ExternalLink size={12} />
+                                                </button>
+                                              ) : (
+                                                <span className="text-gray-400">—</span>
+                                              )}
+                                            </td>
+                                          </tr>
+                                        )
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     )
                   })}
                 </tbody>
@@ -355,6 +632,19 @@ export default function ListClassificationReport() {
             </div>
           )}
         </div>
+      )}
+
+      {editSale && (
+        <NuevaVentaModal
+          initialSale={editSale}
+          readOnlyMode={saleOpensReadOnly(editSale)}
+          prefillClientId={null}
+          onClose={() => setEditSale(null)}
+          onSuccess={() => setEditSale(null)}
+          onToast={(msg, variant) => {
+            if (variant === 'error') window.alert(msg)
+          }}
+        />
       )}
     </div>
   )
