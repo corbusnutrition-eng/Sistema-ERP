@@ -58,6 +58,8 @@ export default function NuevaVentaInvoiceSection(props) {
     invoiceProductOptions,
     invoiceProductOptionsLoading,
     saleTagsReloadKey,
+    saleTagGroups,
+    saleCatalogLoading = false,
     bumpSaleTagsReload,
     inputCls,
     handleInvoiceLineProduct,
@@ -117,6 +119,8 @@ export default function NuevaVentaInvoiceSection(props) {
             </div>
             <SaleQBTagsCreatable
               key={saleTagsReloadKey}
+              groups={saleTagGroups}
+              groupsLoading={saleCatalogLoading}
               value={formTagIds}
               onChange={onTagIdsChange}
               disabled={submitting}
@@ -277,10 +281,10 @@ export default function NuevaVentaInvoiceSection(props) {
                               })
                             }}
                             options={transactionClassSelectOptions}
-                            placeholder="Sin clase"
+                            placeholder={saleCatalogLoading ? 'Cargando clases…' : 'Sin clase'}
                             clearLabel="Sin clase"
                             onAddNew={() => onOpenNewClassForLine?.(line.id)}
-                            disabled={submitting}
+                            disabled={submitting || saleCatalogLoading}
                             className="[&_button]:min-h-9 [&_button]:text-xs [&_button]:py-1.5"
                             dropdownZClass="z-[6000]"
                           />

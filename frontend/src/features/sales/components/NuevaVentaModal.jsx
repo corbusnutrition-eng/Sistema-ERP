@@ -17,6 +17,10 @@ import { useModal } from '../../../context/ModalContext'
 import { useInventoryData } from '../../../context/InventoryDataContext'
 import SearchableSelect from '../../../components/ui/SearchableSelect'
 import TagsManagerPanel from '../../tags/TagsManagerPanel'
+import {
+  fetchSaleCatalog,
+  mapTransactionClassesToSelectOptions,
+} from '../saleCatalog'
 import SaleQBTagsCreatable from './SaleQBTagsCreatable'
 import NuevaVentaInvoiceSection from './NuevaVentaInvoiceSection'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
@@ -398,6 +402,7 @@ function buildInvoiceLinesPayload(rows) {
       qty: Number.isFinite(qty) ? qty : null,
       rate: Number.isFinite(rate) ? rate : null,
       transaction_class_id: cls,
+      ...(cls != null ? { class_id: cls, clase_id: cls } : {}),
     }
     if (li.asignar_credenciales) {
       const u = String(li.iptv_usuario ?? '').trim()
@@ -791,6 +796,8 @@ export default function NuevaVentaModal({
   const lastNormalCredAutofillSigRef = useRef('')
 
   const [transactionClasses, setTransactionClasses] = useState([])
+  const [saleTagGroups, setSaleTagGroups] = useState([])
+  const [saleCatalogLoading, setSaleCatalogLoading] = useState(true)
   const [newClassModalOpen, setNewClassModalOpen] = useState(false)
 
   const [paymentMethods, setPaymentMethods] = useState([])
@@ -801,9 +808,25 @@ export default function NuevaVentaModal({
   const skipCurrencyRateFetchRef = useRef(false)
 
   const [saleTagsReloadKey, setSaleTagsReloadKey] = useState(0)
+
+  const loadSaleCatalog = useCallback(async () => {
+    setSaleCatalogLoading(true)
+    try {
+      const { classes, tagGroups } = await fetchSaleCatalog()
+      setTransactionClasses(classes)
+      setSaleTagGroups(tagGroups)
+    } catch {
+      setTransactionClasses([])
+      setSaleTagGroups([])
+    } finally {
+      setSaleCatalogLoading(false)
+    }
+  }, [])
+
   const bumpSaleTagsReload = useCallback(() => {
     setSaleTagsReloadKey((x) => x + 1)
-  }, [])
+    void loadSaleCatalog()
+  }, [loadSaleCatalog])
   const [tagsAdminOpen, setTagsAdminOpen] = useState(false)
 
   /** Líneas factura (QuickBooks); en legado sin inventario no se usan. */
@@ -1833,10 +1856,7 @@ export default function NuevaVentaModal({
   )
 
   const transactionClassSelectOptions = useMemo(
-    () =>
-      transactionClasses
-        .filter((c) => c?.is_active !== false)
-        .map((c) => ({ value: String(c.id), label: c.name })),
+    () => mapTransactionClassesToSelectOptions(transactionClasses),
     [transactionClasses],
   )
 
@@ -1929,24 +1949,8 @@ export default function NuevaVentaModal({
   }, [debouncedClientPickQuery, clientPickerOpen, isEditing, portalPickRetryKey])
 
   useEffect(() => {
-    let cancelled = false
-    api
-      .get('/api/v1/classes/')
-      .then(({ data }) => {
-        if (cancelled) return
-        const list = Array.isArray(data) ? data : []
-        list.sort((a, b) =>
-          String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'es', { sensitivity: 'base' }),
-        )
-        setTransactionClasses(list)
-      })
-      .catch(() => {
-        if (!cancelled) setTransactionClasses([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    void loadSaleCatalog()
+  }, [loadSaleCatalog])
 
   useEffect(() => {
     let cancelled = false
@@ -4016,6 +4020,8 @@ export default function NuevaVentaModal({
               invoiceProductOptions={invoiceProductOptions}
               invoiceProductOptionsLoading={inventorySalesOptsLoading}
               saleTagsReloadKey={saleTagsReloadKey}
+              saleTagGroups={saleTagGroups}
+              saleCatalogLoading={saleCatalogLoading}
               bumpSaleTagsReload={bumpSaleTagsReload}
               inputCls={inputCls}
               handleInvoiceLineProduct={handleInvoiceLineProduct}
@@ -4230,10 +4236,10 @@ export default function NuevaVentaModal({
                 handleChange({ target: { name: 'transaction_class_id', value: String(v) } })
               }
               options={transactionClassSelectOptions}
-              placeholder="Sin clase"
+              placeholder={saleCatalogLoading ? 'Cargando clases…' : 'Sin clase'}
               clearLabel="Sin clase"
               onAddNew={() => setNewClassModalOpen(true)}
-              disabled={submitting}
+              disabled={submitting || saleCatalogLoading}
             />
           </div>
           </>
@@ -4258,6 +4264,8 @@ export default function NuevaVentaModal({
             </div>
             <SaleQBTagsCreatable
               key={saleTagsReloadKey}
+              groups={saleTagGroups}
+              groupsLoading={saleCatalogLoading}
               value={form.tag_ids}
               onChange={(ids) => setForm((p) => ({ ...p, tag_ids: ids }))}
               disabled={submitting}

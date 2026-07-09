@@ -13,31 +13,40 @@ export default function SaleQBTagsCreatable({
   onChange,
   disabled,
   onCatalogRefresh,
+  groups: groupsProp,
+  groupsLoading: groupsLoadingProp,
   zIndex = 6100,
 }) {
-  const [groups, setGroups] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [groupsInternal, setGroupsInternal] = useState([])
+  const [loadingInternal, setLoadingInternal] = useState(true)
   const [creating, setCreating] = useState(false)
 
+  const useExternalGroups = groupsProp !== undefined
+
   const loadGroups = useCallback(async () => {
-    setLoading(true)
+    if (useExternalGroups) return
+    setLoadingInternal(true)
     try {
       const { data } = await api.get('/api/v1/tag-groups/')
       const list = Array.isArray(data) ? data : []
       list.sort((a, b) =>
         String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'es', { sensitivity: 'base' }),
       )
-      setGroups(list)
+      setGroupsInternal(list)
     } catch {
-      setGroups([])
+      setGroupsInternal([])
     } finally {
-      setLoading(false)
+      setLoadingInternal(false)
     }
-  }, [])
+  }, [useExternalGroups])
 
   useEffect(() => {
-    loadGroups()
-  }, [loadGroups])
+    if (useExternalGroups) return
+    void loadGroups()
+  }, [loadGroups, useExternalGroups])
+
+  const groups = useExternalGroups ? (Array.isArray(groupsProp) ? groupsProp : []) : groupsInternal
+  const loading = useExternalGroups ? Boolean(groupsLoadingProp) : loadingInternal
 
   const defaultGroupId = useMemo(() => {
     const g = groups[0]
@@ -80,8 +89,12 @@ export default function SaleQBTagsCreatable({
           group_id: defaultGroupId,
         })
         const nid = data?.id != null ? Number(data.id) : null
-        await loadGroups()
-        await onCatalogRefresh?.()
+        if (useExternalGroups) {
+          await onCatalogRefresh?.()
+        } else {
+          await loadGroups()
+          await onCatalogRefresh?.()
+        }
         if (nid != null && Number.isFinite(nid)) {
           onChange([...new Set([...(Array.isArray(value) ? value : []), nid])].sort((a, b) => a - b))
         }
@@ -91,7 +104,7 @@ export default function SaleQBTagsCreatable({
         setCreating(false)
       }
     },
-    [defaultGroupId, creating, disabled, loadGroups, onCatalogRefresh, onChange, value],
+    [defaultGroupId, creating, disabled, loadGroups, onCatalogRefresh, onChange, useExternalGroups, value],
   )
 
   const customStyles = useMemo(
