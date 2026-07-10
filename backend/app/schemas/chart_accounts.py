@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.account_structure import all_detail_types, validate_chart_account_classification
-from app.currency_utils import normalize_currency_code
+from app.currency_utils import CHART_ACCOUNT_CURRENCY_CODES, normalize_currency_code
 from app.ledger_verification import normalize_ledger_verification_status
 
 LedgerDisplayMode = Literal["cash_register", "ar_register"]
@@ -69,6 +69,13 @@ class ChartAccountCreate(BaseModel):
         if v is None or v == "":
             return "USD"
         return normalize_currency_code(v)
+
+    @field_validator("currency", mode="after")
+    @classmethod
+    def _validate_chart_currency(cls, v: str) -> str:
+        if v not in CHART_ACCOUNT_CURRENCY_CODES:
+            raise ValueError(f"Moneda no soportada para el plan de cuentas: {v}")
+        return v
 
     @model_validator(mode="after")
     def _subaccount_parent(self) -> "ChartAccountCreate":

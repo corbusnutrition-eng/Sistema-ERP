@@ -33,6 +33,7 @@ const MONEDA_OPCIONES = [
   { code: 'USD', label: 'USD — Dólar estadounidense' },
   { code: 'USDT', label: 'USDT — Tether (cripto estable)' },
   { code: 'BOB', label: 'BOB — Boliviano' },
+  { code: 'BRL', label: 'BRL — Real brasileño' },
   { code: 'COP', label: 'COP — Peso colombiano' },
   { code: 'MXN', label: 'MXN — Peso mexicano' },
   { code: 'ARS', label: 'ARS — Peso argentino' },

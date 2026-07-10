@@ -4,6 +4,31 @@ from __future__ import annotations
 
 MAX_CURRENCY_CODE_LEN = 10
 
+# Monedas admitidas en el plan de cuentas (alineado con MONEDA_OPCIONES del frontend).
+CHART_ACCOUNT_CURRENCY_CODES: frozenset[str] = frozenset(
+    {
+        "USD",
+        "USDT",
+        "BOB",
+        "BRL",
+        "COP",
+        "MXN",
+        "ARS",
+        "CLP",
+        "PEN",
+        "UYU",
+        "PYG",
+        "VES",
+        "GTQ",
+        "CRC",
+        "PAB",
+        "NIO",
+        "HNL",
+        "DOP",
+        "EUR",
+    }
+)
+
 # Símbolos y alias frecuentes en comprobantes → ISO 4217
 _CURRENCY_SYMBOL_ALIASES: dict[str, str] = {
     "$": "USD",
