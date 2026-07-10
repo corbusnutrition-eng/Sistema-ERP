@@ -21,7 +21,12 @@ except ImportError:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from app.rate_limit import limiter
 from app.upload_paths import UPLOAD_ROOT
 
 UPLOAD_DIR = str(UPLOAD_ROOT)
@@ -36,6 +41,12 @@ app = FastAPI(
     # Evita redirecciones 307 entre `/resource` y `/resource/` que suelen perder cabeceras CORS en el navegador.
     redirect_slashes=False,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+# Render actúa como proxy inverso: confiar en X-Forwarded-* para IP/host reales.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Orígenes permitidos (allow_credentials=True exige dominios explícitos; no usar "*").
 # Necesario para JWT / Authorization en peticiones cross-origin desde el frontend.

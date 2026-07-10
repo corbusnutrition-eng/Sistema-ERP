@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 from app.timezone_utils import UTC, ensure_aware, isoformat_z, now_ecuador
@@ -44,6 +44,7 @@ from app.services.sale_accounting_sync import (
 )
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
+from app.rate_limit import PORTAL_GET_LIMIT, RECEIPT_UPLOAD_LIMIT, limiter
 from app.models.account import Account
 from app.models.client import Client
 from app.models.client_debt_payment import ClientDebtPayment, DebtPaymentStatus
@@ -2124,7 +2125,9 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
 
 
 @router.post("/{portal_token}/recharges/{request_id}/pay", response_model=WalletRechargeRequestRead)
+@limiter.limit(RECEIPT_UPLOAD_LIMIT)
 async def portal_pay_wallet_recharge(
+    request: Request,
     portal_token: uuid_pkg.UUID,
     request_id: int,
     db: DbDep,
@@ -2628,7 +2631,8 @@ def portal_cxc_balance(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalCxcBalan
 
 
 @router.get("/{portal_token}", response_model=PortalHomeResponse)
-def portal_home(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
+@limiter.limit(PORTAL_GET_LIMIT)
+def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     client = _portal_client_from_token(db, portal_token)
 
     expire_pending_sales_if_needed(db)
@@ -3065,7 +3069,9 @@ async def _portal_create_abono_payment(
 # ── POST payments (new order or abono) ─────────────────────────────────────────
 
 @router.post("/{portal_token}/payments", response_model=PortalPaymentSubmitResponse)
+@limiter.limit(RECEIPT_UPLOAD_LIMIT)
 async def portal_submit_payment(
+    request: Request,
     portal_token: uuid_pkg.UUID,
     db: DbDep,
     background_tasks: BackgroundTasks,
@@ -3697,7 +3703,9 @@ async def portal_submit_payment(
 # ── POST debt-payment (generic / CxC abono) ───────────────────────────────────
 
 @router.post("/{portal_token}/debt-payment", response_model=DebtPaymentSubmitResponse)
+@limiter.limit(RECEIPT_UPLOAD_LIMIT)
 async def portal_submit_debt_payment(
+    request: Request,
     portal_token: uuid_pkg.UUID,
     db: DbDep,
     payment_method_id: Annotated[int, Form(...)],

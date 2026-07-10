@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
@@ -19,6 +19,7 @@ from app.api.v1.sales import (
 from app.account_constants import is_liquid_deposit_account
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
+from app.rate_limit import RECEIPT_UPLOAD_LIMIT, limiter
 from app.models.account import Account
 from app.models.payment_method import PaymentMethod
 from app.models.product import Product
@@ -403,7 +404,9 @@ def checkout_detail(payment_token: uuid_pkg.UUID, db: DbDep) -> CheckoutDetailRe
     response_model=CheckoutPayResponse,
     summary="Enviar comprobante de pago (cliente público)",
 )
+@limiter.limit(RECEIPT_UPLOAD_LIMIT)
 async def checkout_pay(
+    request: Request,
     payment_token: uuid_pkg.UUID,
     db: DbDep,
     payment_method_id: Annotated[int, Form(...)],

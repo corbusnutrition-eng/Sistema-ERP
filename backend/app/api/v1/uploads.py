@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, UploadFile, status
+from fastapi import APIRouter, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 
 from app.cloudinary_storage import upload_comprobante
+from app.rate_limit import RECEIPT_UPLOAD_LIMIT, limiter
 
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
@@ -22,7 +23,8 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
     summary="Subir comprobante de pago",
     tags=["public"],
 )
-async def upload_receipt(file: UploadFile) -> JSONResponse:
+@limiter.limit(RECEIPT_UPLOAD_LIMIT)
+async def upload_receipt(request: Request, file: UploadFile) -> JSONResponse:
     """
     Recibe una imagen de comprobante de pago, la sube a Cloudinary
     y devuelve la URL HTTPS pública (``secure_url``).
