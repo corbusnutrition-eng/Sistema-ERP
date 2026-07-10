@@ -69,8 +69,8 @@ try:
 
     configure_cloudinary()
     print("INFO: Cloudinary configurado.")
-except RuntimeError as exc:
-    print(f"WARN: Cloudinary no disponible: {exc}")
+except Exception as exc:
+    print(f"WARN: Cloudinary no disponible al arrancar: {exc}")
 
 # Routers (después de CORS y estáticos)
 from app.api.v1 import accounting as accounting_router

@@ -1,4 +1,4 @@
-"""Subida de comprobantes de pago a Cloudinary con respaldo local."""
+"""Subida de comprobantes de pago a Cloudinary (sin almacenamiento local)."""
 from __future__ import annotations
 
 import io
@@ -9,12 +9,15 @@ from pathlib import Path
 
 import cloudinary
 import cloudinary.uploader
-
-from app.upload_paths import UPLOAD_ROOT
+from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
 _CLOUDINARY_CONFIGURED = False
+
+_CLOUDINARY_UPLOAD_ERROR = (
+    "Error al subir el comprobante a la nube de Cloudinary. Por favor, intenta de nuevo."
+)
 
 
 def configure_cloudinary() -> None:
@@ -27,8 +30,9 @@ def configure_cloudinary() -> None:
     api_key = os.getenv("CLOUDINARY_API_KEY", "").strip()
     api_secret = os.getenv("CLOUDINARY_API_SECRET", "").strip()
     if not all((cloud_name, api_key, api_secret)):
-        raise RuntimeError(
-            "Faltan CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY o CLOUDINARY_API_SECRET."
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=_CLOUDINARY_UPLOAD_ERROR,
         )
 
     cloudinary.config(
@@ -47,18 +51,10 @@ def _receipt_suffix(content_type: str, filename: str | None) -> str:
     return suffix
 
 
-def _save_comprobante_local(content: bytes, *, suffix: str) -> str:
-    """Respaldo: guarda en ``backend/uploads/`` y devuelve ruta relativa ``/uploads/…``."""
-    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-    local_name = f"{uuid.uuid4().hex}{suffix}"
-    (UPLOAD_ROOT / local_name).write_bytes(content)
-    return f"/uploads/{local_name}"
-
-
 def upload_comprobante(content: bytes, *, content_type: str, filename: str | None = None) -> str:
     """
-    Intenta subir a Cloudinary; si falla (credenciales, red, etc.),
-    guarda localmente en ``/uploads/`` como respaldo.
+    Sube el comprobante a Cloudinary y devuelve la URL HTTPS pública (``secure_url``).
+    Si Cloudinary falla, lanza HTTP 500 (sin respaldo en disco local).
     """
     suffix = _receipt_suffix(content_type, filename)
 
@@ -78,8 +74,13 @@ def upload_comprobante(content: bytes, *, content_type: str, filename: str | Non
         if file_url:
             return str(file_url)
 
-        logger.warning("Cloudinary no devolvió secure_url; usando almacenamiento local.")
+        logger.error("Cloudinary no devolvió secure_url para comprobante.")
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error("Error en Cloudinary: %s", exc)
+        logger.error("Error en Cloudinary: %s", exc, exc_info=True)
 
-    return _save_comprobante_local(content, suffix=suffix)
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=_CLOUDINARY_UPLOAD_ERROR,
+    )
