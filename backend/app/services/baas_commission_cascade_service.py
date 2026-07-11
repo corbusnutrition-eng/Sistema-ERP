@@ -24,6 +24,15 @@ BAAS_COMMISSION_LEDGER_TYPES = frozenset({TX_WALLET_DEPOSIT, TX_NETWORK_PROFIT})
 _MAX_CASCADE_HOPS = 256
 
 
+def _lock_parent_client_for_commission(db: Session, parent_id: int) -> Optional[Client]:
+    """Bloquea la fila del distribuidor padre antes de acreditar comisión (anti race condition)."""
+    q = db.query(Client).filter(Client.id == int(parent_id))
+    bind = db.get_bind()
+    if bind is not None and getattr(bind.dialect, "name", None) == "postgresql":
+        q = q.with_for_update()
+    return q.first()
+
+
 def _convert_amount_to_currency(
     db: Session,
     amount: float,
@@ -133,7 +142,7 @@ def distribute_baas_commission_cascade(
             break
 
         parent_id = int(current_node.parent_id)
-        parent = db.get(Client, parent_id)
+        parent = _lock_parent_client_for_commission(db, parent_id)
         if parent is None:
             break
 

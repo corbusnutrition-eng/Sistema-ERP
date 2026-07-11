@@ -260,13 +260,7 @@ def execute_portal_auto_purchase(
         if hist_xr > 0:
             sale_xr = float(hist_xr)
 
-    from app.services.wallet_balance_service import get_client_wallet_balance
-
-    if float(get_client_wallet_balance(client, purchase_currency)) + 1e-9 < total_price:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Saldo BaaS insuficiente en {purchase_currency}.",
-        )
+    from app.services.wallet_balance_service import get_client_wallet_balance, lock_client_for_wallet_update
 
     inv_prov = _inventory_provider_for_product(product)
     picked = _pick_free_flujo_package_screens(
@@ -325,6 +319,14 @@ def execute_portal_auto_purchase(
         ec_price = Decimal(str(round(price_f, 4)))
 
     try:
+        client = lock_client_for_wallet_update(db, client)
+
+        if float(get_client_wallet_balance(client, purchase_currency)) + 1e-9 < total_price:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Saldo BaaS insuficiente en {purchase_currency}.",
+            )
+
         sale = Sale(
             client_id=int(client.id),
             product_id=int(product.id),

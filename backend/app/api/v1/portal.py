@@ -3285,97 +3285,108 @@ async def portal_submit_payment(
             is_manually_edited=manual_edit_flag,
             ai_confidence_score=ai_confidence,
         )
-        if tgt_sale_ab is not None:
-            from app.services.client_payment_service import (
-                append_client_payment_notes_unique,
-                dedupe_notes_portal_general_abono_chunks,
-            )
-
-            sale_ab = db.get(Sale, int(tgt_sale_ab))
-            if sale_ab is None or int(sale_ab.client_id) != int(client.id):
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Venta no encontrada.")
-            if sale_ab.status == SaleStatus.expired:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Esta factura ha caducado. Contacta al administrador.",
-                )
-            if sale_ab.status in (SaleStatus.cancelled, SaleStatus.rejected, SaleStatus.annulled):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No se puede abonar una factura cancelada o rechazada.",
+        try:
+            if tgt_sale_ab is not None:
+                from app.services.client_payment_service import (
+                    append_client_payment_notes_unique,
+                    dedupe_notes_portal_general_abono_chunks,
                 )
 
-            amt_dec_ab = Decimal(str(amt)).quantize(Decimal("0.01"))
-            _, bal_ab = _compute_portal_balance(db, sale_ab)
-            if bal_ab <= _FP_EPS:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Esta factura no tiene saldo pendiente.",
+                sale_ab = db.get(Sale, int(tgt_sale_ab))
+                if sale_ab is None or int(sale_ab.client_id) != int(client.id):
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Venta no encontrada.")
+                if sale_ab.status == SaleStatus.expired:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Esta factura ha caducado. Contacta al administrador.",
+                    )
+                if sale_ab.status in (SaleStatus.cancelled, SaleStatus.rejected, SaleStatus.annulled):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="No se puede abonar una factura cancelada o rechazada.",
+                    )
+
+                amt_dec_ab = Decimal(str(amt)).quantize(Decimal("0.01"))
+                _, bal_ab = _compute_portal_balance(db, sale_ab)
+                if bal_ab <= _FP_EPS:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Esta factura no tiene saldo pendiente.",
+                    )
+                from app.services.client_payment_service import cap_allocation_for_sale
+
+                alloc_ab = cap_allocation_for_sale(db, payment, sale_ab, amt_dec_ab).quantize(
+                    Decimal("0.0001")
                 )
-            from app.services.client_payment_service import cap_allocation_for_sale
 
-            alloc_ab = cap_allocation_for_sale(db, payment, sale_ab, amt_dec_ab).quantize(
-                Decimal("0.0001")
-            )
-
-            cur_ab = normalize_currency_code(str(payment.currency or "USD").strip().upper())
-            canonical_patch = dedupe_notes_portal_general_abono_chunks(
-                "\n".join(
-                    [
-                        "portal_general_abono",
-                        f"META_SALE_ID={int(sale_ab.id)}",
-                        f"ORIGIN_SALE_REF={int(sale_ab.id)}",
-                        f"PARTE_EFECTIVO={float(amt_dec_ab):.2f} {cur_ab}",
-                    ]
-                )
-            )
-            payment.notes = append_client_payment_notes_unique(payment.notes, canonical_patch).strip() or canonical_patch
-
-            if alloc_ab > _FP_EPS:
-                db.add(
-                    PaymentAllocation(
-                        payment_id=int(payment.id),
-                        sale_id=int(sale_ab.id),
-                        amount_applied=alloc_ab,
+                cur_ab = normalize_currency_code(str(payment.currency or "USD").strip().upper())
+                canonical_patch = dedupe_notes_portal_general_abono_chunks(
+                    "\n".join(
+                        [
+                            "portal_general_abono",
+                            f"META_SALE_ID={int(sale_ab.id)}",
+                            f"ORIGIN_SALE_REF={int(sale_ab.id)}",
+                            f"PARTE_EFECTIVO={float(amt_dec_ab):.2f} {cur_ab}",
+                        ]
                     )
                 )
+                payment.notes = append_client_payment_notes_unique(payment.notes, canonical_patch).strip() or canonical_patch
 
-            rc_ab = str(payment.receipt_file_url or "").strip()
-            if rc_ab:
-                sale_ab.receipt_url = rc_ab
+                if alloc_ab > _FP_EPS:
+                    db.add(
+                        PaymentAllocation(
+                            payment_id=int(payment.id),
+                            sale_id=int(sale_ab.id),
+                            amount_applied=alloc_ab,
+                        )
+                    )
 
-            ts_ab = now_ecuador()
-            iso_ab = ts_ab.isoformat()
-            pm_ab = (payment.payment_method or "").strip() or "Transferencia"
-            ev_ab = list(sale_ab.payment_events or [])
-            ev_ab.append(
-                {
-                    "occurred_at": iso_ab,
-                    "amount": float(amt_dec_ab),
-                    "currency": cur_ab,
-                    "status": "Depósito — En revisión",
-                    "receipt_url": rc_ab or None,
-                    "credit_portion": 0.0,
-                    "deposit_portion": float(amt_dec_ab),
-                    "pending_payment_number": payment.payment_number,
-                    "pending_payment_id": int(payment.id),
-                    "composite_method": pm_ab,
-                }
-            )
-            sale_ab.payment_events = ev_ab
+                rc_ab = str(payment.receipt_file_url or "").strip()
+                if rc_ab:
+                    sale_ab.receipt_url = rc_ab
 
-            if sale_ab.status in (
-                SaleStatus.pending,
-                SaleStatus.partially_paid,
-                SaleStatus.payment_submitted,
-                SaleStatus.approved,
-            ):
-                sale_ab.status = SaleStatus.payment_submitted
-                sale_ab.expires_at = None
+                ts_ab = now_ecuador()
+                iso_ab = ts_ab.isoformat()
+                pm_ab = (payment.payment_method or "").strip() or "Transferencia"
+                ev_ab = list(sale_ab.payment_events or [])
+                ev_ab.append(
+                    {
+                        "occurred_at": iso_ab,
+                        "amount": float(amt_dec_ab),
+                        "currency": cur_ab,
+                        "status": "Depósito — En revisión",
+                        "receipt_url": rc_ab or None,
+                        "credit_portion": 0.0,
+                        "deposit_portion": float(amt_dec_ab),
+                        "pending_payment_number": payment.payment_number,
+                        "pending_payment_id": int(payment.id),
+                        "composite_method": pm_ab,
+                    }
+                )
+                sale_ab.payment_events = ev_ab
 
-            sync_sale_accounting_ledgers(db, sale_ab, strict=False)
+                if sale_ab.status in (
+                    SaleStatus.pending,
+                    SaleStatus.partially_paid,
+                    SaleStatus.payment_submitted,
+                    SaleStatus.approved,
+                ):
+                    sale_ab.status = SaleStatus.payment_submitted
+                    sale_ab.expires_at = None
 
-        commit_db_or_rollback(db)
+                sync_sale_accounting_ledgers(db, sale_ab, strict=False)
+
+            commit_db_or_rollback(db)
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            logger.exception("Error al registrar abono portal client_id=%s", client.id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al registrar el abono y el asiento contable.",
+            ) from exc
         db.refresh(payment)
         return PortalPaymentSubmitResponse(
             message="Recibimos tu abono. Un operador lo aplicará a tu saldo pendiente.",
@@ -3594,87 +3605,87 @@ async def portal_submit_payment(
     else:
         assembled_notes = canonical_body.strip()
     deposit_notes_final = dedupe_notes_portal_general_abono_chunks(assembled_notes.strip())
-    deposit_pay = ClientPayment(
-        payment_number=next_payment_number(db),
-        client_id=int(client.id),
-        amount=total_pay,
-        currency=cur_norm,
-        receipt_file_url=(stored_receipt_url or "").strip() or None,
-        payment_method_id=pm.id if pm is not None else None,
-        payment_method=pm_name[:120],
-        deposit_account_id=int(deposit_acc_resolved) if deposit_acc_resolved is not None else None,
-        status=ClientPaymentStatus.pending_review,
-        notes=deposit_notes_final,
-        is_manually_edited=manual_edit_flag,
-        ai_confidence_score=ai_confidence,
-        created_at=now_ts,
-    )
-    db.add(deposit_pay)
-    db.flush()
-    if alloc_invoice > _FP_EPS:
-        db.add(
-            PaymentAllocation(
-                payment_id=int(deposit_pay.id),
-                sale_id=int(sale.id),
-                amount_applied=alloc_invoice,
-            )
-        )
-    credit_alloc = None
-    if credit_apply > _FP_EPS:
-        credit_alloc = PaymentAllocation(
-            payment_id=int(deposit_pay.id),
-            sale_id=int(sale.id),
-            amount_applied=credit_apply,
-        )
-        db.add(credit_alloc)
-    db.flush()
-
-    if credit_apply > _FP_EPS:
-        from app.services.client_payment_service import reserve_client_credit_for_pending_payment
-
-        taken = reserve_client_credit_for_pending_payment(db, client, deposit_pay, credit_apply)
-        if taken <= _FP_EPS:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No hay saldo a favor suficiente para completar este pago.",
-            )
-        if taken != credit_apply:
-            credit_apply = taken
-            if credit_alloc is not None:
-                credit_alloc.amount_applied = credit_apply
-            deposit_pay.amount = (credit_apply + deposit_part).quantize(Decimal("0.01"))
-            db.flush()
-
-    total_pay = (credit_apply + deposit_part).quantize(Decimal("0.01"))
-    status_label = "Pago mixto — En revisión" if credit_apply > _FP_EPS else "Depósito — En revisión"
-    events.append({
-        "occurred_at": now_iso,
-        "amount": float(total_pay),
-        "currency": cur_norm,
-        "status": status_label,
-        "receipt_url": stored_receipt_url.strip() if stored_receipt_url else None,
-        "credit_portion": float(credit_apply),
-        "deposit_portion": float(deposit_part),
-        "pending_payment_number": deposit_pay.payment_number,
-        "pending_payment_id": int(deposit_pay.id),
-        "composite_method": pm_name if credit_apply <= _FP_EPS else f"{pm_name} + Saldo a Favor",
-    })
-    sale.payment_events = events
-    if pm is not None and deposit_acc_resolved is not None:
-        sale.payment_method_id = int(pm.id)
-        sale.deposit_account_id = int(deposit_acc_resolved)
-        sale.receipt_url = (stored_receipt_url or "").strip() or None
-    if sale.status in (
-        SaleStatus.pending,
-        SaleStatus.partially_paid,
-        SaleStatus.payment_submitted,
-        SaleStatus.approved,
-    ):
-        sale.status = SaleStatus.payment_submitted
-        sale.expires_at = None
 
     try:
+        deposit_pay = ClientPayment(
+            payment_number=next_payment_number(db),
+            client_id=int(client.id),
+            amount=total_pay,
+            currency=cur_norm,
+            receipt_file_url=(stored_receipt_url or "").strip() or None,
+            payment_method_id=pm.id if pm is not None else None,
+            payment_method=pm_name[:120],
+            deposit_account_id=int(deposit_acc_resolved) if deposit_acc_resolved is not None else None,
+            status=ClientPaymentStatus.pending_review,
+            notes=deposit_notes_final,
+            is_manually_edited=manual_edit_flag,
+            ai_confidence_score=ai_confidence,
+            created_at=now_ts,
+        )
+        db.add(deposit_pay)
+        db.flush()
+        if alloc_invoice > _FP_EPS:
+            db.add(
+                PaymentAllocation(
+                    payment_id=int(deposit_pay.id),
+                    sale_id=int(sale.id),
+                    amount_applied=alloc_invoice,
+                )
+            )
+        credit_alloc = None
+        if credit_apply > _FP_EPS:
+            credit_alloc = PaymentAllocation(
+                payment_id=int(deposit_pay.id),
+                sale_id=int(sale.id),
+                amount_applied=credit_apply,
+            )
+            db.add(credit_alloc)
+        db.flush()
+
+        if credit_apply > _FP_EPS:
+            from app.services.client_payment_service import reserve_client_credit_for_pending_payment
+
+            taken = reserve_client_credit_for_pending_payment(db, client, deposit_pay, credit_apply)
+            if taken <= _FP_EPS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No hay saldo a favor suficiente para completar este pago.",
+                )
+            if taken != credit_apply:
+                credit_apply = taken
+                if credit_alloc is not None:
+                    credit_alloc.amount_applied = credit_apply
+                deposit_pay.amount = (credit_apply + deposit_part).quantize(Decimal("0.01"))
+                db.flush()
+
+        total_pay = (credit_apply + deposit_part).quantize(Decimal("0.01"))
+        status_label = "Pago mixto — En revisión" if credit_apply > _FP_EPS else "Depósito — En revisión"
+        events.append({
+            "occurred_at": now_iso,
+            "amount": float(total_pay),
+            "currency": cur_norm,
+            "status": status_label,
+            "receipt_url": stored_receipt_url.strip() if stored_receipt_url else None,
+            "credit_portion": float(credit_apply),
+            "deposit_portion": float(deposit_part),
+            "pending_payment_number": deposit_pay.payment_number,
+            "pending_payment_id": int(deposit_pay.id),
+            "composite_method": pm_name if credit_apply <= _FP_EPS else f"{pm_name} + Saldo a Favor",
+        })
+        sale.payment_events = events
+        if pm is not None and deposit_acc_resolved is not None:
+            sale.payment_method_id = int(pm.id)
+            sale.deposit_account_id = int(deposit_acc_resolved)
+            sale.receipt_url = (stored_receipt_url or "").strip() or None
+        if sale.status in (
+            SaleStatus.pending,
+            SaleStatus.partially_paid,
+            SaleStatus.payment_submitted,
+            SaleStatus.approved,
+        ):
+            sale.status = SaleStatus.payment_submitted
+            sale.expires_at = None
+
         sync_sale_accounting_ledgers(db, sale, strict=False)
         commit_db_or_rollback(db)
     except HTTPException:

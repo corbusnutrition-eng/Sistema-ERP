@@ -454,6 +454,7 @@ def _apply_baas_transfer_parent_to_child(
     """Ajusta saldos y registra movimientos BaaS (sin ``commit``)."""
     from app.services.wallet_balance_service import (
         get_client_wallet_balance,
+        lock_clients_for_wallet_update,
         subtract_client_wallet_balance,
         add_client_wallet_balance,
     )
@@ -463,6 +464,10 @@ def _apply_baas_transfer_parent_to_child(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El monto debe ser mayor a cero.")
 
     get_direct_subclient(db, parent, int(child.id))
+
+    locked = lock_clients_for_wallet_update(db, parent, child)
+    parent = locked.get(int(parent.id), parent)
+    child = locked.get(int(child.id), child)
 
     cur = normalize_currency_code(currency, "USD")
     parent_bal = float(get_client_wallet_balance(parent, cur))

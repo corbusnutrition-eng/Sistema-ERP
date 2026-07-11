@@ -479,20 +479,20 @@ async def checkout_pay(
         )
 
     receipt_url = await _persist_receipt_upload(payment_receipt)
-    sale.payment_method_id = pm.id
-    sale.receipt_url = (receipt_url or "").strip() or None
-    # Pendiente → comprobante recibido (operador debe aprobar).
-    sale.status = SaleStatus.payment_submitted
-    sale.expires_at = None
-    dep_for_payment = int(sale.deposit_account_id) if sale.deposit_account_id is not None else None
-    _create_encapsulated_checkout_payment(
-        db,
-        sale,
-        receipt_url=sale.receipt_url or "",
-        payment_method=pm,
-        deposit_account_id=dep_for_payment,
-    )
     try:
+        sale.payment_method_id = pm.id
+        sale.receipt_url = (receipt_url or "").strip() or None
+        # Pendiente → comprobante recibido (operador debe aprobar).
+        sale.status = SaleStatus.payment_submitted
+        sale.expires_at = None
+        dep_for_payment = int(sale.deposit_account_id) if sale.deposit_account_id is not None else None
+        _create_encapsulated_checkout_payment(
+            db,
+            sale,
+            receipt_url=sale.receipt_url or "",
+            payment_method=pm,
+            deposit_account_id=dep_for_payment,
+        )
         sync_sale_accounting_ledgers(db, sale, strict=False)
         commit_db_or_rollback(db)
     except HTTPException:

@@ -14,6 +14,49 @@ _WALLET_BALANCES_CF_KEY = "wallet_balances_by_currency"
 _WALLET_EPS = Decimal("0.00005")
 
 
+def _supports_row_locking(db: Session) -> bool:
+    bind = db.get_bind()
+    return bind is not None and getattr(bind.dialect, "name", None) == "postgresql"
+
+
+def lock_client_for_wallet_update(db: Session, client: Client) -> Client:
+    """
+    Re-lee el cliente con ``FOR UPDATE`` (PostgreSQL) antes de mutar saldo BaaS.
+
+    Serializa pagos concurrentes sobre la misma billetera y evita condiciones de carrera.
+    """
+    cid = int(getattr(client, "id", 0) or 0)
+    if cid < 1:
+        raise ValueError("Cliente inválido para bloqueo de billetera.")
+    q = db.query(Client).filter(Client.id == cid)
+    if _supports_row_locking(db):
+        q = q.with_for_update()
+    locked = q.first()
+    if locked is None:
+        raise ValueError(f"Cliente {cid} no encontrado.")
+    return locked
+
+
+def lock_clients_for_wallet_update(db: Session, *clients: Client) -> dict[int, Client]:
+    """Bloquea varias filas de cliente en orden de id (evita deadlocks)."""
+    ids = sorted(
+        {
+            int(getattr(c, "id", 0) or 0)
+            for c in clients
+            if c is not None and int(getattr(c, "id", 0) or 0) >= 1
+        }
+    )
+    locked: dict[int, Client] = {}
+    for cid in ids:
+        q = db.query(Client).filter(Client.id == cid)
+        if _supports_row_locking(db):
+            q = q.with_for_update()
+        row = q.first()
+        if row is not None:
+            locked[cid] = row
+    return locked
+
+
 def client_wallet_balances_map(client: Client) -> dict[str, Decimal]:
     """Saldos BaaS por moneda. Migra ``wallet_balance`` legacy como USD."""
     out: dict[str, Decimal] = {}
@@ -117,6 +160,7 @@ def add_client_wallet_balance(
     cur = normalize_currency_code(currency)
     if not cur:
         raise ValueError("Moneda de billetera inválida.")
+    client = lock_client_for_wallet_update(db, client)
     balances = client_wallet_balances_map(client)
     prev = balances.get(cur, Decimal("0"))
     balances[cur] = (prev + delta).quantize(Decimal("0.01"))
@@ -139,6 +183,7 @@ def subtract_client_wallet_balance(
     if take <= _WALLET_EPS:
         return 0.0
     cur = normalize_currency_code(currency)
+    client = lock_client_for_wallet_update(db, client)
     balances = client_wallet_balances_map(client)
     prev = balances.get(cur, Decimal("0"))
     applied = min(prev, take).quantize(Decimal("0.01"))
