@@ -20,6 +20,7 @@ from app.database import get_db
 from app.models.client import Client
 from app.models.iptv_screen import IPTVScreen
 from app.models.sale import Sale, SaleStatus
+from app.models.user import User
 from app.schemas.client import (
     ClientCreate,
     ClientPublicResponse,
@@ -142,6 +143,18 @@ def _attach_parent_fields(db: Session, data: dict[str, Any], client: Client) -> 
         return
     data["parent_username"] = parent.username
     data["parent_name"] = (parent.name or "").strip() or parent.username
+
+
+def _resolve_parent_distributor_id(db: Session, parent_distributor_id: Optional[int]) -> Optional[int]:
+    if parent_distributor_id is None:
+        return None
+    user = db.get(User, int(parent_distributor_id))
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario distribuidor/administrador no encontrado.",
+        )
+    return int(user.id)
 
 
 def _client_response_dict(db: Session, client: Client, *, credit_sync: bool = True) -> dict[str, Any]:
@@ -356,8 +369,11 @@ def create_client(payload: ClientCreate, db: DbDep, _: ClientsCreateDep) -> Clie
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Distribuidor padre no encontrado.")
         inherit_currency = get_client_currency(parent)
 
+    parent_distributor_id = _resolve_parent_distributor_id(db, payload.parent_distributor_id)
+
     client = Client(
         parent_id=int(parent_id) if parent_id is not None else None,
+        parent_distributor_id=parent_distributor_id,
         username=payload.username,
         name=payload.name,
         email=payload.email,
@@ -403,6 +419,10 @@ def update_client(client_id: int, payload: ClientUpdate, db: DbDep, _: ClientsEd
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
 
     update_data = payload.model_dump(exclude_unset=True)
+    if "parent_distributor_id" in update_data:
+        update_data["parent_distributor_id"] = _resolve_parent_distributor_id(
+            db, update_data.get("parent_distributor_id")
+        )
     for field, value in update_data.items():
         setattr(client, field, value)
 

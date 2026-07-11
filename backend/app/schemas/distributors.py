@@ -74,7 +74,11 @@ class DistributorWalletClientRead(BaseModel):
     id: int
     parent_id: Optional[int] = Field(
         default=None,
-        description="Distribuidor padre; null = cliente de primera línea (raíz ERP).",
+        description="Distribuidor padre BaaS (cliente); null = raíz ERP.",
+    )
+    parent_distributor_id: Optional[int] = Field(
+        default=None,
+        description="Usuario ERP/administrador asignado (FK ``users.id``).",
     )
     name: Optional[str] = None
     email: str

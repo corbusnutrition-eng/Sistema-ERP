@@ -58,6 +58,11 @@ class User(Base):
         foreign_keys=[parent_id],
         back_populates="parent",
     )
+    sub_clients: Mapped[list["Client"]] = relationship(
+        "Client",
+        foreign_keys="Client.parent_distributor_id",
+        back_populates="parent_distributor",
+    )
     wallet_transactions: Mapped[list["WalletTransaction"]] = relationship(
         "WalletTransaction",
         back_populates="user",

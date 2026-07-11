@@ -21,7 +21,12 @@ class ClientCreate(BaseModel):
     last_recharge: Optional[datetime] = None
     parent_id: Optional[int] = Field(
         default=None,
-        description="Distribuidor padre (sub-cliente). Hereda moneda base del padre.",
+        description="Distribuidor padre BaaS (otro cliente). Hereda moneda base del padre.",
+    )
+    parent_distributor_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Usuario ERP/administrador que gestiona este cliente (FK ``users.id``).",
     )
     custom_fields: Dict[str, Any] = Field(default_factory=dict)
     note: Optional[str] = Field(default=None, description="Nota interna de seguimiento")
@@ -69,6 +74,11 @@ class ClientUpdate(BaseModel):
         max_length=255,
         description="Contraseña del panel IPTV activo (crédito normal).",
     )
+    parent_distributor_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Usuario ERP/administrador asignado (FK ``users.id``).",
+    )
 
     @field_validator("name", mode="before")
     @classmethod
@@ -105,7 +115,11 @@ class ClientSubClientBrief(BaseModel):
 
 class ClientResponse(BaseModel):
     id: int
-    parent_id: Optional[int] = Field(default=None, description="ID del distribuidor padre (reseller).")
+    parent_id: Optional[int] = Field(default=None, description="ID del distribuidor padre BaaS (cliente).")
+    parent_distributor_id: Optional[int] = Field(
+        default=None,
+        description="ID del usuario ERP/administrador que gestiona este cliente.",
+    )
     parent_username: Optional[str] = Field(
         default=None,
         description="Usuario IPTV del distribuidor padre (si es sub-cliente).",

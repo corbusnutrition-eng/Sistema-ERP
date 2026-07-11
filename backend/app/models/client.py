@@ -17,9 +17,15 @@ class Client(Base):
     __tablename__ = "clients"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    #: Distribuidor padre (reseller). ``None`` = cliente raíz del ERP.
+    #: Distribuidor padre (reseller BaaS, otro registro ``clients``). ``None`` = raíz ERP.
     parent_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("clients.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    #: Usuario ERP/administrador que gestiona este cliente en la red BaaS (``users``).
+    parent_distributor_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -103,6 +109,11 @@ class Client(Base):
         "Client",
         foreign_keys=[parent_id],
         back_populates="parent",
+    )
+    parent_distributor: Mapped[Optional["User"]] = relationship(
+        "User",
+        foreign_keys=[parent_distributor_id],
+        back_populates="sub_clients",
     )
     screens: Mapped[list["IPTVScreen"]] = relationship(back_populates="client")
     sales: Mapped[list["Sale"]] = relationship(back_populates="client")

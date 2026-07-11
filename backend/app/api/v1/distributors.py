@@ -569,6 +569,9 @@ def list_distributor_users(db: DbDep, _: BaasDistributorsViewDep) -> list[Distri
             DistributorWalletClientRead(
                 id=int(c.id),
                 parent_id=int(c.parent_id) if c.parent_id is not None else None,
+                parent_distributor_id=(
+                    int(c.parent_distributor_id) if c.parent_distributor_id is not None else None
+                ),
                 name=(str(c.name).strip() if c.name else None) or None,
                 email=em,
                 username=str(c.username or "").strip(),
