@@ -19,7 +19,7 @@ from app.api.v1.sales import (
 from app.account_constants import is_liquid_deposit_account
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
-from app.rate_limit import RECEIPT_UPLOAD_LIMIT, limiter
+from app.rate_limit import PORTAL_FINANCIAL_LIMIT, PORTAL_GET_LIMIT, limiter
 from app.models.account import Account
 from app.models.payment_method import PaymentMethod
 from app.models.product import Product
@@ -328,7 +328,8 @@ def _checkout_lines_public(
     response_model=CheckoutDetailResponse,
     summary="Detalle público del pedido (solo pendiente)",
 )
-def checkout_detail(payment_token: uuid_pkg.UUID, db: DbDep) -> CheckoutDetailResponse:
+@limiter.limit(PORTAL_GET_LIMIT)
+def checkout_detail(request: Request, payment_token: uuid_pkg.UUID, db: DbDep) -> CheckoutDetailResponse:
     expire_pending_sales_if_needed(db)
     sale = (
         db.query(Sale)
@@ -404,7 +405,7 @@ def checkout_detail(payment_token: uuid_pkg.UUID, db: DbDep) -> CheckoutDetailRe
     response_model=CheckoutPayResponse,
     summary="Enviar comprobante de pago (cliente público)",
 )
-@limiter.limit(RECEIPT_UPLOAD_LIMIT)
+@limiter.limit(PORTAL_FINANCIAL_LIMIT)
 async def checkout_pay(
     request: Request,
     payment_token: uuid_pkg.UUID,

@@ -44,7 +44,7 @@ from app.services.sale_accounting_sync import (
 )
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
-from app.rate_limit import PORTAL_GET_LIMIT, RECEIPT_UPLOAD_LIMIT, limiter
+from app.rate_limit import PORTAL_FINANCIAL_LIMIT, PORTAL_GET_LIMIT, limiter
 from app.models.account import Account
 from app.models.client import Client
 from app.models.client_debt_payment import ClientDebtPayment, DebtPaymentStatus
@@ -1776,7 +1776,9 @@ def portal_auto_purchase_catalog(portal_token: uuid_pkg.UUID, db: DbDep) -> list
 
 
 @router.post("/{portal_token}/auto-purchase", response_model=PortalAutoPurchaseResponse)
+@limiter.limit(PORTAL_FINANCIAL_LIMIT)
 def portal_auto_purchase(
+    request: Request,
     portal_token: uuid_pkg.UUID,
     payload: PortalAutoPurchaseRequest,
     db: DbDep,
@@ -2125,7 +2127,7 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
 
 
 @router.post("/{portal_token}/recharges/{request_id}/pay", response_model=WalletRechargeRequestRead)
-@limiter.limit(RECEIPT_UPLOAD_LIMIT)
+@limiter.limit(PORTAL_FINANCIAL_LIMIT)
 async def portal_pay_wallet_recharge(
     request: Request,
     portal_token: uuid_pkg.UUID,
@@ -3069,7 +3071,7 @@ async def _portal_create_abono_payment(
 # ── POST payments (new order or abono) ─────────────────────────────────────────
 
 @router.post("/{portal_token}/payments", response_model=PortalPaymentSubmitResponse)
-@limiter.limit(RECEIPT_UPLOAD_LIMIT)
+@limiter.limit(PORTAL_FINANCIAL_LIMIT)
 async def portal_submit_payment(
     request: Request,
     portal_token: uuid_pkg.UUID,
@@ -3714,7 +3716,7 @@ async def portal_submit_payment(
 # ── POST debt-payment (generic / CxC abono) ───────────────────────────────────
 
 @router.post("/{portal_token}/debt-payment", response_model=DebtPaymentSubmitResponse)
-@limiter.limit(RECEIPT_UPLOAD_LIMIT)
+@limiter.limit(PORTAL_FINANCIAL_LIMIT)
 async def portal_submit_debt_payment(
     request: Request,
     portal_token: uuid_pkg.UUID,

@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, joinedload
@@ -17,6 +17,7 @@ from sqlalchemy import func, or_
 logger = logging.getLogger(__name__)
 
 from app.database import get_db
+from app.rate_limit import PORTAL_GET_LIMIT, limiter
 from app.models.client import Client
 from app.models.iptv_screen import IPTVScreen
 from app.models.sale import Sale, SaleStatus
@@ -327,7 +328,8 @@ def list_clients_follow_up(
     tags=["public"],
     summary="Portal público: datos del cliente por su link único (sin autenticación)",
 )
-def get_client_public(payment_link_id: uuid.UUID, db: DbDep) -> ClientPublicResponse:
+@limiter.limit(PORTAL_GET_LIMIT)
+def get_client_public(request: Request, payment_link_id: uuid.UUID, db: DbDep) -> ClientPublicResponse:
     client: Optional[Client] = (
         db.query(Client)
         .options(joinedload(Client.screens).joinedload(IPTVScreen.iptv_account))
