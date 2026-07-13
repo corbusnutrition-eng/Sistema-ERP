@@ -370,7 +370,7 @@ export default function DistributorsBaaSPage() {
     setLoadingRequests(true)
     try {
       const { data } = await api.get('/api/v1/distributors/recharge-requests', {
-        params: { status: 'all' },
+        params: { status: 'all', limit: 10000 },
       })
       if (gen !== rechargeFetchGenRef.current) return
       setRechargeRequests(dedupeRechargeRequestsById(Array.isArray(data) ? data : []))

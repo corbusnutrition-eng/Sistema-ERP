@@ -261,21 +261,10 @@ def _pending_review_alloc_sum_for_sale(
     exclude_payment_id: Optional[int] = None,
 ) -> Decimal:
     """Suma allocations en revisión hacia una factura (opcionalmente excluye un pago)."""
-    q = (
-        db.query(func.coalesce(func.sum(PaymentAllocation.amount_applied), 0))
-        .join(ClientPayment, PaymentAllocation.payment_id == ClientPayment.id)
-        .filter(
-            PaymentAllocation.sale_id == int(sale_id),
-            ClientPayment.status == ClientPaymentStatus.pending_review,
-        )
+    _, pending = _batch_alloc_sums_for_sales(
+        db, [int(sale_id)], exclude_payment_id=exclude_payment_id
     )
-    if exclude_payment_id is not None:
-        q = q.filter(ClientPayment.id != int(exclude_payment_id))
-    agg = q.scalar()
-    try:
-        return Decimal(str(agg or 0)).quantize(Decimal("0.0001"))
-    except Exception:
-        return Decimal("0")
+    return pending.get(int(sale_id), Decimal("0"))
 
 
 def _approved_alloc_sum_for_wallet_recharge(
@@ -434,21 +423,51 @@ def _approved_alloc_sum_for_sale(
     exclude_payment_id: Optional[int] = None,
 ) -> Decimal:
     """Suma cobros ya aprobados aplicados a la factura (fuente de verdad CxC)."""
-    q = (
-        db.query(func.coalesce(func.sum(PaymentAllocation.amount_applied), 0))
-        .join(ClientPayment, PaymentAllocation.payment_id == ClientPayment.id)
-        .filter(
-            PaymentAllocation.sale_id == int(sale_id),
-            ClientPayment.status == ClientPaymentStatus.approved,
-        )
+    approved, _ = _batch_alloc_sums_for_sales(
+        db, [int(sale_id)], exclude_payment_id=exclude_payment_id
     )
-    if exclude_payment_id is not None:
-        q = q.filter(ClientPayment.id != int(exclude_payment_id))
-    agg = q.scalar()
-    try:
-        return Decimal(str(agg or 0)).quantize(Decimal("0.0001"))
-    except Exception:
-        return Decimal("0")
+    return approved.get(int(sale_id), Decimal("0"))
+
+
+def _batch_alloc_sums_for_sales(
+    db: Session,
+    sale_ids: list[int],
+    *,
+    exclude_payment_id: Optional[int] = None,
+) -> tuple[dict[int, Decimal], dict[int, Decimal]]:
+    """Agrega allocations aprobadas y en revisión por ``sale_id`` (2 consultas GROUP BY)."""
+    if not sale_ids:
+        return {}, {}
+
+    def _sum_by_sale(status: ClientPaymentStatus) -> dict[int, Decimal]:
+        q = (
+            db.query(
+                PaymentAllocation.sale_id,
+                func.coalesce(func.sum(PaymentAllocation.amount_applied), 0),
+            )
+            .join(ClientPayment, PaymentAllocation.payment_id == ClientPayment.id)
+            .filter(
+                PaymentAllocation.sale_id.in_(sale_ids),
+                ClientPayment.status == status,
+            )
+            .group_by(PaymentAllocation.sale_id)
+        )
+        if exclude_payment_id is not None:
+            q = q.filter(ClientPayment.id != int(exclude_payment_id))
+        out: dict[int, Decimal] = {}
+        for sid, agg in q.all():
+            if sid is None:
+                continue
+            try:
+                out[int(sid)] = Decimal(str(agg or 0)).quantize(Decimal("0.0001"))
+            except Exception:
+                out[int(sid)] = Decimal("0")
+        return out
+
+    return (
+        _sum_by_sale(ClientPaymentStatus.approved),
+        _sum_by_sale(ClientPaymentStatus.pending_review),
+    )
 
 
 def _sale_cxc_open_balance(
@@ -811,14 +830,26 @@ def list_unpaid_invoices(
         .order_by(Sale.created_at.asc(), Sale.id.asc())
         .all()
     )
+    if not sales:
+        return []
+
+    sale_ids = [int(s.id) for s in sales]
+    exclude_payment_id = int(payment.id) if payment is not None else None
+    approved_by_sale, pending_by_sale = _batch_alloc_sums_for_sales(
+        db, sale_ids, exclude_payment_id=exclude_payment_id
+    )
+
     rows: list[dict] = []
     for s in sales:
         if cur_filter and normalize_currency_code(str(s.currency or "USD")) != cur_filter:
             continue
-        if payment is not None:
-            real_total, balance = _sale_balance(db, s, payment)
-        else:
-            real_total, balance = _sale_balance(db, s)
+        real_total = _sale_invoice_total(db, s)
+        if real_total <= _FP_EPS:
+            continue
+        sid = int(s.id)
+        approved = approved_by_sale.get(sid, Decimal("0"))
+        pend = pending_by_sale.get(sid, Decimal("0"))
+        balance = max(Decimal("0"), (real_total - approved - pend).quantize(Decimal("0.0001")))
         if balance <= _FP_EPS:
             continue
         total_f = float(real_total)
@@ -826,7 +857,7 @@ def list_unpaid_invoices(
         rows.append(
             {
                 "obligation_kind": "sale",
-                "sale_id": int(s.id),
+                "sale_id": sid,
                 "wallet_recharge_id": None,
                 "reference": sale_ref_number(s.id),
                 "date": s.created_at,

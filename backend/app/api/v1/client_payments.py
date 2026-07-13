@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from pydantic import ValidationError
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.v1.dependencies import require_permission
@@ -23,6 +24,7 @@ from app.database import get_db
 from app.models.client import Client
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
 from app.models.payment_method import PaymentMethod
+from app.models.sale import Sale, SaleStatus
 from app.schemas.client_payments import (
     ClientPaymentOut,
     PaymentAllocationOut,
@@ -309,16 +311,49 @@ async def create_payment(
     return _create_manual_payment_record(db, body, receipt_file_url=receipt_url)
 
 
+_OPEN_SALE_REVIEW_STATUSES = (
+    SaleStatus.pending,
+    SaleStatus.payment_submitted,
+)
+
+
+def _apply_payments_review_queue_filter(db: Session, q, review_queue: str):
+    """Pre-filtros SQL para ``review_queue=standalone`` (evita cargar toda la tabla)."""
+    rq = (review_queue or "").strip().lower()
+    if rq != "standalone":
+        return q
+
+    notes_lc = func.lower(func.coalesce(ClientPayment.notes, ""))
+    q = q.filter(
+        ~notes_lc.like("%portal_wallet_recharge%"),
+        ~notes_lc.like("%meta_wallet_recharge_id=%"),
+    )
+
+    open_sale_alloc = (
+        db.query(PaymentAllocation.id)
+        .join(Sale, PaymentAllocation.sale_id == Sale.id)
+        .filter(
+            PaymentAllocation.payment_id == ClientPayment.id,
+            Sale.status.in_(_OPEN_SALE_REVIEW_STATUSES),
+        )
+        .exists()
+    )
+    q = q.filter(~open_sale_alloc)
+    return q
+
+
 @router.get("/", response_model=list[ClientPaymentOut])
 def list_payments(
     db: DbDep,
     _: ReceivablesViewDep,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=10000),
     status_filter: Optional[str] = None,
     client_id: Optional[int] = None,
     review_queue: Optional[str] = None,
 ) -> list[ClientPaymentOut]:
     """
-    Lista pagos CxC.
+    Lista pagos CxC (paginado en SQL).
 
     ``review_queue=standalone``: excluye comprobantes encapsulados en ventas
     ``pending`` / ``payment_submitted`` (pago inicial del checkout); esos se
@@ -336,13 +371,21 @@ def list_payments(
             pass
     if client_id is not None:
         q = q.filter(ClientPayment.client_id == int(client_id))
-    rows = q.order_by(ClientPayment.created_at.desc()).all()
 
     st_pending = ClientPaymentStatus.pending_review
     rq = (review_queue or "").strip().lower()
     # Por defecto, la bandeja admin «En revisión» sólo muestra abonos standalone.
     if not rq and status_filter and status_filter.strip().lower() == st_pending.value:
         rq = "standalone"
+    q = _apply_payments_review_queue_filter(db, q, rq)
+
+    rows = (
+        q.order_by(ClientPayment.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
     if rq == "standalone":
         rows = [
             p

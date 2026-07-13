@@ -560,11 +560,9 @@ def list_distributor_users(db: DbDep, _: BaasDistributorsViewDep) -> list[Distri
             continue
         cur = get_client_currency(c)
         bal = float(get_client_wallet_balance(c, cur))
-        from app.services.client_payment_service import sync_client_credit_from_overpay
+        from app.services.client_payment_service import client_credit_balances_map
 
-        sync_client_credit_from_overpay(db, c)
-        db.flush()
-        credit_bal = float(get_client_credit_balance(c, cur, db=db))
+        credit_bal = float(client_credit_balances_map(c).get(normalize_currency_code(cur), 0))
         out.append(
             DistributorWalletClientRead(
                 id=int(c.id),
@@ -935,6 +933,8 @@ def request_wallet_recharge(
 def list_wallet_recharge_requests(
     db: DbDep,
     _: BaasRechargeViewDep,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=500, ge=1, le=10000),
     request_status: Annotated[
         str,
         Query(
@@ -972,7 +972,12 @@ def list_wallet_recharge_requests(
             )
         else:
             q = q.filter(WalletRechargeRequest.status == sf)
-    rows = q.order_by(WalletRechargeRequest.created_at.desc()).all()
+    rows = (
+        q.order_by(WalletRechargeRequest.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     return [_row_wallet_recharge_admin(db, r) for r in rows]
 
 

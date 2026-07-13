@@ -158,7 +158,13 @@ def _resolve_parent_distributor_id(db: Session, parent_distributor_id: Optional[
     return int(user.id)
 
 
-def _client_response_dict(db: Session, client: Client, *, credit_sync: bool = True) -> dict[str, Any]:
+def _client_response_dict(
+    db: Session,
+    client: Client,
+    *,
+    credit_sync: bool = True,
+    lightweight: bool = False,
+) -> dict[str, Any]:
     from app.services.client_payment_service import compute_client_credit_summary, sync_client_credit_from_overpay
     from app.services.client_currency_service import get_client_currency
 
@@ -167,8 +173,17 @@ def _client_response_dict(db: Session, client: Client, *, credit_sync: bool = Tr
         db.flush()
     data = ClientResponse.model_validate(client).model_dump()
     data["currency"] = get_client_currency(client)
-    data.update(compute_client_pending_balance(db, int(client.id)))
-    data.update(compute_client_credit_summary(db, int(client.id), sync=False))
+    if lightweight:
+        cur = data["currency"]
+        data["total_pending_balance"] = 0.0
+        data["pending_balance_currency"] = cur
+        data["pending_balances_by_currency"] = []
+        data["credit_balance_currency"] = cur
+        data["credit_balances_by_currency"] = []
+        data["available_credit_by_currency"] = []
+    else:
+        data.update(compute_client_pending_balance(db, int(client.id)))
+        data.update(compute_client_credit_summary(db, int(client.id), sync=False))
     _attach_parent_fields(db, data, client)
     return data
 
@@ -203,7 +218,7 @@ def list_clients(
         rows = q.order_by(Client.id.asc()).offset(skip).limit(limit).all()
         out: list[ClientResponse] = []
         for client in rows:
-            out.append(ClientResponse(**_client_response_dict(db, client)))
+            out.append(ClientResponse(**_client_response_dict(db, client, credit_sync=False, lightweight=True)))
         return out
     except (OperationalError, ProgrammingError) as exc:
         logger.exception("GET /clients — error de base de datos al listar clientes")

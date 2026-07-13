@@ -5,7 +5,7 @@ import enum
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -65,6 +65,7 @@ class PaymentAllocation(Base):
     """Vincula un pago a una o más obligaciones CxC (venta o recarga BaaS)."""
 
     __tablename__ = "payment_allocations"
+    __table_args__ = (Index("ix_payment_allocations_sale_id_payment_id", "sale_id", "payment_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     payment_id: Mapped[int] = mapped_column(

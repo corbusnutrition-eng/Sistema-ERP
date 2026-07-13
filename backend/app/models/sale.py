@@ -6,7 +6,7 @@ import uuid as uuid_pkg
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import JSON, DateTime, Enum, Float, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import JSON, DateTime, Enum, Float, ForeignKey, Index, Integer, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +36,7 @@ class SaleStatus(str, enum.Enum):
 
 class Sale(Base):
     __tablename__ = "sales"
+    __table_args__ = (Index("ix_sales_client_id_status", "client_id", "status"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
