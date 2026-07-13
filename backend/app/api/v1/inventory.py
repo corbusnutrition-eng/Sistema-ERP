@@ -17,6 +17,7 @@ from app.permissions import (
     INVENTORY_CREATE,
     INVENTORY_DELETE,
     INVENTORY_EDIT,
+    INVENTORY_VIEW,
 )
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
@@ -54,6 +55,7 @@ from app.schemas.inventory import (
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+InventoryViewDep = Annotated[dict, Depends(require_permission(INVENTORY_VIEW))]
 InventoryCreateDep = Annotated[dict, Depends(require_permission(INVENTORY_CREATE))]
 InventoryEditDep = Annotated[dict, Depends(require_permission(INVENTORY_EDIT))]
 InventoryDeleteDep = Annotated[dict, Depends(require_permission(INVENTORY_DELETE))]
@@ -522,7 +524,7 @@ def _free_screens_grouped(db: Session, prov: str) -> list[ScreenAvailabilityRow]
 def peek_next_fifo_screen_credentials_by_product_id(
     product_id: int,
     db: DbDep,
-    _: UserDep,
+    _: InventoryViewDep,
 ) -> ScreenFifoCredentialsPeek:
     """
     Siguiente unidad disponible para el ``product_id`` (solo ``screen_stock.status`` = disponible en BD,
@@ -576,7 +578,7 @@ def peek_next_fifo_screen_credentials_by_product_id(
 @router.get("/screen-stock/peek-fifo", response_model=list[ScreenStockResponse])
 def peek_fifo_screen_stock(
     db: DbDep,
-    _: UserDep,
+    _: InventoryViewDep,
     provider: str = Query(..., min_length=1, max_length=64),
     package: str = Query(..., min_length=1, max_length=120),
     batch_id: Optional[str] = Query(None, max_length=36),
@@ -596,7 +598,7 @@ def peek_fifo_screen_stock(
 @router.get("/available", response_model=InventoryAvailableResponse)
 def get_inventory_available_for_sale(
     db: DbDep,
-    _: UserDep,
+    _: InventoryViewDep,
     provider: str = Query(..., min_length=1, max_length=64, description="Proveedor IPTV (ej. Flujo, Stella)"),
 ) -> InventoryAvailableResponse:
     """
@@ -1285,7 +1287,7 @@ def create_screen_stock(payload: ScreenStockBulkCreate, db: DbDep, _: InventoryC
 @router.get("/screens/", response_model=list[ScreenStockResponse])
 def list_screen_stock(
     db: DbDep,
-    _: UserDep,
+    _: InventoryViewDep,
     screen_status: Optional[Literal["free", "reserved", "assigned"]] = Query(default=None, alias="status"),
     provider: Optional[str] = Query(default=None, max_length=64),
     package: Optional[str] = Query(default=None, max_length=120),

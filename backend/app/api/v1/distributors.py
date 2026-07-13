@@ -45,6 +45,7 @@ from app.schemas.distributors import (
     ApproveWalletRechargeResponse,
     AssignParentRequest,
     CatalogClientsPickerResponse,
+    ClientPortalLinkResponse,
     ClientWalletBrief,
     CustomPriceRead,
     DistributorUserRead,
@@ -114,6 +115,16 @@ BaasRechargeCreateDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE
 BaasRechargeEditDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_REQUESTS_EDIT))]
 BaasRechargeApproveDep = Annotated[dict, Depends(require_permission(BAAS_RECHARGE_REQUESTS_APPROVE))]
 BaasTreeViewDep = Annotated[dict, Depends(require_permission(BAAS_TREE_VIEW))]
+BaasPortalLinkDep = Annotated[
+    dict,
+    Depends(
+        require_any_permission(
+            BAAS_DISTRIBUTORS_VIEW,
+            BAAS_RECHARGE_REQUESTS_VIEW,
+            BAAS_TREE_VIEW,
+        )
+    ),
+]
 
 logger = logging.getLogger(__name__)
 
@@ -586,24 +597,57 @@ def list_distributor_users(db: DbDep, _: BaasDistributorsViewDep) -> list[Distri
                 credit_balance=credit_bal,
                 currency=cur,
                 status=str(c.status) if c.status is not None else None,
-                payment_token=c.payment_token,
             )
         )
     return out
+
+
+@router.get("/clients/{client_id}/tree-data", response_model=DistributorTreeNode)
+def get_distributor_tree_data_by_client_id(
+    client_id: int,
+    db: DbDep,
+    current: BaasTreeViewDep,
+) -> DistributorTreeNode:
+    """Árbol genealógico BaaS del cliente (raíz + sub-clientes descendientes)."""
+    root = assert_client_in_caller_scope(db, current, int(client_id))
+    tree = build_distributor_tree_node(db, root)
+    return DistributorTreeNode(**tree)
+
+
+@router.get("/clients/{client_id}/portal-link", response_model=ClientPortalLinkResponse)
+def get_client_portal_link(
+    client_id: int,
+    db: DbDep,
+    current: BaasPortalLinkDep,
+) -> ClientPortalLinkResponse:
+    """Devuelve el enlace permanente del portal solo para un cliente autorizado."""
+    client = assert_client_in_caller_scope(db, current, int(client_id))
+    ptok = getattr(client, "payment_token", None)
+    if ptok is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El cliente no tiene enlace de portal configurado.",
+        )
+    token_out = str(ptok)
+    return ClientPortalLinkResponse(
+        client_id=int(client.id),
+        portal_path=f"/portal/{token_out}",
+    )
 
 
 @router.get("/{client_uuid}/tree-data", response_model=DistributorTreeNode)
 def get_distributor_tree_data(
     client_uuid: uuid_module.UUID,
     db: DbDep,
-    _: BaasTreeViewDep,
+    current: BaasTreeViewDep,
 ) -> DistributorTreeNode:
     """
-    Árbol genealógico BaaS del cliente identificado por ``payment_token`` (UUID).
+    Árbol genealógico BaaS (legado por ``payment_token``).
 
-    Incluye la raíz y todos los sub-clientes descendientes con saldo BaaS.
+    Preferir ``GET /clients/{client_id}/tree-data``.
     """
     root = get_client_by_payment_token(db, client_uuid)
+    assert_client_in_caller_scope(db, current, int(root.id))
     tree = build_distributor_tree_node(db, root)
     return DistributorTreeNode(**tree)
 
@@ -838,11 +882,6 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
         except (TypeError, ValueError):
             dep_ids = None
     precheck = getattr(r, "admin_precheck_receipt_url", None)
-    token_str = None
-    if c is not None:
-        pt = getattr(c, "payment_token", None)
-        if pt is not None:
-            token_str = str(pt)
     return WalletRechargeRequestAdminRow(
         id=r.id,
         client_id=r.client_id,
@@ -863,7 +902,6 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
         allowed_deposit_account_ids=dep_ids,
         link_hash=r.link_hash or None,
         admin_precheck_receipt_url=(precheck.strip()[:2048] if isinstance(precheck, str) and precheck.strip() else None),
-        client_payment_token=token_str,
         notes_preview=_recharge_notes_preview(r),
         admin_note=_stored_admin_note(r),
         recharge_detail_lines=(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import uuid as uuid_module
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -40,7 +39,7 @@ from app.services.client_product_price_service import (
     list_client_assigned_package_prices,
     upsert_admin_client_package_prices_local,
 )
-from app.services.client_reseller_service import get_client_by_payment_token
+from app.security.ownership import assert_client_in_caller_scope
 
 router = APIRouter(prefix="/admin/clients", tags=["admin"])
 
@@ -49,7 +48,6 @@ BaasTreeEditDep = Annotated[dict, Depends(require_permission(BAAS_TREE_EDIT))]
 BaasSalePricesViewDep = Annotated[dict, Depends(require_permission(BAAS_SALE_PRICES_VIEW))]
 BaasSalePricesEditDep = Annotated[dict, Depends(require_permission(BAAS_SALE_PRICES_EDIT))]
 
-MASTER_ADMIN_PIN = (os.getenv("MASTER_ADMIN_PIN") or "301985").strip()
 TX_ADMIN_ADJUST = "admin_adjust"
 ADMIN_ADJUST_DESCRIPTION = "Ajuste manual de Admin"
 
@@ -68,7 +66,6 @@ class AdminToggleStatusResponse(BaseModel):
     ok: bool = True
     message: str
     client_id: int
-    payment_token: str
     status: str
 
 
@@ -76,32 +73,41 @@ class AdminAdjustBalanceResponse(BaseModel):
     ok: bool = True
     message: str
     client_id: int
-    payment_token: str
     wallet_balance: float = Field(ge=0)
     transaction_id: int
     amount_applied: float
 
 
+def _configured_master_pin() -> str:
+    pin = (os.getenv("MASTER_ADMIN_PIN") or "").strip()
+    if not pin:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="PIN maestro no configurado (variable MASTER_ADMIN_PIN).",
+        )
+    return pin
+
+
 def _require_master_pin(pin: str) -> None:
-    if str(pin or "").strip() != MASTER_ADMIN_PIN:
+    if str(pin or "").strip() != _configured_master_pin():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="PIN maestro incorrecto.",
         )
 
 
-@router.post("/{client_uuid}/toggle-status", response_model=AdminToggleStatusResponse)
+@router.post("/{client_id}/toggle-status", response_model=AdminToggleStatusResponse)
 def admin_toggle_client_status(
-    client_uuid: uuid_module.UUID,
+    client_id: int,
     payload: AdminPinBody,
     db: DbDep,
-    _: BaasTreeEditDep,
+    current: BaasTreeEditDep,
 ) -> AdminToggleStatusResponse:
-    """Invierte Activo ↔ Inactivo del cliente identificado por ``payment_token``."""
+    """Invierte Activo ↔ Inactivo del cliente BaaS."""
     _require_master_pin(payload.pin)
-    client = get_client_by_payment_token(db, client_uuid)
-    current = str(client.status or "Activo").strip()
-    new_status = "Inactivo" if current.lower() != "inactivo" else "Activo"
+    client = assert_client_in_caller_scope(db, current, int(client_id))
+    status_now = str(client.status or "Activo").strip()
+    new_status = "Inactivo" if status_now.lower() != "inactivo" else "Activo"
     if new_status not in CLIENT_STATUSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Estado de cliente no válido.")
     client.status = new_status
@@ -112,21 +118,20 @@ def admin_toggle_client_status(
     return AdminToggleStatusResponse(
         message=f"Cliente {label} {verb} correctamente.",
         client_id=int(client.id),
-        payment_token=str(client.payment_token),
         status=new_status,
     )
 
 
-@router.post("/{client_uuid}/adjust-balance", response_model=AdminAdjustBalanceResponse)
+@router.post("/{client_id}/adjust-balance", response_model=AdminAdjustBalanceResponse)
 def admin_adjust_client_balance(
-    client_uuid: uuid_module.UUID,
+    client_id: int,
     payload: AdminAdjustBalanceBody,
     db: DbDep,
-    _: BaasTreeEditDep,
+    current: BaasTreeEditDep,
 ) -> AdminAdjustBalanceResponse:
     """Ajusta saldo BaaS del cliente (sumar o restar) con movimiento en ledger."""
     _require_master_pin(payload.pin)
-    client = get_client_by_payment_token(db, client_uuid)
+    client = assert_client_in_caller_scope(db, current, int(client_id))
     amt = round(float(payload.amount), 2)
     if amt <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El monto debe ser mayor a cero.")
@@ -169,7 +174,6 @@ def admin_adjust_client_balance(
     return AdminAdjustBalanceResponse(
         message=f"Saldo {op_label} a {label}: ${abs(signed):.2f} USD.",
         client_id=int(client.id),
-        payment_token=str(client.payment_token),
         wallet_balance=round(float(client.wallet_balance or 0), 2),
         transaction_id=int(tx.id),
         amount_applied=abs(signed),

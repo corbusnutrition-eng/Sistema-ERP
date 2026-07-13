@@ -87,7 +87,6 @@ class DistributorWalletClientRead(BaseModel):
     credit_balance: float = 0.0
     currency: str = Field(default="USD", max_length=10, description="Moneda base BaaS del cliente.")
     status: Optional[str] = None
-    payment_token: uuid.UUID = Field(description="UUID permanente del cliente (enlace árbol BaaS).")
 
     model_config = {"from_attributes": True}
 
@@ -102,7 +101,6 @@ class DistributorTreeNode(BaseModel):
     status: str = Field(default="Activo", description="Activo | Inactivo")
     wallet_balance: float = Field(default=0.0, ge=0)
     currency: str = Field(default="USD", max_length=10, description="Moneda base BaaS del nodo.")
-    payment_token: str
     nivel: int = Field(default=1, ge=1, description="Profundidad en el árbol BaaS (raíz = 1).")
     children: list["DistributorTreeNode"] = Field(default_factory=list)
 
@@ -423,11 +421,6 @@ class WalletRechargeRequestAdminRow(BaseModel):
     allowed_deposit_account_ids: Optional[list[int]] = None
     link_hash: Optional[str] = None
     admin_precheck_receipt_url: Optional[str] = None
-    #: Token permanente del portal del cliente (``/portal/{uuid}``).
-    client_payment_token: Optional[str] = Field(
-        default=None,
-        description="UUID del cliente para armar el enlace permanente del portal.",
-    )
     #: Texto editable por admin; tiene prioridad en ``notes_preview`` sobre sugerencias automáticas.
     admin_note: Optional[str] = Field(
         default=None,
@@ -972,6 +965,13 @@ class GenerateRechargeLinkPayload(BaseModel):
         if v is None or v == "":
             return normalize_currency_code("USD", "USD")
         return normalize_currency_code(v, "USD")
+
+
+class ClientPortalLinkResponse(BaseModel):
+    """Enlace permanente del portal del cliente (solo bajo demanda, con ownership)."""
+
+    client_id: int = Field(..., ge=1)
+    portal_path: str = Field(..., description="Ruta SPA relativa, p. ej. ``/portal/{uuid}``.")
 
 
 class GenerateRechargeLinkResponse(BaseModel):

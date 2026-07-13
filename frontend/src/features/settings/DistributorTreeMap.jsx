@@ -8,7 +8,6 @@ import usePermissions from '../../hooks/usePermissions'
 import { PERMS } from '../../lib/permissions'
 
 const TREE_LINK_CLASS = 'baas-tree-link'
-const MASTER_PIN = '301985'
 
 function formatBaasMoney(amount, currency = 'USD') {
   const n = Number(amount)
@@ -55,7 +54,6 @@ function apiNodeToRd3(node, fallbackNivel = 1) {
       walletBalance: Number(node.wallet_balance ?? 0),
       currency: String(node.currency || 'USD').trim().toUpperCase().slice(0, 10) || 'USD',
       clientId: String(node.id ?? ''),
-      paymentToken: String(node.payment_token ?? ''),
       status: node.status || 'Activo',
       nivel: Number.isFinite(nivel) && nivel >= 1 ? nivel : fallbackNivel,
     },
@@ -73,7 +71,7 @@ function nodeFromDatum(nodeDatum) {
     name: nodeDatum?.name || attrs.username || 'Cliente',
     username: attrs.username || '—',
     email: attrs.email || '—',
-    paymentToken: attrs.paymentToken || '',
+    clientId: attrs.clientId || '',
     status: attrs.status || 'Activo',
     walletBalance: Number(attrs.walletBalance ?? 0),
     currency: String(attrs.currency || 'USD').trim().toUpperCase().slice(0, 10) || 'USD',
@@ -179,10 +177,10 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
   const isBlock = modal?.action === 'block'
   const node = modal?.node
   const blocked = isBlockedStatus(node?.status)
-  const pinOk = pin === MASTER_PIN
+  const pinOk = pin.trim().length >= 4
   const amountNum = Number(amount)
   const amountOk = isBlock || (Number.isFinite(amountNum) && amountNum > 0)
-  const canSubmit = pinOk && amountOk && !submitting && node?.paymentToken
+  const canSubmit = pinOk && amountOk && !submitting && node?.clientId
 
   useEffect(() => {
     setPin('')
@@ -190,7 +188,7 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
     setAmount('')
     setError('')
     setSubmitting(false)
-  }, [modal?.action, modal?.node?.paymentToken])
+  }, [modal?.action, modal?.node?.clientId])
 
   if (!modal || !node) return null
 
@@ -202,13 +200,13 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
     try {
       if (isBlock) {
         const { data } = await api.post(
-          `/api/v1/admin/clients/${node.paymentToken}/toggle-status`,
+          `/api/v1/admin/clients/${node.clientId}/toggle-status`,
           { pin },
         )
         onSuccess(data?.message || `Estado actualizado: ${data?.status || ''}`)
       } else {
         const { data } = await api.post(
-          `/api/v1/admin/clients/${node.paymentToken}/adjust-balance`,
+          `/api/v1/admin/clients/${node.clientId}/adjust-balance`,
           { pin, operation, amount: amountNum },
         )
         onSuccess(data?.message || 'Saldo ajustado correctamente.')
@@ -319,7 +317,7 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
               placeholder="••••••"
             />
             {pin.length > 0 && !pinOk && (
-              <p className="mt-1.5 text-xs text-red-600 font-medium">PIN maestro incorrecto.</p>
+              <p className="mt-1.5 text-xs text-red-600 font-medium">Ingresa un PIN válido (mín. 4 caracteres).</p>
             )}
           </div>
 
@@ -350,7 +348,7 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
 }
 
 export default function DistributorTreeMap() {
-  const { uuid } = useParams()
+  const { clientId } = useParams()
   const { hasPermission } = usePermissions()
   const canEditTree = hasPermission(PERMS.BAAS_TREE_EDIT)
   const containerRef = useRef(null)
@@ -368,15 +366,15 @@ export default function DistributorTreeMap() {
   }, [])
 
   const loadTree = useCallback(async () => {
-    if (!uuid) {
-      setError('UUID de cliente no válido.')
+    if (!clientId || !/^\d+$/.test(String(clientId))) {
+      setError('ID de cliente no válido.')
       setTreeApi(null)
       return false
     }
     setLoading(true)
     setError('')
     try {
-      const { data } = await api.get(`/api/v1/distributors/${uuid}/tree-data`)
+      const { data } = await api.get(`/api/v1/distributors/clients/${clientId}/tree-data`)
       setTreeApi(data)
       setTreeKey((k) => k + 1)
       return true
@@ -387,7 +385,7 @@ export default function DistributorTreeMap() {
     } finally {
       setLoading(false)
     }
-  }, [uuid])
+  }, [clientId])
 
   useEffect(() => {
     function measure() {

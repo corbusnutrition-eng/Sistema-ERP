@@ -928,7 +928,6 @@ def build_distributor_tree_node(db: Session, root: Client) -> dict[str, object]:
             "status": normalized_status,
             "wallet_balance": round(bal, 2),
             "currency": cur,
-            "payment_token": str(client.payment_token),
             "nivel": int(nivel),
             "children": [_node(child, nivel=nivel + 1) for child in by_parent.get(cid, [])],
         }

@@ -875,12 +875,19 @@ export default function DistributorsBaaSPage() {
   }
 
   async function handleCopyRechargePortalLink(row) {
-    const token = String(row?.client_payment_token ?? '').trim()
-    if (!token) {
+    const cid = Number(row?.client_id)
+    if (!Number.isFinite(cid) || cid < 1) {
       showToast('Este cliente no tiene enlace de portal disponible.')
       return
     }
     try {
+      const { data } = await api.get(`/api/v1/distributors/clients/${cid}/portal-link`)
+      const path = String(data?.portal_path ?? '').trim()
+      if (!path) {
+        showToast('Este cliente no tiene enlace de portal disponible.')
+        return
+      }
+      const token = path.replace(/^\/portal\//, '')
       await copyClientPortalLink(token)
       showToast('Enlace del portal del cliente copiado')
     } catch {
@@ -1606,10 +1613,9 @@ export default function DistributorsBaaSPage() {
                 <tbody className="divide-y divide-gray-100">
                   {filteredUsers.map((u) => {
                     const displayName = u.name?.trim?.() ? u.name.trim() : u.email
-                    const treeUuid = u.payment_token ?? u.portal_token
                     const treeHref =
-                      canViewTree && treeUuid
-                        ? `/equipo/distribuidores/${treeUuid}/arbol`
+                      canViewTree && u.id
+                        ? `/equipo/distribuidores/${u.id}/arbol`
                         : null
                     return (
                     <tr key={u.id} className="hover:bg-gray-50/80">
@@ -1903,7 +1909,7 @@ export default function DistributorsBaaSPage() {
                         <div className="flex flex-wrap items-center justify-end gap-3">
                           {r.status === 'pending' ? (
                             <>
-                              {r.client_payment_token ?
+                              {r.client_id ?
                                 <CopyPaymentLinkButton
                                   onClick={() => handleCopyRechargePortalLink(r)}
                                   disabled={Boolean(processingReqId) || generatingLink}
