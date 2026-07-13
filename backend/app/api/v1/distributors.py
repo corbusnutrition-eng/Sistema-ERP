@@ -97,6 +97,7 @@ from app.services.client_product_price_service import (
     list_screen_catalog_products_for_pricing,
     upsert_client_product_prices,
 )
+from app.security.ownership import assert_client_in_caller_scope
 
 router = APIRouter(prefix="/distributors", tags=["distributors"])
 
@@ -115,6 +116,14 @@ BaasRechargeApproveDep = Annotated[dict, Depends(require_permission(BAAS_RECHARG
 BaasTreeViewDep = Annotated[dict, Depends(require_permission(BAAS_TREE_VIEW))]
 
 logger = logging.getLogger(__name__)
+
+
+def _assert_recharge_request_in_caller_scope(
+    db: Session,
+    current_user: dict,
+    req: WalletRechargeRequest,
+) -> None:
+    assert_client_in_caller_scope(db, current_user, int(req.client_id))
 
 
 def _trim_wallet_creation_note(note: Optional[str]) -> Optional[str]:
@@ -1022,7 +1031,7 @@ def wallet_recharge_request_metrics(db: DbDep, _: BaasRechargeViewDep) -> Wallet
 def get_wallet_recharge_request_detail(
     request_id: int,
     db: DbDep,
-    _: BaasRechargeViewDep,
+    current_user: BaasRechargeViewDep,
 ) -> WalletRechargeRequestAdminRow:
     """Detalle de una solicitud BaaS (panel admin), p. ej. modal de consulta desde ficha cliente."""
     req = (
@@ -1033,6 +1042,7 @@ def get_wallet_recharge_request_detail(
     )
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud de recarga no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
     return _row_wallet_recharge_admin(db, req)
 
 
@@ -1041,7 +1051,7 @@ def patch_wallet_recharge_request_fields(
     request_id: int,
     payload: WalletRechargeRequestPendingUpdate,
     db: DbDep,
-    _: BaasRechargeEditDep,
+    current_user: BaasRechargeEditDep,
 ) -> WalletRechargeRequestAdminRow:
     """Actualiza importe/métodos/moneda/etc. en ``pending``, ``partially_paid`` o ``in_review``."""
     req = (
@@ -1052,6 +1062,7 @@ def patch_wallet_recharge_request_fields(
     )
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
     from app.wallet_recharge_helpers import wallet_recharge_editable_by_admin
 
     if not wallet_recharge_editable_by_admin(req):
@@ -1213,7 +1224,7 @@ def patch_wallet_recharge_request_note(
     request_id: int,
     payload: WalletRechargeRequestAdminNoteUpdate,
     db: DbDep,
-    _: BaasRechargeEditDep,
+    current_user: BaasRechargeEditDep,
 ) -> WalletRechargeRequestAdminRow:
     """Nota administrativa (columna NOTA). Vacío borra y vuelven las sugerencias automáticas."""
     req = (
@@ -1224,6 +1235,7 @@ def patch_wallet_recharge_request_note(
     )
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
     from app.wallet_recharge_helpers import REQ_STATUS_IN_REVIEW as _WR_IN_REVIEW, wallet_recharge_editable_by_admin
 
     if req.status != _WR_IN_REVIEW and not wallet_recharge_editable_by_admin(req):
@@ -1361,7 +1373,7 @@ def sync_wallet_recharges_from_vip_catalog(db: DbDep, _: BaasRechargeEditDep) ->
 def approve_wallet_recharge(
     request_id: int,
     db: DbDep,
-    _: BaasRechargeApproveDep,
+    current_user: BaasRechargeApproveDep,
     background_tasks: BackgroundTasks,
     body: Annotated[Optional[ApproveWalletRechargePayload], Body()] = None,
 ) -> ApproveWalletRechargeResponse:
@@ -1370,6 +1382,7 @@ def approve_wallet_recharge(
     req = db.get(WalletRechargeRequest, request_id)
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
     if req.status != REQ_STATUS_IN_REVIEW:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1451,11 +1464,16 @@ def approve_wallet_recharge(
 
 
 @router.post("/reject-recharge/{request_id}", response_model=WalletRechargeRequestRead)
-def reject_wallet_recharge(request_id: int, db: DbDep, _: BaasRechargeEditDep) -> WalletRechargeRequest:
+def reject_wallet_recharge(
+    request_id: int,
+    db: DbDep,
+    current_user: BaasRechargeEditDep,
+) -> WalletRechargeRequest:
     """Rechaza una solicitud en revisión; devuelve saldo a favor reservado si aplica."""
     req = db.get(WalletRechargeRequest, request_id)
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
     if req.status != REQ_STATUS_IN_REVIEW:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1480,11 +1498,16 @@ def reject_wallet_recharge(request_id: int, db: DbDep, _: BaasRechargeEditDep) -
 
 
 @router.post("/cancel-recharge/{request_id}", response_model=WalletRechargeRequestRead)
-def cancel_wallet_recharge_request(request_id: int, db: DbDep, _: BaasRechargeEditDep) -> WalletRechargeRequest:
+def cancel_wallet_recharge_request(
+    request_id: int,
+    db: DbDep,
+    current_user: BaasRechargeEditDep,
+) -> WalletRechargeRequest:
     """Cancela una solicitud en estado pendiente (sin comprobante todavía)."""
     req = db.get(WalletRechargeRequest, request_id)
     if req is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
     if req.status != REQ_STATUS_PENDING:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

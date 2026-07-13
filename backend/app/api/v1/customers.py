@@ -9,9 +9,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.v1.dependencies import require_permission
 from app.database import get_db
 from app.models.client import Client
-from app.schemas.client import ClientCreate, ClientResponse
+from app.permissions import CLIENTS_CREATE
+from app.schemas.client import ClientCreate, CustomerCreatedOut
 from app.schemas.customers_webhook import WebCustomerRegisterWebhookIn, WebCustomerRegisterWebhookOut
 from app.services.catalog_vip_sync import (
     notify_catalog_vip_new_manual_customer,
@@ -21,6 +23,7 @@ from app.services.catalog_vip_sync import (
 router = APIRouter(prefix="/customers", tags=["customers"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+ClientsCreateDep = Annotated[dict, Depends(require_permission(CLIENTS_CREATE))]
 
 _EMAIL_LOCAL_SAFE = re.compile(r"[^a-zA-Z0-9_.-]")
 
@@ -88,8 +91,12 @@ def webhook_register_web(
     return WebCustomerRegisterWebhookOut(id=client.id, email=client.email)  # type: ignore[arg-type]
 
 
-@router.post("/", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
-def create_customer(payload: ClientCreate, db: DbDep) -> Client:
+@router.post("/", response_model=CustomerCreatedOut, status_code=status.HTTP_201_CREATED)
+def create_customer(
+    payload: ClientCreate,
+    db: DbDep,
+    _: ClientsCreateDep,
+) -> CustomerCreatedOut:
     """
     Crea un cliente en el ERP (igual que ``POST /clients``) y notifica la web (cuenta VIP remota).
 
@@ -118,4 +125,10 @@ def create_customer(payload: ClientCreate, db: DbDep) -> Client:
         ) from None
     db.refresh(client)
     notify_catalog_vip_new_manual_customer(client.email)
-    return client
+    return CustomerCreatedOut(
+        id=int(client.id),
+        email=client.email,
+        username=str(client.username),
+        name=client.name,
+        status=str(client.status or "Activo"),
+    )

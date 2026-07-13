@@ -7,15 +7,18 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
+from app.api.v1.dependencies import require_permission
 from app.database import get_db
 from app.models.client import Client
 from app.models.iptv_screen import IPTVScreen
 from app.models.sale import Sale
+from app.permissions import SALES_SUBSCRIPTIONS_VIEW
 from app.timezone_utils import ensure_aware, now_ecuador
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+SubscriptionsViewDep = Annotated[dict, Depends(require_permission(SALES_SUBSCRIPTIONS_VIEW))]
 
 SUBSCRIPTION_DAYS = 30
 
@@ -35,7 +38,7 @@ class SubscriptionStatus(BaseModel):
 
 
 @router.get("/status/", response_model=list[SubscriptionStatus])
-def get_subscriptions_status(db: DbDep) -> list[SubscriptionStatus]:
+def get_subscriptions_status(db: DbDep, _: SubscriptionsViewDep) -> list[SubscriptionStatus]:
     """
     Devuelve el estado de suscripción de todos los clientes con al menos una venta.
     Calcula la fecha de vencimiento sumando 30 días a la última venta aprobada.

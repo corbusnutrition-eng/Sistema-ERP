@@ -48,6 +48,7 @@ from app.services.client_payment_service import (
     sale_ref_number,
     void_client_payment,
 )
+from app.security.money_validation import validate_form_money
 from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
 from app.services.currency_consolidation import get_last_exchange_rate, normalize_exchange_rate
 from app.timezone_utils import now_ecuador
@@ -158,8 +159,7 @@ async def portal_abono(
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portal no encontrado.")
 
-    if float(paid_amount) <= 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El monto debe ser mayor a 0.")
+    paid_dec = validate_form_money(paid_amount, field_name="paid_amount")
 
     pm = db.get(PaymentMethod, int(payment_method_id))
     if pm is None or not bool(pm.is_active):
@@ -177,7 +177,7 @@ async def portal_abono(
     payment = ClientPayment(
         payment_number=next_payment_number(db),
         client_id=client.id,
-        amount=Decimal(str(paid_amount)),
+        amount=paid_dec,
         currency=cur,
         exchange_rate=xr_dec,
         status=ClientPaymentStatus.pending_review,

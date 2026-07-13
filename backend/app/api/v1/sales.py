@@ -17,7 +17,12 @@ from sqlalchemy.orm import Session, joinedload
 from starlette.datastructures import UploadFile
 
 from app.api.v1.dependencies import require_permission
-from app.permissions import SALES_INVOICES_EDIT, SALES_INVOICES_VIEW
+from app.permissions import (
+    SALES_INVOICES_CREATE,
+    SALES_INVOICES_DELETE,
+    SALES_INVOICES_EDIT,
+    SALES_INVOICES_VIEW,
+)
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.models.account import Account
@@ -130,7 +135,9 @@ logger = logging.getLogger(__name__)
 
 DbDep = Annotated[Session, Depends(get_db)]
 SalesInvoicesViewDep = Annotated[dict, Depends(require_permission(SALES_INVOICES_VIEW))]
+SalesInvoicesCreateDep = Annotated[dict, Depends(require_permission(SALES_INVOICES_CREATE))]
 SalesInvoicesEditDep = Annotated[dict, Depends(require_permission(SALES_INVOICES_EDIT))]
+SalesInvoicesDeleteDep = Annotated[dict, Depends(require_permission(SALES_INVOICES_DELETE))]
 
 
 class LastExchangeRateResponse(BaseModel):
@@ -3149,7 +3156,11 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
 
 
 @router.post("/", response_model=SaleResponse, status_code=status.HTTP_201_CREATED)
-async def create_sale(request: Request, db: DbDep) -> SaleResponse:
+async def create_sale(
+    request: Request,
+    db: DbDep,
+    _: SalesInvoicesCreateDep,
+) -> SaleResponse:
     """
     Venta desde el panel: siempre queda en ``pending`` hasta **Activar**.
 
@@ -3216,6 +3227,7 @@ def sync_sales_web_credits_from_catalog(db: DbDep, _: SalesInvoicesEditDep) -> S
 @router.get("/", response_model=list[SaleResponse])
 def list_sales(
     db: DbDep,
+    _: SalesInvoicesViewDep,
     status_filter: Optional[str] = Query(default=None, alias="status"),
     client_id: Optional[int] = Query(default=None, ge=1),
 ) -> list[SaleResponse]:
@@ -3269,7 +3281,7 @@ router.add_api_route(
 
 
 @router.get("/{sale_id}", response_model=SaleResponse)
-def get_sale(sale_id: int, db: DbDep) -> SaleResponse:
+def get_sale(sale_id: int, db: DbDep, _: SalesInvoicesViewDep) -> SaleResponse:
     """Detalle de una venta/factura, incluyendo pagos CxC aplicados."""
     expire_pending_sales_if_needed(db)
     sale = (
@@ -3302,7 +3314,11 @@ def get_sale(sale_id: int, db: DbDep) -> SaleResponse:
     response_model=SaleResponse,
     summary="Reactivar venta caducada (re-reserva inventario + nuevo TTL)",
 )
-def reactivate_expired_sale(sale_id: int, db: DbDep) -> SaleResponse:
+def reactivate_expired_sale(
+    sale_id: int,
+    db: DbDep,
+    _: SalesInvoicesEditDep,
+) -> SaleResponse:
     expire_pending_sales_if_needed(db)
     sale = (
         db.query(Sale)
@@ -3543,7 +3559,7 @@ def patch_sale_instant_activation_by_ref(
     response_model=SaleResponse,
     summary="Activar venta o aprobar cobro CxC (según inventario ya entregado)",
 )
-def patch_activate_sale(sale_id: int, db: DbDep) -> SaleResponse:
+def patch_activate_sale(sale_id: int, db: DbDep, _: SalesInvoicesEditDep) -> SaleResponse:
     return _activate_sale_record(db, sale_id)
 
 
@@ -3552,7 +3568,7 @@ def patch_activate_sale(sale_id: int, db: DbDep) -> SaleResponse:
     response_model=SaleResponse,
     summary="Alias de activación (compatibilidad)",
 )
-def approve_sale(sale_id: int, db: DbDep) -> SaleResponse:
+def approve_sale(sale_id: int, db: DbDep, _: SalesInvoicesEditDep) -> SaleResponse:
     return _activate_sale_record(db, sale_id)
 
 
@@ -3564,6 +3580,7 @@ def approve_sale(sale_id: int, db: DbDep) -> SaleResponse:
 def void_sale(
     sale_id: int,
     db: DbDep,
+    _: SalesInvoicesEditDep,
     body: Optional[VoidTransactionBody] = None,
 ) -> SaleResponse:
     reason = (body.reason if body else None) or ""
@@ -3575,7 +3592,12 @@ def void_sale(
     response_model=SaleResponse,
     summary="Activar, rechazar (JSON o multipart con foto) o anular venta activada",
 )
-async def put_sale_status(request: Request, sale_id: int, db: DbDep) -> SaleResponse:
+async def put_sale_status(
+    request: Request,
+    sale_id: int,
+    db: DbDep,
+    _: SalesInvoicesEditDep,
+) -> SaleResponse:
     ct = (request.headers.get("content-type") or "").lower()
 
     if "multipart/form-data" in ct:
@@ -3623,7 +3645,12 @@ async def put_sale_status(request: Request, sale_id: int, db: DbDep) -> SaleResp
 
 
 @router.patch("/{sale_id}", response_model=SaleResponse)
-async def patch_pending_sale(request: Request, sale_id: int, db: DbDep) -> SaleResponse:
+async def patch_pending_sale(
+    request: Request,
+    sale_id: int,
+    db: DbDep,
+    _: SalesInvoicesEditDep,
+) -> SaleResponse:
     """Actualiza venta pendiente. JSON o multipart con campo ``payload`` (JSON) y archivo opcional ``receipt``."""
     try:
         return await _patch_pending_sale_handler(request, sale_id, db)
@@ -4146,7 +4173,7 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
 
 
 @router.delete("/{sale_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_pending_sale(sale_id: int, db: DbDep) -> None:
+def delete_pending_sale(sale_id: int, db: DbDep, _: SalesInvoicesDeleteDep) -> None:
     """Elimina una venta pendiente y libera pantallas ``reserved`` ligadas a la venta."""
     expire_pending_sales_if_needed(db)
     sale = db.get(Sale, sale_id)
@@ -5050,7 +5077,11 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
     tags=["public"],
     summary="Webhook simulado: procesa un pago automático por link único del cliente",
 )
-def webhook_simulate(payload: WebhookSimulatePayload, db: DbDep) -> WebhookSimulateResponse:
+def webhook_simulate(
+    payload: WebhookSimulatePayload,
+    db: DbDep,
+    _: SalesInvoicesCreateDep,
+) -> WebhookSimulateResponse:
     """
     Endpoint público (sin token JWT).  Simula la notificación de un gateway de pago:
     busca al cliente por su payment_token, asigna la primera pantalla disponible
@@ -5124,6 +5155,7 @@ def public_report_payment(
     payment_link_id: str,
     payload: PublicSaleReport,
     db: DbDep,
+    _: SalesInvoicesCreateDep,
 ) -> SaleResponse:
     """
     Endpoint público.  El cliente reporta un pago manual adjuntando la URL del

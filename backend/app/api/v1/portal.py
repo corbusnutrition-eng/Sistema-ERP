@@ -43,8 +43,11 @@ from app.services.sale_accounting_sync import (
     sync_sale_accounting_ledgers,
 )
 from app.currency_utils import normalize_currency_code
+from app.api.v1.dependencies import require_permission
 from app.database import get_db
+from app.permissions import ACCOUNTING_RECEIVABLES_EDIT, ACCOUNTING_RECEIVABLES_VIEW
 from app.rate_limit import PORTAL_FINANCIAL_LIMIT, PORTAL_GET_LIMIT, limiter
+from app.security.money_validation import validate_form_money
 from app.models.account import Account
 from app.models.client import Client
 from app.models.client_debt_payment import ClientDebtPayment, DebtPaymentStatus
@@ -231,6 +234,8 @@ async def _analyze_receipt_with_openai(image_bytes: bytes, media_type: str) -> d
 
 
 DbDep = Annotated[Session, Depends(get_db)]
+ReceivablesViewDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECEIVABLES_VIEW))]
+ReceivablesEditDep = Annotated[dict, Depends(require_permission(ACCOUNTING_RECEIVABLES_EDIT))]
 
 _FP_EPS = Decimal("0.00005")
 
@@ -2016,26 +2021,12 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Indica el importe que pagaste según tu comprobante.",
             )
-        try:
-            amount = float(paid_raw)
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El importe declarado no es válido.",
-            ) from None
-        if amount < 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El importe declarado no es válido.",
-            )
-        if not (amount > 0):
-            if allow_zero and amount == 0:
-                return 0.0
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El importe declarado debe ser mayor a cero.",
-            )
-        return amount
+        dec = validate_form_money(
+            paid_raw,
+            field_name="paid_amount",
+            allow_zero=allow_zero,
+        )
+        return float(dec)
 
     is_retiro_pm = is_codigos_retiro_payment_method_id(db, pm_id)
 
@@ -2999,7 +2990,12 @@ async def _portal_create_abono_payment(
 ) -> ClientPayment:
     """Crea ClientPayment (abono CxC). El endpoint puede luego vincular allocation a una factura."""
     allow_zero = _portal_allows_zero_declared_amount(ai_confidence_score)
-    if float(paid_amount) <= 0 and not allow_zero:
+    paid_dec = validate_form_money(
+        paid_amount,
+        field_name="paid_amount",
+        allow_zero=allow_zero,
+    )
+    if paid_dec <= 0 and not allow_zero:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El monto del abono debe ser mayor a 0.",
@@ -3051,7 +3047,7 @@ async def _portal_create_abono_payment(
     payment = ClientPayment(
         payment_number=next_payment_number(db),
         client_id=client.id,
-        amount=Decimal(str(paid_amount)),
+        amount=paid_dec,
         currency=cur_norm,
         receipt_file_url=(receipt_url or "").strip() or None,
         payment_method_id=int(pm.id),
@@ -3230,13 +3226,13 @@ async def portal_submit_payment(
             currency=abono_cur,
             payment_method_id=pm_id_ab,
         )
-        amt = float(paid_amount or 0)
         allow_zero_abono = _portal_allows_zero_declared_amount(ai_confidence)
-        if amt <= 0 and not allow_zero_abono:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El monto del abono debe ser mayor a 0.",
-            )
+        amt_dec = validate_form_money(
+            paid_amount or 0,
+            field_name="paid_amount",
+            allow_zero=allow_zero_abono,
+        )
+        amt = float(amt_dec)
 
         if kind_ab == "wallet_recharge":
             if tgt_wr_ab is None:
@@ -3734,8 +3730,7 @@ async def portal_submit_debt_payment(
     """
     client = _portal_client_from_token(db, portal_token)
 
-    if float(paid_amount) <= 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El monto del abono debe ser mayor a 0.")
+    paid_dec = validate_form_money(paid_amount, field_name="paid_amount")
 
     pm = db.get(PaymentMethod, int(payment_method_id))
     if pm is None or not bool(pm.is_active):
@@ -3752,7 +3747,7 @@ async def portal_submit_debt_payment(
         payment_method_id=int(payment_method_id),
         deposit_account_id=int(dep_acc_id),
         receipt_file=receipt_file,
-        paid_amount=float(paid_amount),
+        paid_amount=float(paid_dec),
         currency=currency.strip() if currency else "USD",
         notes=notes,
     )
@@ -3770,7 +3765,7 @@ async def portal_submit_debt_payment(
 # ── Admin: list pending debt payments ────────────────────────────────────────
 
 @router.get("/admin/debt-payments", response_model=list[DebtPaymentItem])
-def admin_list_debt_payments(db: DbDep) -> list[DebtPaymentItem]:
+def admin_list_debt_payments(db: DbDep, _: ReceivablesViewDep) -> list[DebtPaymentItem]:
     """Lista todos los abonos de deuda genérica pendientes de revisión."""
     rows = (
         db.query(ClientDebtPayment)
@@ -3801,7 +3796,11 @@ def admin_list_debt_payments(db: DbDep) -> list[DebtPaymentItem]:
 # ── Admin: approve debt payment ───────────────────────────────────────────────
 
 @router.post("/admin/debt-payments/{payment_id}/approve")
-def admin_approve_debt_payment(payment_id: int, db: DbDep) -> dict:
+def admin_approve_debt_payment(
+    payment_id: int,
+    db: DbDep,
+    _: ReceivablesEditDep,
+) -> dict:
     """
     Aprueba un abono de deuda.
     Aplica el monto al saldo de las facturas más antiguas del cliente (FIFO).
@@ -3889,7 +3888,11 @@ def admin_approve_debt_payment(payment_id: int, db: DbDep) -> dict:
 # ── Admin: reject debt payment ────────────────────────────────────────────────
 
 @router.post("/admin/debt-payments/{payment_id}/reject")
-def admin_reject_debt_payment(payment_id: int, db: DbDep) -> dict:
+def admin_reject_debt_payment(
+    payment_id: int,
+    db: DbDep,
+    _: ReceivablesEditDep,
+) -> dict:
     dp = db.get(ClientDebtPayment, payment_id)
     if dp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Abono no encontrado.")

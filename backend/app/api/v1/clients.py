@@ -47,6 +47,7 @@ from app.permissions import (
     CLIENTS_EDIT,
     CLIENTS_VIEW,
 )
+from app.security.ownership import assert_client_in_caller_scope
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -419,8 +420,9 @@ def create_client(payload: ClientCreate, db: DbDep, _: ClientsCreateDep) -> Clie
 
 
 @router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_client(client_id: int, db: DbDep, _: ClientsDeleteDep) -> None:
+def delete_client(client_id: int, db: DbDep, current_user: ClientsDeleteDep) -> None:
     """Elimina un cliente y sus datos asociados de forma permanente."""
+    assert_client_in_caller_scope(db, current_user, client_id)
     client: Optional[Client] = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
@@ -429,8 +431,14 @@ def delete_client(client_id: int, db: DbDep, _: ClientsDeleteDep) -> None:
 
 
 @router.patch("/{client_id}", response_model=ClientResponse)
-def update_client(client_id: int, payload: ClientUpdate, db: DbDep, _: ClientsEditDep) -> Client:
+def update_client(
+    client_id: int,
+    payload: ClientUpdate,
+    db: DbDep,
+    current_user: ClientsEditDep,
+) -> Client:
     """Actualiza parcialmente un cliente existente."""
+    assert_client_in_caller_scope(db, current_user, client_id)
     client: Optional[Client] = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
@@ -596,8 +604,13 @@ def import_clients_csv(
 
 
 @router.get("/{client_id}/unpaid-invoices", response_model=list[UnpaidInvoiceOut])
-def get_client_unpaid_invoices(client_id: int, db: DbDep, _: ClientsViewDep) -> list[UnpaidInvoiceOut]:
+def get_client_unpaid_invoices(
+    client_id: int,
+    db: DbDep,
+    current_user: ClientsViewDep,
+) -> list[UnpaidInvoiceOut]:
     """Facturas con saldo pendiente (aprobada / parcial) para conciliación QB."""
+    assert_client_in_caller_scope(db, current_user, client_id)
     client = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
@@ -606,8 +619,13 @@ def get_client_unpaid_invoices(client_id: int, db: DbDep, _: ClientsViewDep) -> 
 
 
 @router.get("/{client_id}/ledger", response_model=ClientLedgerResponse)
-def get_client_ledger(client_id: int, db: DbDep, _: ClientsViewDep) -> ClientLedgerResponse:
+def get_client_ledger(
+    client_id: int,
+    db: DbDep,
+    current_user: ClientsViewDep,
+) -> ClientLedgerResponse:
     """Historial financiero unificado: facturas (Factura), cobros (Pago) y recargas BaaS (RECARGA)."""
+    assert_client_in_caller_scope(db, current_user, client_id)
     client = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
@@ -663,21 +681,21 @@ def get_client_ledger(client_id: int, db: DbDep, _: ClientsViewDep) -> ClientLed
 
 
 @router.get("/{client_id}", response_model=ClientResponse)
-def get_client(client_id: int, db: DbDep, _: ClientsViewDep) -> ClientResponse:
+def get_client(client_id: int, db: DbDep, current_user: ClientsViewDep) -> ClientResponse:
     """Detalle de un cliente por id (incluye saldo CxC pendiente calculado)."""
-    client: Optional[Client] = db.query(Client).filter(Client.id == client_id).first()
-    if client is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
+    client = assert_client_in_caller_scope(db, current_user, client_id)
     payload = _client_response_dict(db, client, credit_sync=True)
     db.commit()
     return ClientResponse(**payload)
 
 
 @router.get("/{client_id}/sub-clients", response_model=list[ClientSubClientBrief])
-def list_client_subclients(client_id: int, db: DbDep, _: ClientsViewDep) -> list[ClientSubClientBrief]:
+def list_client_subclients(
+    client_id: int,
+    db: DbDep,
+    current_user: ClientsViewDep,
+) -> list[ClientSubClientBrief]:
     """Sub-clientes directos cuyo ``parent_id`` es el cliente indicado."""
-    parent: Optional[Client] = db.query(Client).filter(Client.id == client_id).first()
-    if parent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
+    assert_client_in_caller_scope(db, current_user, client_id)
     rows = list_subclients_for_parent(db, int(client_id))
     return [ClientSubClientBrief.model_validate(r) for r in rows]

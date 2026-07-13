@@ -194,6 +194,18 @@ class ClientResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CustomerCreatedOut(BaseModel):
+    """Respuesta mínima al crear cliente (sin tokens ni credenciales IPTV)."""
+
+    id: int
+    email: EmailStr
+    username: str
+    name: Optional[str] = None
+    status: str = "Activo"
+
+    model_config = {"from_attributes": True}
+
+
 class ClientPublicResponse(BaseModel):
     """Datos seguros que se exponen en el portal público de pago (sin datos sensibles)."""
 
