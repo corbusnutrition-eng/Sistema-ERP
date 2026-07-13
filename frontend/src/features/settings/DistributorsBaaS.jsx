@@ -1317,6 +1317,12 @@ export default function DistributorsBaaSPage() {
       }
 
       const noteTrim = String(linkComment ?? '').trim()
+      const pendingOcr = pickPendingReviewLinkedPayment(editRechargeRow?.linked_payments)
+      const storedConfRaw =
+        pendingOcr?.ai_confidence_score ?? editRechargeRow?.ai_confidence_score ?? null
+      const wasOcrWithoutAmount = Number(storedConfRaw) === 0
+      const markOcrWithoutAmount = Boolean(extra?.ocrWithoutAmount)
+
       const body = {
         amount: subtotal,
         line_items: linePayload,
@@ -1332,6 +1338,11 @@ export default function DistributorsBaaSPage() {
           }
         : {}),
         ...(noteTrim.length ? { admin_note: noteTrim } : {}),
+        ...(markOcrWithoutAmount ?
+          { ai_confidence_score: 0 }
+        : wasOcrWithoutAmount ?
+          { ai_confidence_score: 100 }
+        : {}),
       }
       const { data } = await api.patch(`/api/v1/distributors/recharge-requests/${rid}`, body)
       closeLinkModal()

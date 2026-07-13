@@ -169,6 +169,8 @@ export default function NewRechargeModal({
   const [exchangeRates, setExchangeRates] = useState({})
   /** Tasa referencial de la moneda de facturación (Conceptos) */
   const [billingExchangeRateStr, setBillingExchangeRateStr] = useState('1')
+  /** Admin: comprobante ilegible / OCR sin monto (persiste ai_confidence_score=0 en servidor). */
+  const [ocrWithoutAmount, setOcrWithoutAmount] = useState(false)
 
   const apiOrigin = salesApiOrigin()
 
@@ -353,6 +355,16 @@ export default function NewRechargeModal({
       })
     return () => ac.abort()
   }, [open, editMode, editTargetRequestId])
+
+  useEffect(() => {
+    if (!open) {
+      setOcrWithoutAmount(false)
+      return
+    }
+    if (editMode) {
+      setOcrWithoutAmount(Number(ocrAiConfidenceScore) === 0)
+    }
+  }, [open, editMode, editTargetRequestId, ocrAiConfidenceScore])
 
   const clientOptions = useMemo(
     () => clienteOptionsParaRecarga(clientesDesdeRender, clientSearchMode),
@@ -558,6 +570,7 @@ export default function NewRechargeModal({
 
   const showIllegibleDepositAlert = useMemo(() => {
     if (!editMode) return false
+    if (ocrWithoutAmount) return true
     const rawDep = String(depositUsd ?? '').trim().replace(',', '.')
     const parsedDep = rawDep !== '' && Number.isFinite(Number(rawDep)) ? Number(rawDep) : null
     return isIllegibleDeclaredRecord(
@@ -575,6 +588,7 @@ export default function NewRechargeModal({
     ocrIsManuallyEdited,
     ocrAiConfidenceScore,
     ocrPortalDeclaredAmount,
+    ocrWithoutAmount,
   ])
 
   const showFinancialSummary = isReadOnly || editMode
@@ -738,6 +752,7 @@ export default function NewRechargeModal({
       creditAppliedAmount: creditAutoApplied,
       productPrices: productPricesPayload,
       rechargeExchangeRate: resolveBillingExchangeRate(),
+      ocrWithoutAmount: editMode ? ocrWithoutAmount : undefined,
     }
     if (editMode && typeof onSubmitUpdatePending === 'function') {
       onSubmitUpdatePending(e, extra)
@@ -1175,10 +1190,28 @@ export default function NewRechargeModal({
                             className="mt-2"
                             suppressIllegibleAlert
                             is_manually_edited={ocrIsManuallyEdited}
-                            ai_confidence_score={ocrAiConfidenceScore}
+                            ai_confidence_score={ocrWithoutAmount ? 0 : ocrAiConfidenceScore}
                             portal_declared_payment_amount={ocrPortalDeclaredAmount}
                             amount={ocrPortalDeclaredAmount}
                           />
+                        ) : null}
+                        {editMode ? (
+                          <label className="mt-3 flex items-start gap-2.5 rounded-xl border border-orange-200 bg-orange-50/80 px-3 py-2.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 rounded border-orange-300 text-orange-600 focus:ring-orange-500"
+                              checked={ocrWithoutAmount}
+                              onChange={(e) => setOcrWithoutAmount(e.target.checked)}
+                              disabled={generatingLink}
+                            />
+                            <span className="min-w-0 text-[11px] leading-snug text-orange-950">
+                              <span className="font-semibold">OCR sin monto</span>
+                              {' — '}
+                              Marca si la IA no pudo leer el importe del comprobante. Al guardar, el
+                              cliente podrá enviar el recibo con depósito en $0 mientras un operador
+                              revisa y corrige el monto aquí.
+                            </span>
+                          </label>
                         ) : null}
                       </div>
 
