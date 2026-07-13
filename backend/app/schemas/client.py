@@ -107,8 +107,42 @@ class ClientSubClientBrief(BaseModel):
     username: str
     email: EmailStr
     wallet_balance: float = Field(default=0.0, ge=0)
-    portal_token: uuid.UUID
     status: str
+
+    model_config = {"from_attributes": True}
+
+
+class ClientListItem(BaseModel):
+    """Listado CRM staff: sin tokens de portal ni credenciales IPTV."""
+
+    id: int
+    parent_id: Optional[int] = Field(default=None, description="ID del distribuidor padre BaaS (cliente).")
+    parent_distributor_id: Optional[int] = Field(
+        default=None,
+        description="ID del usuario ERP/administrador que gestiona este cliente.",
+    )
+    parent_username: Optional[str] = Field(default=None)
+    parent_name: Optional[str] = Field(default=None)
+    name: Optional[str]
+    email: EmailStr
+    phone: Optional[str]
+    username: str
+    country: Optional[str]
+    lead_source: Optional[str] = None
+    status: str
+    total_credits: float
+    credit_balance: float = Field(default=0.0, ge=0)
+    wallet_balance: float = Field(default=0.0, ge=0)
+    currency: str = Field(default="USD", max_length=10)
+    last_recharge: Optional[datetime] = None
+    note: Optional[str] = None
+    tags: Optional[List[str]] = None
+    total_pending_balance: float = Field(default=0.0, ge=0)
+    pending_balance_currency: str = Field(default="USD", max_length=10)
+    pending_balances_by_currency: list[dict[str, object]] = Field(default_factory=list)
+    credit_balance_currency: str = Field(default="USD", max_length=10)
+    credit_balances_by_currency: list[dict[str, object]] = Field(default_factory=list)
+    available_credit_by_currency: list[dict[str, object]] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

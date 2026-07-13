@@ -117,6 +117,17 @@ class SaleInvoiceLineItem(BaseModel):
             return s if s else None
         return v
 
+    @model_validator(mode="after")
+    def _reject_zero_billable_line(self) -> "SaleInvoiceLineItem":
+        qty = float(self.qty or 0)
+        amount = float(self.amount or 0)
+        rate = float(self.rate or 0)
+        if qty > 0 and amount == 0 and rate == 0:
+            raise ValueError("Cada línea con cantidad debe tener tarifa o importe mayor a 0.")
+        if amount < 0 or rate < 0 or qty < 0:
+            raise ValueError("Cantidad, tarifa e importe no pueden ser negativos.")
+        return self
+
 
 class SaleOperationLine(BaseModel):
     """Línea operativa enviada desde la UI (factura multilínea); define inventario + importe."""
@@ -543,6 +554,7 @@ class SaleUpdate(BaseModel):
     local_amount: Optional[Decimal] = Field(default=None, gt=0, decimal_places=4)
     amount_paid: Optional[Decimal] = Field(
         default=None,
+        gt=0,
         decimal_places=4,
         description="Importe cobrado en moneda de venta. Omitido en PATCH no altera el valor guardado.",
     )

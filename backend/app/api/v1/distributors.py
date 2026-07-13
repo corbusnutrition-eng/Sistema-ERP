@@ -44,6 +44,7 @@ from app.schemas.distributors import (
     ApproveWalletRechargePayload,
     ApproveWalletRechargeResponse,
     AssignParentRequest,
+    CatalogClientPickerRow,
     CatalogClientsPickerResponse,
     ClientPortalLinkResponse,
     ClientWalletBrief,
@@ -538,7 +539,16 @@ def list_catalog_clients_for_recharge_picker(db: DbDep, _: BaasDistributorsViewD
                 "No se pudo contactar el catálogo en la nube; se muestran clientes activos del ERP."
             )
 
-    return CatalogClientsPickerResponse(status="ok", clientes=rows_out, source=src, warning=warning)
+    clientes: list[CatalogClientPickerRow] = []
+    for row in rows_out:
+        if not isinstance(row, dict):
+            continue
+        try:
+            clientes.append(CatalogClientPickerRow.model_validate(row))
+        except Exception:
+            continue
+
+    return CatalogClientsPickerResponse(status="ok", clientes=clientes, source=src, warning=warning)
 
 
 @router.get("/users", response_model=list[DistributorWalletClientRead])
@@ -1173,6 +1183,9 @@ def patch_wallet_recharge_request_fields(
     if payload.admin_note is not None:
         nb = str(payload.admin_note).strip()
         req.admin_note = nb[:2048] if nb else None
+
+    if payload.ai_confidence_score is not None:
+        req.ai_confidence_score = int(payload.ai_confidence_score)
 
     declared_updated = False
     if payload.portal_declared_payment_amount is not None:

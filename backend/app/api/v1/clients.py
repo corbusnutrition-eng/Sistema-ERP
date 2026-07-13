@@ -25,6 +25,7 @@ from app.models.user import User
 from app.schemas.client import (
     ClientCreate,
     ClientPublicResponse,
+    ClientListItem,
     ClientResponse,
     ClientSubClientBrief,
     ClientUpdate,
@@ -74,7 +75,19 @@ _CSV_FIELD_MAP: dict[str, str] = {
     "status": "status",
 }
 
-_EXPORT_FIELDS = ["id", "name", "email", "phone", "username", "country", "status", "payment_token"]
+_EXPORT_FIELDS = ["id", "name", "email", "phone", "username", "country", "status"]
+
+_CLIENT_LIST_STRIP = frozenset(
+    {
+        "payment_token",
+        "portal_token",
+        "last_iptv_username",
+        "last_iptv_password",
+        "last_normal_credit_username",
+        "last_normal_credit_password",
+        "custom_fields",
+    }
+)
 
 
 def _normalize_import_status(raw: Optional[str]) -> str:
@@ -189,11 +202,21 @@ def _client_response_dict(
     return data
 
 
+def _client_list_item_dict(
+    db: Session,
+    client: Client,
+) -> dict[str, Any]:
+    data = _client_response_dict(db, client, credit_sync=False, lightweight=True)
+    for key in _CLIENT_LIST_STRIP:
+        data.pop(key, None)
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.get("/", response_model=list[ClientResponse])
+@router.get("/", response_model=list[ClientListItem])
 def list_clients(
     db: DbDep,
     _: ClientsViewDep,
@@ -203,7 +226,7 @@ def list_clients(
         default=None,
         description="Filtra por usuario, nombre o email (toda la red, incluidos sub-clientes).",
     ),
-) -> list[ClientResponse]:
+) -> list[ClientListItem]:
     """Devuelve la lista paginada de clientes registrados (toda la jerarquía B2B2B)."""
     try:
         q = db.query(Client)
@@ -217,9 +240,9 @@ def list_clients(
                 )
             )
         rows = q.order_by(Client.id.asc()).offset(skip).limit(limit).all()
-        out: list[ClientResponse] = []
+        out: list[ClientListItem] = []
         for client in rows:
-            out.append(ClientResponse(**_client_response_dict(db, client, credit_sync=False, lightweight=True)))
+            out.append(ClientListItem(**_client_list_item_dict(db, client)))
         return out
     except (OperationalError, ProgrammingError) as exc:
         logger.exception("GET /clients — error de base de datos al listar clientes")
@@ -237,7 +260,7 @@ router.add_api_route(
     "",
     list_clients,
     methods=["GET"],
-    response_model=list[ClientResponse],
+    response_model=list[ClientListItem],
     tags=["clients"],
     include_in_schema=False,
 )

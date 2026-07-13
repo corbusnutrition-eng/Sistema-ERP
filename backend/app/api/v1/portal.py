@@ -48,6 +48,10 @@ from app.database import get_db
 from app.permissions import ACCOUNTING_RECEIVABLES_EDIT, ACCOUNTING_RECEIVABLES_VIEW
 from app.rate_limit import PORTAL_FINANCIAL_LIMIT, PORTAL_GET_LIMIT, limiter
 from app.security.money_validation import validate_form_money
+from app.security.portal_confidence import (
+    portal_sanitize_client_confidence,
+    portal_stored_allows_zero_amount,
+)
 from app.models.account import Account
 from app.models.client import Client
 from app.models.client_debt_payment import ClientDebtPayment, DebtPaymentStatus
@@ -452,8 +456,9 @@ def _portal_form_bool(raw: Optional[object]) -> bool:
     return s in ("1", "true", "yes", "si", "sí", "on")
 
 
-def _portal_allows_zero_declared_amount(ai_confidence_score: Optional[int]) -> bool:
-    return ai_confidence_score is not None and int(ai_confidence_score) == 0
+def _portal_allows_zero_declared_amount(stored_score: Optional[int]) -> bool:
+    """Alias interno: solo scores persistidos en servidor habilitan monto cero."""
+    return portal_stored_allows_zero_amount(stored_score)
 
 
 def _portal_form_confidence_score(raw: Optional[object]) -> Optional[int]:
@@ -1905,7 +1910,10 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
     req.portal_declared_payment_amount = paid_f
     req.portal_submitted_deposit_account_id = int(deposit_account_id) if deposit_account_id is not None else None
     req.is_manually_edited = bool(is_manually_edited)
-    req.ai_confidence_score = ai_confidence_score
+    stored_confidence = getattr(req, "ai_confidence_score", None)
+    safe_confidence = portal_sanitize_client_confidence(stored_confidence, ai_confidence_score)
+    req.ai_confidence_score = safe_confidence
+    allow_zero = portal_stored_allows_zero_amount(stored_confidence)
 
     req.status = REQ_STATUS_IN_REVIEW
     mark_wallet_recharge_portal_receipt_submitted(req)
@@ -1922,10 +1930,8 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
         credit_amount=credit_amount,
         always_create_new=True,
         is_manually_edited=is_manually_edited,
-        ai_confidence_score=ai_confidence_score,
-        allow_zero_declared=bool(
-            paid_f <= 0 and ai_confidence_score is not None and int(ai_confidence_score) == 0
-        ),
+        ai_confidence_score=safe_confidence,
+        allow_zero_declared=bool(paid_f <= 0 and allow_zero),
     )
     commit_db_or_rollback(db)
     db.refresh(req)
@@ -2013,7 +2019,8 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
     paid_raw = ((declared_amount_alt or paid_amount_str) or "").strip().replace(",", ".")
 
     def _parse_paid_amount() -> float:
-        allow_zero = _portal_allows_zero_declared_amount(ai_confidence_score)
+        stored_confidence = getattr(req, "ai_confidence_score", None)
+        allow_zero = portal_stored_allows_zero_amount(stored_confidence)
         if not paid_raw:
             if allow_zero:
                 return 0.0
@@ -2033,6 +2040,8 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
     # Candado: producto ya entregado → solo revisión admin (sin billetera ni bridge pagar-recarga).
     if wallet_recharge_virtual_product_already_delivered(db, req):
         paid_f = _parse_paid_amount()
+        stored_confidence = getattr(req, "ai_confidence_score", None)
+        safe_confidence = portal_sanitize_client_confidence(stored_confidence, ai_confidence_score)
         return await _portal_wallet_recharge_submit_abono_manual_review(
             db,
             client,
@@ -2045,7 +2054,7 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
             credit_amount=credit_amount,
             pm_id=pm_id,
             is_manually_edited=is_manually_edited,
-            ai_confidence_score=ai_confidence_score,
+            ai_confidence_score=safe_confidence,
         )
 
     if is_retiro_pm and wallet_recharge_codigos_retiro_initial_portal_activation(req, db):
@@ -2101,6 +2110,8 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         return req
 
     paid_f = _parse_paid_amount()
+    stored_confidence = getattr(req, "ai_confidence_score", None)
+    safe_confidence = portal_sanitize_client_confidence(stored_confidence, ai_confidence_score)
     return await _portal_wallet_recharge_submit_abono_manual_review(
         db,
         client,
@@ -2113,7 +2124,7 @@ async def apply_portal_wallet_recharge_client_receipt_upload(
         credit_amount=credit_amount,
         pm_id=pm_id,
         is_manually_edited=is_manually_edited,
-        ai_confidence_score=ai_confidence_score,
+        ai_confidence_score=safe_confidence,
     )
 
 
@@ -2989,7 +3000,7 @@ async def _portal_create_abono_payment(
     ai_confidence_score: Optional[int] = None,
 ) -> ClientPayment:
     """Crea ClientPayment (abono CxC). El endpoint puede luego vincular allocation a una factura."""
-    allow_zero = _portal_allows_zero_declared_amount(ai_confidence_score)
+    allow_zero = False
     paid_dec = validate_form_money(
         paid_amount,
         field_name="paid_amount",
@@ -3056,7 +3067,7 @@ async def _portal_create_abono_payment(
         status=ClientPaymentStatus.pending_review,
         notes=notes_fixed,
         is_manually_edited=bool(is_manually_edited),
-        ai_confidence_score=ai_confidence_score,
+        ai_confidence_score=portal_sanitize_client_confidence(None, ai_confidence_score),
         created_at=now_ecuador(),
     )
     db.add(payment)
@@ -3226,7 +3237,13 @@ async def portal_submit_payment(
             currency=abono_cur,
             payment_method_id=pm_id_ab,
         )
-        allow_zero_abono = _portal_allows_zero_declared_amount(ai_confidence)
+        allow_zero_abono = False
+        if kind_ab == "wallet_recharge" and tgt_wr_ab is not None:
+            req_wr_preview = db.get(WalletRechargeRequest, int(tgt_wr_ab))
+            if req_wr_preview is not None and int(req_wr_preview.client_id) == int(client.id):
+                allow_zero_abono = portal_stored_allows_zero_amount(
+                    getattr(req_wr_preview, "ai_confidence_score", None)
+                )
         amt_dec = validate_form_money(
             paid_amount or 0,
             field_name="paid_amount",
@@ -3258,7 +3275,10 @@ async def portal_submit_payment(
                 url_request_id_for_id_erp=int(tgt_wr_ab),
                 id_erp_optional=id_erp,
                 is_manually_edited=manual_edit_flag,
-                ai_confidence_score=ai_confidence,
+                ai_confidence_score=portal_sanitize_client_confidence(
+                    getattr(req_wr, "ai_confidence_score", None),
+                    ai_confidence,
+                ),
             )
             req_done = _portal_commit_wallet_recharge_after_receipt(db, req_done)
             receipt_out = str(req_done.receipt_url or "").strip() or None
@@ -3281,7 +3301,7 @@ async def portal_submit_payment(
             currency=(currency or "USD").strip(),
             notes=notes,
             is_manually_edited=manual_edit_flag,
-            ai_confidence_score=ai_confidence,
+            ai_confidence_score=portal_sanitize_client_confidence(None, ai_confidence),
         )
         try:
             if tgt_sale_ab is not None:
@@ -3562,7 +3582,7 @@ async def portal_submit_payment(
 
     stored_receipt_url = await _resolve_portal_payment_receipt_url(receipt_file, receipt_url)
 
-    allow_zero_deposit = _portal_allows_zero_declared_amount(ai_confidence)
+    allow_zero_deposit = False
     if deposit_part <= Decimal("0"):
         if not (allow_zero_deposit and stored_receipt_url):
             raise HTTPException(
@@ -3617,7 +3637,7 @@ async def portal_submit_payment(
             status=ClientPaymentStatus.pending_review,
             notes=deposit_notes_final,
             is_manually_edited=manual_edit_flag,
-            ai_confidence_score=ai_confidence,
+            ai_confidence_score=portal_sanitize_client_confidence(None, ai_confidence),
             created_at=now_ts,
         )
         db.add(deposit_pay)

@@ -35,6 +35,21 @@ def _coerce_optional_id_list(v: object) -> Optional[list[int]]:
     return out or None
 
 
+class CatalogClientPickerRow(BaseModel):
+    """Fila del picker de clientes para recargas BaaS (Render o fallback ERP)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: int = Field(..., ge=1)
+    email: Optional[str] = Field(default=None, max_length=320)
+    correo: Optional[str] = Field(default=None, max_length=320)
+    nombre: Optional[str] = Field(default=None, max_length=200)
+    full_name: Optional[str] = Field(default=None, max_length=200)
+    name: Optional[str] = Field(default=None, max_length=200)
+    username: Optional[str] = Field(default=None, max_length=120)
+    iptv_username: Optional[str] = Field(default=None, max_length=120)
+
+
 class CatalogClientsPickerResponse(BaseModel):
     """
     Opciones de «distribuidor / cliente» para solicitud de recarga BaaS.
@@ -42,7 +57,7 @@ class CatalogClientsPickerResponse(BaseModel):
     """
 
     status: str = Field(default="ok")
-    clientes: List[Any] = Field(default_factory=list)
+    clientes: list[CatalogClientPickerRow] = Field(default_factory=list)
     source: str = Field(
         ...,
         description="render | local_fallback | local_only",
@@ -591,7 +606,7 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
     )
     portal_declared_payment_amount: Optional[float] = Field(
         default=None,
-        ge=0,
+        gt=0,
         validation_alias=AliasChoices(
             "portal_declared_payment_amount",
             "declared_amount",
@@ -605,6 +620,12 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
         max_length=2048,
         validation_alias=AliasChoices("admin_note", "creation_note", "note", "comentario"),
         description="Nota interna (columna NOTA).",
+    )
+    ai_confidence_score: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Solo admin: marcar 0 cuando el OCR no leyó monto (habilita depósito cero en portal).",
     )
 
     @field_validator("admin_note", mode="before")
@@ -691,6 +712,7 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
             and self.declared_deposit_usd is None
             and self.portal_declared_payment_amount is None
             and self.admin_note is None
+            and self.ai_confidence_score is None
         ):
             raise ValueError("Indica al menos un campo a actualizar.")
         return self
