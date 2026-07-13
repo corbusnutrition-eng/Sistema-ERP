@@ -6,7 +6,8 @@ import {
   Activity, Tag, Tags, ChevronDown, Check, Plus, Sparkles, CreditCard, Clock, CalendarDays, Coins,
 } from 'lucide-react'
 import api from '../api/axios'
-import { fetchClientsList, fetchClientFollowUp } from '../api/clients'
+import { fetchClientsPage, fetchClientFollowUp } from '../api/clients'
+import useDebounce from '../hooks/useDebounce'
 import ClientTimeline from '../features/clients/components/ClientTimeline'
 import ClientPaymentMethodsModal from '../features/clients/ClientPaymentMethodsModal'
 import { useModal } from '../context/ModalContext'
@@ -182,26 +183,6 @@ function clientParentBadge(c) {
     >
       Sub-cliente de: {parentLabel}
     </span>
-  )
-}
-
-function clientMatchesSearch(c, q) {
-  if (!q) return true
-  const un = (c.username ?? '').toLowerCase()
-  const nm = (c.name ?? '').toLowerCase()
-  const em = (c.email ?? '').toLowerCase()
-  const ph = (c.phone ?? '').toLowerCase()
-  const ct = (c.country ?? '').toLowerCase()
-  const pu = (c.parent_username ?? '').toLowerCase()
-  const pn = (c.parent_name ?? '').toLowerCase()
-  return (
-    un.includes(q)
-    || nm.includes(q)
-    || em.includes(q)
-    || ph.includes(q)
-    || ct.includes(q)
-    || pu.includes(q)
-    || pn.includes(q)
   )
 }
 
@@ -1359,11 +1340,24 @@ function ClientTable({
   onPageChange,
   itemsPerPage = ITEMS_PER_PAGE,
   hideSearch = false,
+  serverSidePagination = false,
+  hasNextPage = false,
+  searchPending = false,
 }) {
-  const totalPages = Math.max(1, Math.ceil(totalFiltered / itemsPerPage))
-  const currentPage = Math.min(Math.max(1, page), totalPages)
-  const rangeStart = totalFiltered === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
-  const rangeEnd = Math.min(currentPage * itemsPerPage, totalFiltered)
+  const totalPages = serverSidePagination
+    ? Math.max(1, hasNextPage ? Math.max(page, 1) + 1 : Math.max(page, 1))
+    : Math.max(1, Math.ceil(totalFiltered / itemsPerPage))
+  const currentPage = serverSidePagination
+    ? Math.max(1, page)
+    : Math.min(Math.max(1, page), totalPages)
+  const rangeStart = rows.length === 0 && !loading
+    ? 0
+    : (currentPage - 1) * itemsPerPage + 1
+  const rangeEnd = (currentPage - 1) * itemsPerPage + rows.length
+  const serverTotalKnown = serverSidePagination && !hasNextPage && !loading && !fetchError
+  const displayTotal = serverSidePagination
+    ? (serverTotalKnown ? rangeEnd : null)
+    : totalFiltered
 
   return (
     <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden">
@@ -1376,11 +1370,26 @@ function ClientTable({
               placeholder="Buscar…"
               value={search}
               onChange={(e) => onSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              className="w-full pl-8 pr-9 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
             />
+            {(searchPending || loading) && !fetchError ? (
+              <Loader2
+                size={14}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-500 animate-spin pointer-events-none"
+                aria-hidden
+              />
+            ) : null}
           </div>
           <span className="text-xs text-gray-400">
-            {loading ? '…' : `${totalFiltered} resultado${totalFiltered !== 1 ? 's' : ''}`}
+            {loading && !searchPending
+              ? '…'
+              : serverSidePagination
+                ? displayTotal != null
+                  ? `${displayTotal} resultado${displayTotal !== 1 ? 's' : ''}`
+                  : rangeEnd > 0
+                    ? `${rangeEnd}+ resultados`
+                    : '0 resultados'
+                : `${totalFiltered} resultado${totalFiltered !== 1 ? 's' : ''}`}
           </span>
         </div>
       ) : (
@@ -1454,9 +1463,14 @@ function ClientTable({
 
       <div className="px-6 py-3 border-t border-gray-100 bg-gray-50/50 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-gray-400">
-          {!loading && !fetchError && totalFiltered > 0 ? (
+          {!loading && !fetchError && rangeEnd > 0 ? (
             <>
-              Mostrando {rangeStart}–{rangeEnd} de {totalFiltered} · {itemsPerPage} por página
+              Mostrando {rangeStart}–{rangeEnd}
+              {serverSidePagination ? (
+                hasNextPage ? ' · hay más resultados' : ` · ${rangeEnd} en total`
+              ) : (
+                <> · {itemsPerPage} por página</>
+              )}
             </>
           ) : (
             <>
@@ -1464,7 +1478,7 @@ function ClientTable({
             </>
           )}
         </span>
-        {!loading && !fetchError && totalFiltered > 0 && totalPages > 1 && onPageChange ? (
+        {!loading && !fetchError && rangeEnd > 0 && (serverSidePagination ? (currentPage > 1 || hasNextPage) : totalPages > 1) && onPageChange ? (
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
@@ -1475,12 +1489,14 @@ function ClientTable({
               Anterior
             </button>
             <span className="text-xs text-gray-500 tabular-nums min-w-[4.5rem] text-center">
-              {currentPage} / {totalPages}
+              {serverSidePagination && hasNextPage
+                ? `Página ${currentPage}`
+                : `${currentPage} / ${totalPages}`}
             </span>
             <button
               type="button"
-              disabled={currentPage >= totalPages}
-              onClick={() => onPageChange((p) => Math.min(totalPages, p + 1))}
+              disabled={serverSidePagination ? !hasNextPage : currentPage >= totalPages}
+              onClick={() => onPageChange((p) => (serverSidePagination ? p + 1 : Math.min(totalPages, p + 1)))}
               className="h-8 px-3 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-md shadow-sm hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Siguiente
@@ -1504,8 +1520,10 @@ export default function Clientes() {
   const [clientes, setClientes]             = useState([])
   const [loading, setLoading]               = useState(true)
   const [fetchError, setFetchError]         = useState(null)
+  const [registerHasNextPage, setRegisterHasNextPage] = useState(false)
   const [activeTab, setActiveTab]           = useState('register')
   const [searchReg, setSearchReg]           = useState('')
+  const debouncedSearchReg = useDebounce(searchReg, 400)
   const [followUpSearch, setFollowUpSearch] = useState('')
   const [followUpCreditsPreset, setFollowUpCreditsPreset] = useState('all')
   const [followUpCreditsCustomMin, setFollowUpCreditsCustomMin] = useState('')
@@ -1546,7 +1564,7 @@ export default function Clientes() {
 
   useEffect(() => {
     setRegisterPage(1)
-  }, [searchReg])
+  }, [debouncedSearchReg])
 
   useEffect(() => {
     setActivePage(1)
@@ -1613,27 +1631,45 @@ export default function Clientes() {
     void loadFollowUp()
   }, [loadFollowUp])
 
-  // ── Fetch ──
-  const fetchClientes = useCallback(async (opts = {}) => {
-    const quiet = opts.quiet === true
-    if (!quiet) {
-      setLoading(true)
-      setFetchError(null)
-    }
+  // ── Fetch (paginación server-side) ──
+  const fetchClientesPageData = useCallback(async ({ page, search, signal } = {}) => {
+    setLoading(true)
+    setFetchError(null)
     try {
-      const list = await fetchClientsList({ limit: 500 })
+      const safePage = Math.max(1, page ?? 1)
+      const skip = (safePage - 1) * ITEMS_PER_PAGE
+      const list = await fetchClientsPage({
+        skip,
+        limit: ITEMS_PER_PAGE,
+        search,
+        signal,
+      })
       setClientes(list)
+      setRegisterHasNextPage(list.length === ITEMS_PER_PAGE)
     } catch (err) {
+      const canceled =
+        signal?.aborted ||
+        err?.name === 'CanceledError' ||
+        err?.code === 'ERR_CANCELED'
+      if (canceled) return
       console.error('Error cargando clientes:', err)
-      if (!quiet) {
-        setFetchError('No se pudo cargar la lista de clientes. Verifica la conexión con el servidor.')
-      }
+      setClientes([])
+      setRegisterHasNextPage(false)
+      setFetchError('No se pudo cargar la lista de clientes. Verifica la conexión con el servidor.')
     } finally {
-      if (!quiet) {
-        setLoading(false)
-      }
+      if (!signal?.aborted) setLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void fetchClientesPageData({
+      page: registerPage,
+      search: debouncedSearchReg,
+      signal: controller.signal,
+    })
+    return () => controller.abort()
+  }, [registerPage, debouncedSearchReg, fetchClientesPageData])
 
   const fetchTags = useCallback(async () => {
     try {
@@ -1642,12 +1678,18 @@ export default function Clientes() {
     } catch { /* silently ignore — tags are non-critical */ }
   }, [])
 
-  useEffect(() => { fetchClientes(); fetchTags() }, [fetchClientes, fetchTags])
+  useEffect(() => { fetchTags() }, [fetchTags])
 
-  // ── Open new client modal (via global context so it also works from Sidebar) ──
+  const refreshRegisterPage = useCallback(
+    (page = registerPage) => {
+      void fetchClientesPageData({ page, search: debouncedSearchReg })
+    },
+    [registerPage, debouncedSearchReg, fetchClientesPageData],
+  )
   function handleOpenNewClient() {
     openNewClient(() => {
-      fetchClientes()
+      if (registerPage === 1) refreshRegisterPage(1)
+      else setRegisterPage(1)
       setToast({ message: 'Cliente registrado correctamente.', type: 'success' })
     })
   }
@@ -1658,9 +1700,11 @@ export default function Clientes() {
     setDeleteLoading(true)
     try {
       await api.delete(`/api/v1/clients/${deleteTarget.id}`)
-      setClientes((prev) => prev.filter((c) => c.id !== deleteTarget.id))
       setToast({ message: `Cliente "${clientDisplayLabel(deleteTarget)}" eliminado.`, type: 'success' })
       setDeleteTarget(null)
+      const nextPage = clientes.length <= 1 && registerPage > 1 ? registerPage - 1 : registerPage
+      if (nextPage !== registerPage) setRegisterPage(nextPage)
+      else refreshRegisterPage(nextPage)
       void loadFollowUp()
     } catch (err) {
       setToast({ message: err?.response?.data?.detail ?? 'Error al eliminar.', type: 'error' })
@@ -1679,8 +1723,8 @@ export default function Clientes() {
   const handleEditModalSuccess = useCallback(async () => {
     setIsEditModalOpen(false)
     setSelectedClient(null)
-    await fetchClientes({ quiet: true })
-  }, [fetchClientes])
+    refreshRegisterPage()
+  }, [refreshRegisterPage])
 
   const handleInlineStatusChange = useCallback(async (clientId, nextStatus) => {
     try {
@@ -1741,7 +1785,8 @@ export default function Clientes() {
         message: `Importación: ${data.created} creados, ${data.updated} actualizados${data.skipped ? `, ${data.skipped} omitidos` : ''}.`,
         type: 'success',
       })
-      fetchClientes()
+      if (registerPage === 1) refreshRegisterPage(1)
+      else setRegisterPage(1)
       void loadFollowUp()
     } catch (err) {
       setToast({ message: err?.response?.data?.detail ?? 'Error al importar.', type: 'error' })
@@ -1751,12 +1796,7 @@ export default function Clientes() {
     }
   }
 
-  // ── Filtrado por pestaña ──
-  const registered = useMemo(() => {
-    const q = searchReg.toLowerCase()
-    return clientes.filter((c) => clientMatchesSearch(c, q))
-  }, [clientes, searchReg])
-
+  // ── Filtrado por pestaña (seguimiento sigue en cliente) ──
   const filteredFollowUp = useMemo(() => {
     const q = followUpSearch.trim().toLowerCase()
     return followUpRows.filter((row) => {
@@ -1812,21 +1852,19 @@ export default function Clientes() {
     followUpTagFilter,
   ])
 
-  const registerTotalPages = Math.max(1, Math.ceil(registered.length / ITEMS_PER_PAGE))
-  const followUpTotalPages = Math.max(1, Math.ceil(filteredFollowUp.length / ITEMS_PER_PAGE))
+  const registerTotalPages = Math.max(1, registerHasNextPage ? registerPage + 1 : registerPage)
 
   useEffect(() => {
-    setRegisterPage((p) => Math.min(p, registerTotalPages))
-  }, [registerTotalPages])
+    if (registerPage > registerTotalPages) {
+      setRegisterPage(registerTotalPages)
+    }
+  }, [registerPage, registerTotalPages])
+
+  const followUpTotalPages = Math.max(1, Math.ceil(filteredFollowUp.length / ITEMS_PER_PAGE))
 
   useEffect(() => {
     setActivePage((p) => Math.min(p, followUpTotalPages))
   }, [followUpTotalPages])
-
-  const registeredPageRows = useMemo(() => {
-    const start = (registerPage - 1) * ITEMS_PER_PAGE
-    return registered.slice(start, start + ITEMS_PER_PAGE)
-  }, [registered, registerPage])
 
   const followUpPageRows = useMemo(() => {
     const start = (activePage - 1) * ITEMS_PER_PAGE
@@ -1839,7 +1877,6 @@ export default function Clientes() {
   )
 
   const tabCounts = {
-    register: clientes.length,
     active: followUpRows.length,
   }
 
@@ -2309,19 +2346,25 @@ export default function Clientes() {
               </p>
             </div>
             <ClientTable
-              rows={registeredPageRows}
+              rows={clientes}
               loading={loading}
               fetchError={fetchError}
               emptyIcon={ClipboardList}
-              emptyText="No hay clientes registrados aún. Usa el botón «Nuevo Cliente» para añadir el primero."
+              emptyText={
+                debouncedSearchReg.trim()
+                  ? 'No hay clientes que coincidan con la búsqueda.'
+                  : 'No hay clientes registrados aún. Usa el botón «Nuevo Cliente» para añadir el primero.'
+              }
               columns={mainColumns}
               search={searchReg}
               onSearch={setSearchReg}
               onRowClick={(c) => navigate(`/clientes/${c.id}`)}
               page={registerPage}
-              totalFiltered={registered.length}
               onPageChange={setRegisterPage}
               itemsPerPage={ITEMS_PER_PAGE}
+              serverSidePagination
+              hasNextPage={registerHasNextPage}
+              searchPending={searchReg !== debouncedSearchReg}
             />
           </div>
         )}
