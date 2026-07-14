@@ -199,7 +199,7 @@ async def _analyze_receipt_with_openai(image_bytes: bytes, media_type: str) -> d
     data_url = f"data:{media_type};base64,{b64}"
 
     try:
-        client = AsyncOpenAI(api_key=api_key)
+        client = AsyncOpenAI(api_key=api_key, timeout=15.0)
         print("DEBUG IA: Enviando solicitud a gpt-4o…")
         resp = await client.chat.completions.create(
             model="gpt-4o",

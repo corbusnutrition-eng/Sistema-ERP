@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid as uuid_pkg
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -50,6 +51,8 @@ from app.services.client_payment_service import (
 )
 from app.security.money_validation import validate_form_money
 from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
+
+logger = logging.getLogger(__name__)
 from app.services.currency_consolidation import get_last_exchange_rate, normalize_exchange_rate
 from app.timezone_utils import now_ecuador
 
@@ -422,6 +425,7 @@ def approve_payment(
     payment_id: int,
     db: DbDep,
     _: ReceivablesEditDep,
+    background_tasks: BackgroundTasks,
     body: Optional[PaymentApproveBody] = None,
 ) -> ClientPaymentOut:
     p = (
@@ -465,11 +469,23 @@ def approve_payment(
             ):
                 try:
                     approve_pending_linked_client_payments_for_sale(
-                        db, linked_sale, strict_accounting=True
+                        db, linked_sale, strict_accounting=True, background_tasks=background_tasks
                     )
                 except HTTPException:
                     db.rollback()
                     raise
+                except Exception:
+                    db.rollback()
+                    logger.critical(
+                        "Error crítico aprobando pagos vinculados portal sale_id=%s payment_id=%s",
+                        sid,
+                        payment_id,
+                        exc_info=True,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Error interno al aprobar el pago vinculado a la venta.",
+                    ) from None
                 db.commit()
                 db.refresh(p)
                 name = p.client.display_name() if p.client else ""
@@ -493,10 +509,22 @@ def approve_payment(
             manual_rows=alloc_rows,
             fifo_fallback=True,
             strict_accounting=True,
+            background_tasks=background_tasks,
         )
     except HTTPException:
         db.rollback()
         raise
+    except Exception:
+        db.rollback()
+        logger.critical(
+            "Error crítico aprobando pago manual payment_id=%s",
+            payment_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al aprobar el pago.",
+        ) from None
 
     db.commit()
     db.refresh(p)

@@ -5,7 +5,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import func, nullslast
 from sqlalchemy.orm import Session, joinedload
@@ -22,6 +22,9 @@ from app.wallet_recharge_helpers import (
     REQ_STATUS_PARTIALLY_PAID,
     REQ_STATUS_PENDING,
 )
+
+if TYPE_CHECKING:
+    from fastapi import BackgroundTasks
 
 _FP_EPS = Decimal("0.00005")
 _WR_EPS = 1e-6
@@ -771,7 +774,10 @@ def allocate_client_credit_remainder_to_sale(
         try:
             sync_client_payment_accounting_ledgers(db, source_pay, strict=False)
         except Exception:
-            pass
+            logger.exception(
+                "Sync contable falló en barrido saldo a favor payment_id=%s strict=False",
+                getattr(source_pay, "id", None),
+            )
 
     sync_sale_amount_paid_from_allocations(db, sale)
     refresh_sale_status_after_payment(db, sale)
@@ -1295,6 +1301,7 @@ def sweep_client_unallocated_funds_to_obligations_fifo(
     *,
     currency: Optional[str] = None,
     strict_accounting: bool = False,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> list[PaymentAllocation]:
     """
     Cruza automáticamente saldo a favor (remanentes de cobros aprobados) contra
@@ -1406,6 +1413,11 @@ def sweep_client_unallocated_funds_to_obligations_fifo(
             try:
                 sync_client_payment_accounting_ledgers(db, pay, strict=strict_accounting)
             except Exception:
+                logger.exception(
+                    "Sync contable falló en sweep FIFO payment_id=%s strict=%s",
+                    getattr(pay, "id", None),
+                    strict_accounting,
+                )
                 if strict_accounting:
                     raise
             _assert_payment_allocation_in_bounds(db, pay)
@@ -1417,7 +1429,9 @@ def sweep_client_unallocated_funds_to_obligations_fifo(
         schedule_codigos_retiro_erp_notify_for_allocations_batch,
     )
 
-    schedule_codigos_retiro_erp_notify_for_allocations_batch(db, created_all)
+    schedule_codigos_retiro_erp_notify_for_allocations_batch(
+        db, created_all, background_tasks=background_tasks
+    )
     return created_all
 
 
@@ -2259,6 +2273,7 @@ def finalize_client_payment_approval(
     manual_rows: Optional[list[dict]] = None,
     fifo_fallback: bool = True,
     strict_accounting: bool = True,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> tuple[list[PaymentAllocation], Decimal]:
     """
     Aprueba un ``ClientPayment`` en revisión dentro de la sesión actual (sin ``commit``):
@@ -2380,13 +2395,16 @@ def finalize_client_payment_approval(
             client,
             currency=normalize_currency_code(str(payment.currency or "USD")),
             strict_accounting=strict_accounting,
+            background_tasks=background_tasks,
         )
 
     from app.services.codigos_retiro_erp_notify import (
         schedule_codigos_retiro_erp_notify_from_payment_approval,
     )
 
-    schedule_codigos_retiro_erp_notify_from_payment_approval(db, payment, created)
+    schedule_codigos_retiro_erp_notify_from_payment_approval(
+        db, payment, created, background_tasks=background_tasks
+    )
 
     _assert_payment_allocation_in_bounds(db, payment)
     return created, remainder
@@ -3202,6 +3220,7 @@ def approve_pending_linked_client_payments_for_sale(
     sale: Sale,
     *,
     strict_accounting: bool = True,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> None:
     """
     Al activar una venta con cobro en revisión: aprueba pagos vinculados y aplica waterfall CxC.
@@ -3241,6 +3260,7 @@ def approve_pending_linked_client_payments_for_sale(
             manual_rows=primary_rows,
             fifo_fallback=True,
             strict_accounting=strict_accounting,
+            background_tasks=background_tasks,
         )
 
     db.flush()

@@ -4,16 +4,16 @@ Notificaciones ERP → sistema externo Códigos de Retiro.
 Cuando un cobro CxC se aprueba y reduce el saldo de una venta, avisa al socio para que
 cierre deudas firmes («No salió») vinculadas a la misma ``referencia_externa``.
 
-Los envíos son en segundo plano (hilo daemon) y nunca interrumpen el flujo principal del ERP.
+Los envíos usan ``BackgroundTasks`` de FastAPI cuando está disponible; si no, se ejecutan
+de forma síncrona con registro estricto en logs (nunca hilos daemon huérfanos).
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
-import threading
 from decimal import Decimal
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import requests
 from sqlalchemy.orm import Session
@@ -24,6 +24,9 @@ from app.models.client_payment import ClientPayment, PaymentAllocation
 from app.models.sale import Sale
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.schemas.codigos_retiro_erp_notify import CodigosRetiroErpPagoAprobadoOut
+
+if TYPE_CHECKING:
+    from fastapi import BackgroundTasks
 
 logger = logging.getLogger(__name__)
 
@@ -172,19 +175,34 @@ def post_codigos_retiro_erp_pago_aprobado(payload: CodigosRetiroErpPagoAprobadoO
 
 
 def _send_payloads_batch(payloads: list[dict[str, Any]]) -> None:
+    logger.info("codigos-retiro ERP notify: iniciando envío de %s evento(s)", len(payloads))
+    success = 0
+    failed = 0
     for raw in payloads:
         try:
             event = CodigosRetiroErpPagoAprobadoOut.model_validate(raw)
             post_codigos_retiro_erp_pago_aprobado(event)
+            success += 1
         except Exception:
+            failed += 1
             logger.exception(
-                "codigos-retiro ERP notify: payload inválido %r",
+                "codigos-retiro ERP notify: payload inválido o envío fallido %r",
                 raw,
             )
+    logger.info(
+        "codigos-retiro ERP notify: lote completado éxito=%s fallos=%s total=%s",
+        success,
+        failed,
+        len(payloads),
+    )
 
 
-def schedule_codigos_retiro_erp_pago_aprobado(payloads: list[CodigosRetiroErpPagoAprobadoOut]) -> None:
-    """Encola envío HTTP en un hilo daemon (no bloquea commit del ERP)."""
+def schedule_codigos_retiro_erp_pago_aprobado(
+    payloads: list[CodigosRetiroErpPagoAprobadoOut],
+    *,
+    background_tasks: Optional["BackgroundTasks"] = None,
+) -> None:
+    """Encola envío HTTP vía BackgroundTasks o lo ejecuta síncronamente con logs estrictos."""
     if not payloads:
         return
     if not codigos_retiro_erp_notify_enabled():
@@ -195,17 +213,21 @@ def schedule_codigos_retiro_erp_pago_aprobado(payloads: list[CodigosRetiroErpPag
         )
         return
     snapshot = [p.model_dump(mode="json") for p in payloads]
+    url = codigos_retiro_erp_notify_url()
+    if background_tasks is not None:
+        background_tasks.add_task(_send_payloads_batch, snapshot)
+        logger.info(
+            "codigos-retiro ERP notify encolado via BackgroundTasks (%s evento(s)) → %s",
+            len(snapshot),
+            url,
+        )
+        return
     logger.info(
-        "codigos-retiro ERP notify encolando %s evento(s) → %s",
+        "codigos-retiro ERP notify envío síncrono (%s evento(s)) → %s",
         len(snapshot),
-        codigos_retiro_erp_notify_url(),
+        url,
     )
-    threading.Thread(
-        target=_send_payloads_batch,
-        args=(snapshot,),
-        daemon=True,
-        name="codigos-retiro-erp-notify",
-    ).start()
+    _send_payloads_batch(snapshot)
 
 
 def build_codigos_retiro_erp_pago_aprobado_events(
@@ -314,6 +336,8 @@ def schedule_codigos_retiro_erp_notify_from_payment_approval(
     db: Session,
     payment: ClientPayment,
     allocations: list[PaymentAllocation],
+    *,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> None:
     """
     Punto de integración: tras aprobar un cobro que aplica a facturas o recargas BaaS, avisa al socio.
@@ -340,7 +364,7 @@ def schedule_codigos_retiro_erp_notify_from_payment_approval(
             getattr(payment, "payment_number", None),
             len(events),
         )
-        schedule_codigos_retiro_erp_pago_aprobado(events)
+        schedule_codigos_retiro_erp_pago_aprobado(events, background_tasks=background_tasks)
     except Exception:
         logger.exception(
             "codigos-retiro ERP notify: error preparando eventos payment_id=%s",
@@ -351,6 +375,8 @@ def schedule_codigos_retiro_erp_notify_from_payment_approval(
 def schedule_codigos_retiro_erp_notify_for_allocations_batch(
     db: Session,
     allocations: list[PaymentAllocation],
+    *,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> None:
     """Avisa al socio por allocations FIFO (p. ej. barrido de saldo a favor), agrupadas por cobro."""
     if not allocations:
@@ -366,4 +392,6 @@ def schedule_codigos_retiro_erp_notify_for_allocations_batch(
     for pid in sorted(by_payment):
         pay = db.get(ClientPayment, pid)
         if pay is not None:
-            schedule_codigos_retiro_erp_notify_from_payment_approval(db, pay, by_payment[pid])
+            schedule_codigos_retiro_erp_notify_from_payment_approval(
+                db, pay, by_payment[pid], background_tasks=background_tasks
+            )
