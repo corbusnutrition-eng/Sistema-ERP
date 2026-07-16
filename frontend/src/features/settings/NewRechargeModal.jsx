@@ -766,7 +766,7 @@ export default function NewRechargeModal({
   const icls = isReadOnly ? `${inputClsBase()} bg-gray-50 text-gray-800 cursor-default` : inputClsBase()
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4">
       <button
         type="button"
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
@@ -774,10 +774,10 @@ export default function NewRechargeModal({
         aria-label="Cerrar modal"
       />
 
-      <div className="relative w-full max-w-6xl bg-white rounded-2xl shadow-2xl z-10 max-h-[95vh] flex flex-col min-h-0">
-        <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10 shrink-0">
+      <div className="relative w-[95%] sm:w-full max-w-6xl bg-white rounded-2xl shadow-2xl z-10 max-h-[95vh] flex flex-col min-h-0 overflow-hidden">
+        <div className="flex items-start justify-between gap-2 p-3 sm:px-6 sm:py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10 shrink-0">
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold text-gray-900">
+            <h2 className="text-lg sm:text-base font-semibold text-gray-900 leading-tight">
               {isReadOnly ?
                 <>
                   Detalle de solicitud de recarga
@@ -792,14 +792,14 @@ export default function NewRechargeModal({
                     <> (n.&nbsp;º {String(editTargetRequestId).padStart(4, '0')}) </>
                   : null}
                 </>
-              : 'Nueva solicitud de recarga (portal permanente)'}
+              : 'Nueva solicitud de recarga'}
             </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
+            <p className="text-xs text-gray-400 mt-0.5 leading-tight">
               {isReadOnly ?
                 'Vista sólo lectura basada en el mismo diseño que «Nueva solicitud de recarga».'
               : editMode ?
                 'Ajustes visibles para el cliente en el portal permanente.'
-              : 'Misma experiencia que ventas: tabla de líneas, resumen lateral y método/cuentas en el portal.'}
+              : 'Líneas, resumen lateral y método/cuentas en el portal.'}
             </p>
           </div>
           <button
@@ -812,7 +812,7 @@ export default function NewRechargeModal({
           </button>
         </div>
 
-        <div className="px-6 py-5 overflow-y-auto min-h-0 flex-1">
+        <div className="p-3 sm:p-6 overflow-y-auto min-h-0 flex-1">
           {isReadOnly ?
             <div className="mb-5 rounded-xl border border-gray-300 bg-gray-100 px-4 py-3 text-xs text-gray-800 leading-relaxed shadow-sm">
               {readOnlyBannerText}
@@ -909,94 +909,102 @@ export default function NewRechargeModal({
                 </div>
               )}
 
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start border border-gray-100 rounded-2xl p-4 bg-slate-50/40">
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-4 sm:gap-6 items-start border border-gray-100 rounded-2xl p-3 sm:p-4 bg-slate-50/40">
                 <div className="space-y-3 min-w-0">
                   <p className="text-sm font-medium text-gray-800">Conceptos</p>
                   <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm min-w-[560px]">
-                        <thead>
-                          <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-600">
-                            <th className="px-2 py-2.5 font-semibold min-w-[140px]">Producto/servicio</th>
-                            <th className="px-2 py-2.5 font-semibold min-w-[112px]">Tipo de moneda</th>
-                            <th className="px-2 py-2.5 font-semibold min-w-[120px]">Saldo a recargar</th>
-                            {!isReadOnly ?
-                              <th className="w-10 px-1" aria-label="Eliminar" />
-                            : null}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(Array.isArray(rechargeLineItems) ? rechargeLineItems : []).map((line, rowIdx) => {
-                            const rowKey =
-                              line?.id != null && String(line.id) !== '' ?
-                                String(line.id)
-                              : `concepto-${rowIdx}`
-                            const tm = normalizeCurrencyCode(line?.tipo_moneda ?? tableBillingCurrency, 'USD')
-                            const isLead = rowIdx === 0 || line?.id === leadLineId
-                            return (
-                              <tr key={rowKey} className="border-t border-gray-100 align-top">
-                                <td className="px-2 py-2">
-                                  <input
-                                    className={icls}
-                                    value={line.producto ?? ''}
-                                    readOnly={isReadOnly}
-                                    disabled={generatingLink || isReadOnly}
-                                    onChange={(e) => updateLine(line.id, { producto: e.target.value })}
-                                    placeholder="BaaS Balance"
-                                  />
-                                </td>
-                                <td className="px-2 py-2">
-                                  {isLead && !isReadOnly ?
-                                    <SearchableSelect
-                                      value={tm}
-                                      onChange={(v) =>
-                                        updateLine(line.id, {
-                                          tipo_moneda: normalizeCurrencyCode(v ?? 'USD', 'USD'),
-                                        })
-                                      }
-                                      options={lineBalanceCurrencyOptions}
-                                      placeholder="Moneda…"
-                                      hideClear
-                                      disabled={generatingLink}
-                                      minPanelWidth={220}
-                                      className="[&_button]:min-h-9 [&_button]:text-xs [&_button]:py-1.5"
-                                      dropdownZClass="z-[6000]"
-                                    />
-                                  : <span className="flex items-center min-h-[2.375rem] px-3 py-2 text-sm text-gray-700 tabular-nums rounded-xl border border-gray-100 bg-slate-50/80">
-                                      {tm}
-                                    </span>
-                                  }
-                                </td>
-                                <td className="px-2 py-2">
-                                  <input
-                                    className={`${icls} tabular-nums`}
-                                    inputMode="decimal"
-                                    value={line.saldo_recargar ?? ''}
-                                    readOnly={isReadOnly}
-                                    disabled={generatingLink || isReadOnly}
-                                    onChange={(e) => updateLine(line.id, { saldo_recargar: e.target.value })}
-                                    placeholder="0"
-                                  />
-                                </td>
-                                {!isReadOnly ?
-                                  <td className="px-1 py-2 text-center">
-                                    <button
-                                      type="button"
-                                      aria-label="Quitar línea"
-                                      className="p-1 rounded-md text-red-600 hover:bg-red-50 disabled:opacity-30"
-                                      disabled={(rechargeLineItems?.length ?? 0) <= 1 || generatingLink}
-                                      onClick={() => removeLine(line.id)}
-                                    >
-                                      <Trash2 size={16} />
-                                    </button>
-                                  </td>
-                                : null}
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
+                    {/* Encabezados de columna: solo escritorio */}
+                    <div className="hidden md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.9fr)_minmax(7rem,0.9fr)_2.5rem] gap-2 px-3 py-2.5 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-600 font-semibold border-b border-gray-100">
+                      <span>Producto/servicio</span>
+                      <span>Tipo de moneda</span>
+                      <span>Saldo a recargar</span>
+                      {!isReadOnly ? <span className="sr-only">Eliminar</span> : null}
                     </div>
+
+                    <div className="divide-y divide-gray-100">
+                      {(Array.isArray(rechargeLineItems) ? rechargeLineItems : []).map((line, rowIdx) => {
+                        const rowKey =
+                          line?.id != null && String(line.id) !== '' ?
+                            String(line.id)
+                          : `concepto-${rowIdx}`
+                        const tm = normalizeCurrencyCode(line?.tipo_moneda ?? tableBillingCurrency, 'USD')
+                        const isLead = rowIdx === 0 || line?.id === leadLineId
+                        return (
+                          <div
+                            key={rowKey}
+                            className="flex flex-col space-y-3 w-full p-3 md:space-y-0 md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.9fr)_minmax(7rem,0.9fr)_2.5rem] md:items-center md:gap-2 md:px-3 md:py-2"
+                          >
+                            <div className="w-full min-w-0">
+                              <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
+                                Producto/servicio
+                              </label>
+                              <input
+                                className={`${icls} w-full`}
+                                value={line.producto ?? ''}
+                                readOnly={isReadOnly}
+                                disabled={generatingLink || isReadOnly}
+                                onChange={(e) => updateLine(line.id, { producto: e.target.value })}
+                                placeholder="BaaS Balance"
+                              />
+                            </div>
+                            <div className="w-full min-w-0">
+                              <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
+                                Tipo de moneda
+                              </label>
+                              {isLead && !isReadOnly ?
+                                <SearchableSelect
+                                  value={tm}
+                                  onChange={(v) =>
+                                    updateLine(line.id, {
+                                      tipo_moneda: normalizeCurrencyCode(v ?? 'USD', 'USD'),
+                                    })
+                                  }
+                                  options={lineBalanceCurrencyOptions}
+                                  placeholder="Moneda…"
+                                  hideClear
+                                  disabled={generatingLink}
+                                  minPanelWidth={220}
+                                  className="w-full [&_button]:min-h-9 [&_button]:text-xs [&_button]:py-1.5"
+                                  dropdownZClass="z-[6000]"
+                                />
+                              : <span className="flex items-center min-h-[2.375rem] w-full px-3 py-2 text-sm text-gray-700 tabular-nums rounded-xl border border-gray-100 bg-slate-50/80">
+                                  {tm}
+                                </span>
+                              }
+                            </div>
+                            <div className="w-full min-w-0">
+                              <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
+                                Saldo a recargar
+                              </label>
+                              <input
+                                className={`${icls} w-full tabular-nums`}
+                                inputMode="decimal"
+                                value={line.saldo_recargar ?? ''}
+                                readOnly={isReadOnly}
+                                disabled={generatingLink || isReadOnly}
+                                onChange={(e) => updateLine(line.id, { saldo_recargar: e.target.value })}
+                                placeholder="0"
+                              />
+                            </div>
+                            {!isReadOnly ?
+                              <div className="flex md:justify-center">
+                                <button
+                                  type="button"
+                                  aria-label="Quitar línea"
+                                  className="inline-flex items-center gap-1.5 p-1.5 rounded-md text-red-600 hover:bg-red-50 disabled:opacity-30 text-xs font-medium md:text-inherit md:gap-0"
+                                  disabled={(rechargeLineItems?.length ?? 0) <= 1 || generatingLink}
+                                  onClick={() => removeLine(line.id)}
+                                >
+                                  <Trash2 size={16} />
+                                  <span className="md:hidden">Quitar línea</span>
+                                </button>
+                              </div>
+                            : null}
+                          </div>
+                        )
+                      })}
+                    </div>
+
                     {!isReadOnly ?
                       <div className="px-3 py-2 border-t border-gray-100 bg-slate-50/60">
                         <button
@@ -1011,12 +1019,14 @@ export default function NewRechargeModal({
                     : null}
 
                     {showFlujoPricingTable ?
-                      <div className="mt-6 pt-6 border-t border-gray-200 space-y-3 px-3 pb-3">
+                      <div className="mt-4 pt-4 sm:mt-6 sm:pt-6 border-t border-gray-200 space-y-3 px-3 pb-3">
                         <div>
-                          <p className="text-sm font-semibold text-gray-900">Asignación de precios de venta — Flujo</p>
-                          <p className="text-xs text-gray-500 mt-0.5">
-                            Todos los paquetes activos del catálogo Flujo (incluye productos nuevos sin precio). El
-                            precio de venta no puede ser menor al costo local (costo base USD × tipo de cambio).
+                          <p className="text-sm font-semibold text-gray-900 leading-tight">
+                            Asignación de precios de venta — Flujo
+                          </p>
+                          <p className="text-xs text-gray-500 mt-0.5 leading-tight">
+                            Paquetes activos del catálogo Flujo. El precio de venta no puede ser menor al costo
+                            local (costo base USD × tipo de cambio).
                           </p>
                         </div>
                         {flujoPackagesLoading ?
@@ -1026,63 +1036,63 @@ export default function NewRechargeModal({
                         : flujoPackages.length === 0 ?
                           <p className="text-xs text-gray-500">No hay paquetes Flujo configurados en el catálogo.</p>
                         : (
-                          <div className="overflow-x-auto -mx-1">
-                            <table className="w-full text-sm min-w-[640px]">
-                              <thead>
-                                <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
-                                  <th className="px-2 py-2 font-semibold min-w-[140px]">Paquete Flujo</th>
-                                  <th className="px-2 py-2 font-semibold w-14 text-center">Stock</th>
-                                  <th className="px-2 py-2 font-semibold w-20">Costo base</th>
-                                  <th className="px-2 py-2 font-semibold w-24">Tipo de cambio</th>
-                                  <th className="px-2 py-2 font-semibold w-24">Costo local</th>
-                                  <th className="px-2 py-2 font-semibold w-28">Precio venta ({billingCode})</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {flujoPackages.map((pkg) => {
-                                  const pkgId = Number(pkg?.package_catalog_id)
-                                  const cost = Number(pkg?.reference_cost_usd ?? 0)
-                                  const rawXr =
-                                    exchangeRates[String(pkgId)] ??
-                                    billingExchangeRateStr ??
-                                    (billingCode === 'USD' ? '1' : String(salesCurrencyDefaultRate(billingCode)))
-                                  const rawPrice = flujoPriceByPackageId[String(pkgId)] ?? ''
-                                  const priceNum = parseLineNum(rawPrice)
-                                  const localCost = packageLocalCost(cost, pkgId)
-                                  const belowCost =
-                                    rawPrice !== '' && Number.isFinite(priceNum) && priceNum + 1e-9 < localCost
-                                  return (
-                                    <tr key={`flujo-pkg-${pkgId}`} className="border-t border-gray-100 align-middle">
-                                      <td className="px-2 py-2">
-                                        <p className="font-medium text-gray-800 text-sm">
-                                          {String(pkg?.display_name ?? pkg?.package_label ?? '—')}
-                                        </p>
-                                        <p className="text-[11px] text-gray-500">{String(pkg?.product_name ?? '')}</p>
-                                      </td>
-                                      <td className="px-2 py-2 tabular-nums text-gray-700 text-sm text-center">
-                                        {Number(pkg?.free_stock ?? 0)}
-                                      </td>
-                                      <td className="px-2 py-2 tabular-nums text-gray-600 text-sm">${cost.toFixed(2)}</td>
-                                      <td className="px-2 py-2">
+                          <>
+                            {/* Móvil: tarjetas apiladas */}
+                            <div className="md:hidden space-y-3">
+                              {flujoPackages.map((pkg) => {
+                                const pkgId = Number(pkg?.package_catalog_id)
+                                const cost = Number(pkg?.reference_cost_usd ?? 0)
+                                const rawXr =
+                                  exchangeRates[String(pkgId)] ??
+                                  billingExchangeRateStr ??
+                                  (billingCode === 'USD' ? '1' : String(salesCurrencyDefaultRate(billingCode)))
+                                const rawPrice = flujoPriceByPackageId[String(pkgId)] ?? ''
+                                const priceNum = parseLineNum(rawPrice)
+                                const localCost = packageLocalCost(cost, pkgId)
+                                const belowCost =
+                                  rawPrice !== '' && Number.isFinite(priceNum) && priceNum + 1e-9 < localCost
+                                return (
+                                  <div
+                                    key={`flujo-pkg-card-${pkgId}`}
+                                    className="rounded-xl border border-gray-200 bg-slate-50/50 p-3 space-y-3"
+                                  >
+                                    <div>
+                                      <p className="font-medium text-gray-800 text-sm leading-tight">
+                                        {String(pkg?.display_name ?? pkg?.package_label ?? '—')}
+                                      </p>
+                                      <p className="text-[11px] text-gray-500 mt-0.5">
+                                        {String(pkg?.product_name ?? '')}
+                                      </p>
+                                      <p className="text-[11px] text-gray-600 mt-1.5 tabular-nums">
+                                        Stock {Number(pkg?.free_stock ?? 0)} · Costo base ${cost.toFixed(2)} ·
+                                        Costo local{' '}
+                                        {localCost.toLocaleString('es-ES', {
+                                          minimumFractionDigits: 2,
+                                          maximumFractionDigits: 2,
+                                        })}{' '}
+                                        {billingCode}
+                                      </p>
+                                    </div>
+                                    <div className="flex flex-col space-y-3 w-full">
+                                      <div className="w-full">
+                                        <label className="block text-xs font-medium text-gray-500 mb-1">
+                                          Tipo de cambio
+                                        </label>
                                         <input
-                                          className={`${icls} tabular-nums text-sm w-20 min-w-[5rem] px-2 py-1.5`}
+                                          className={`${icls} w-full tabular-nums text-sm`}
                                           inputMode="decimal"
                                           value={rawXr}
                                           disabled={generatingLink}
                                           onChange={(e) => updatePackageExchangeRate(pkgId, e.target.value)}
                                           placeholder="1"
                                         />
-                                      </td>
-                                      <td className="px-2 py-2 tabular-nums text-gray-700 text-sm whitespace-nowrap">
-                                        {localCost.toLocaleString('es-ES', {
-                                          minimumFractionDigits: 2,
-                                          maximumFractionDigits: 2,
-                                        })}{' '}
-                                        {billingCode}
-                                      </td>
-                                      <td className="px-2 py-2">
+                                      </div>
+                                      <div className="w-full">
+                                        <label className="block text-xs font-medium text-gray-500 mb-1">
+                                          Precio venta ({billingCode})
+                                        </label>
                                         <input
-                                          className={`${icls} tabular-nums text-sm w-24 min-w-[6rem] px-2 py-1.5 ${belowCost ? 'border-red-400 bg-red-50' : ''}`}
+                                          className={`${icls} w-full tabular-nums text-sm ${belowCost ? 'border-red-400 bg-red-50' : ''}`}
                                           inputMode="decimal"
                                           value={rawPrice}
                                           disabled={generatingLink}
@@ -1095,13 +1105,91 @@ export default function NewRechargeModal({
                                             {marginBelowLocalCostMessage(localCost)}
                                           </p>
                                         : null}
-                                      </td>
-                                    </tr>
-                                  )
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+
+                            {/* Escritorio: tabla con scroll horizontal suave */}
+                            <div className="hidden md:block w-full overflow-x-auto scrollbar-hide">
+                              <table className="w-full text-sm min-w-[640px]">
+                                <thead>
+                                  <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
+                                    <th className="px-2 py-2 font-semibold min-w-[140px]">Paquete Flujo</th>
+                                    <th className="px-2 py-2 font-semibold w-14 text-center">Stock</th>
+                                    <th className="px-2 py-2 font-semibold w-20">Costo base</th>
+                                    <th className="px-2 py-2 font-semibold w-24">Tipo de cambio</th>
+                                    <th className="px-2 py-2 font-semibold w-24">Costo local</th>
+                                    <th className="px-2 py-2 font-semibold w-28">Precio venta ({billingCode})</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {flujoPackages.map((pkg) => {
+                                    const pkgId = Number(pkg?.package_catalog_id)
+                                    const cost = Number(pkg?.reference_cost_usd ?? 0)
+                                    const rawXr =
+                                      exchangeRates[String(pkgId)] ??
+                                      billingExchangeRateStr ??
+                                      (billingCode === 'USD' ? '1' : String(salesCurrencyDefaultRate(billingCode)))
+                                    const rawPrice = flujoPriceByPackageId[String(pkgId)] ?? ''
+                                    const priceNum = parseLineNum(rawPrice)
+                                    const localCost = packageLocalCost(cost, pkgId)
+                                    const belowCost =
+                                      rawPrice !== '' && Number.isFinite(priceNum) && priceNum + 1e-9 < localCost
+                                    return (
+                                      <tr key={`flujo-pkg-${pkgId}`} className="border-t border-gray-100 align-middle">
+                                        <td className="px-2 py-2">
+                                          <p className="font-medium text-gray-800 text-sm">
+                                            {String(pkg?.display_name ?? pkg?.package_label ?? '—')}
+                                          </p>
+                                          <p className="text-[11px] text-gray-500">{String(pkg?.product_name ?? '')}</p>
+                                        </td>
+                                        <td className="px-2 py-2 tabular-nums text-gray-700 text-sm text-center">
+                                          {Number(pkg?.free_stock ?? 0)}
+                                        </td>
+                                        <td className="px-2 py-2 tabular-nums text-gray-600 text-sm">${cost.toFixed(2)}</td>
+                                        <td className="px-2 py-2">
+                                          <input
+                                            className={`${icls} tabular-nums text-sm w-20 min-w-[5rem] px-2 py-1.5`}
+                                            inputMode="decimal"
+                                            value={rawXr}
+                                            disabled={generatingLink}
+                                            onChange={(e) => updatePackageExchangeRate(pkgId, e.target.value)}
+                                            placeholder="1"
+                                          />
+                                        </td>
+                                        <td className="px-2 py-2 tabular-nums text-gray-700 text-sm whitespace-nowrap">
+                                          {localCost.toLocaleString('es-ES', {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          })}{' '}
+                                          {billingCode}
+                                        </td>
+                                        <td className="px-2 py-2">
+                                          <input
+                                            className={`${icls} tabular-nums text-sm w-24 min-w-[6rem] px-2 py-1.5 ${belowCost ? 'border-red-400 bg-red-50' : ''}`}
+                                            inputMode="decimal"
+                                            value={rawPrice}
+                                            disabled={generatingLink}
+                                            onChange={(e) => updateFlujoPackagePrice(pkgId, e.target.value)}
+                                            placeholder="—"
+                                            aria-invalid={belowCost}
+                                          />
+                                          {belowCost ?
+                                            <p className="mt-1 text-[11px] text-red-700 leading-snug">
+                                              {marginBelowLocalCostMessage(localCost)}
+                                            </p>
+                                          : null}
+                                        </td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
                         )}
                         {priceAssignmentInvalid ?
                           <p className="text-xs text-red-700 font-medium">{priceAssignmentInvalid}</p>
