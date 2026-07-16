@@ -46,6 +46,7 @@ from app.models.screen_stock import ScreenStock
 from app.models.sale import Sale, SaleStatus
 from app.models.sale_transaction_tag import SaleTransactionTag
 from app.models.transaction_class import TransactionClass
+from app.schemas.client import ClientSalePickerRow
 from app.schemas.portal_public import PortalInstantActivationResponse
 from app.schemas.client_payments import VoidTransactionBody
 from app.schemas.sales import (
@@ -82,6 +83,7 @@ from app.services.sale_accounting_sync import (
 )
 from app.services.catalog_vip_sync import notify_catalog_vip_sale_pending_payment
 from app.services.sale_web_credit_sync import sync_web_credit_sales_from_vip_catalog
+from app.services.client_sale_picker import search_active_clients_for_sale_picker
 from app.services.currency_consolidation import get_last_exchange_rate
 from app.timezone_utils import ensure_aware, now_ecuador
 
@@ -156,6 +158,43 @@ def sales_last_exchange_rate(
     rate, _ = get_last_exchange_rate(db, cur)
     xr = float(rate) if rate and float(rate) > 0 else 1.0
     return LastExchangeRateResponse(currency=cur, exchange_rate=xr)
+
+
+@router.get("/clients/search", response_model=list[ClientSalePickerRow])
+def search_sale_client_picker(
+    db: DbDep,
+    _: SalesInvoicesViewDep,
+    q: Optional[str] = Query(
+        default=None,
+        max_length=120,
+        description="Texto de búsqueda (nombre, email o usuario IPTV según ``mode``).",
+    ),
+    mode: Literal["nombre", "usuario"] = Query(
+        default="nombre",
+        description="``nombre``: name/email; ``usuario``: username IPTV estricto.",
+    ),
+    limit: int = Query(default=80, ge=1, le=200),
+) -> list[ClientSalePickerRow]:
+    """
+    Buscador de clientes para el modal «Nueva Venta».
+
+    Consulta la tabla local ``clients`` (activos, cualquier jerarquía BaaS).
+    """
+    rows = search_active_clients_for_sale_picker(db, q=q, mode=mode, limit=limit)
+    out: list[ClientSalePickerRow] = []
+    for c in rows:
+        em = str(c.email or "").strip()
+        if "@" not in em:
+            continue
+        out.append(
+            ClientSalePickerRow(
+                id=int(c.id),
+                name=(str(c.name).strip() if c.name else None) or None,
+                email=em,
+                username=str(c.username or "").strip(),
+            )
+        )
+    return out
 
 
 # --- Inventario ERP (ventas ``pending`` → ``approved``) -----------------------------------------

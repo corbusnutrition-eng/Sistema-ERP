@@ -218,7 +218,40 @@ function saleClientComboLabel(c, mode) {
     : String(c.iptv_username || c.username || 'Sin usuario IPTV')
 }
 
-/** Fila desde ``GET /users?role=client`` — proxy listar-clientes Render o usuario portal ERP según ``source``. */
+/** Nombre visible en el dropdown (siempre el nombre del CRM). */
+function saleClientDropdownPrimary(c) {
+  if (!c) return 'Sin nombre'
+  return String(c.full_name || c.name || 'Sin nombre')
+}
+
+/** Subtítulo con usuario IPTV en el dropdown. */
+function saleClientDropdownSubtitle(c) {
+  const u = String(c.iptv_username || c.username || '').trim()
+  return u || null
+}
+
+/** Fila desde ``GET /sales/clients/search`` (tabla local ``clients``). */
+function mapSaleClientPickerRow(row) {
+  if (!row || row.id == null) return null
+  const id = Number(row.id)
+  if (!Number.isFinite(id) || id < 1) return null
+  const email = String(row.email ?? '').trim()
+  const username = String(row.username ?? '').trim()
+  const name = String(row.name ?? '').trim() || (email.includes('@') ? email.split('@')[0] : '') || `Cliente #${id}`
+  return {
+    id,
+    name,
+    full_name: name,
+    email,
+    username,
+    iptv_username: username,
+    last_iptv_username: username || undefined,
+    last_iptv_password: undefined,
+    __saleBinding: 'crm_client',
+  }
+}
+
+/** @deprecated Render/portal — conservado solo para filas legacy en edición. */
 function mapUnifiedClientUserApiRow(u) {
   if (!u || u.id == null) return null
   const fromRenderCatalog = String(u.source ?? '').trim() === 'render_listar_clientes'
@@ -1922,14 +1955,18 @@ export default function NuevaVentaModal({
     setPortalPickError(null)
     const query = debouncedClientPickQuery
     api
-      .get('/api/v1/users', {
-        params: { role: 'client', search: query || undefined, limit: 80 },
+      .get('/api/v1/sales/clients/search', {
+        params: {
+          q: query || undefined,
+          mode: clientSearchMode === 'usuario' ? 'usuario' : 'nombre',
+          limit: 80,
+        },
         signal: controller.signal,
       })
       .then((res) => {
         const data = res?.data
         const rows = (Array.isArray(data) ? data : [])
-          .map(mapUnifiedClientUserApiRow)
+          .map(mapSaleClientPickerRow)
           .filter(Boolean)
         setPortalPickRows(rows)
       })
@@ -1940,13 +1977,13 @@ export default function NuevaVentaModal({
           err?.code === 'ERR_CANCELED'
         if (canceled) return
         setPortalPickRows([])
-        setPortalPickError('No se pudieron cargar los clientes del portal.')
+        setPortalPickError('No se pudieron cargar los clientes del CRM.')
       })
       .finally(() => {
         if (!controller.signal.aborted) setPortalPickLoading(false)
       })
     return () => controller.abort()
-  }, [debouncedClientPickQuery, clientPickerOpen, isEditing, portalPickRetryKey])
+  }, [debouncedClientPickQuery, clientSearchMode, clientPickerOpen, isEditing, portalPickRetryKey])
 
   useEffect(() => {
     void loadSaleCatalog()
@@ -3553,7 +3590,23 @@ export default function NuevaVentaModal({
           saleClientComboLabel(c, clientSearchMode).toLowerCase().includes(q),
         )
     if (isEditing) return crmFiltered
-    return [...crmFiltered, ...portalPickRows]
+
+    const merged = new Map()
+    for (const c of crmFiltered) {
+      if (c?.id != null) merged.set(String(c.id), c)
+    }
+    for (const c of portalPickRows) {
+      if (c?.id != null && !merged.has(String(c.id))) merged.set(String(c.id), c)
+    }
+    const combined = Array.from(merged.values())
+    combined.sort((a, b) =>
+      saleClientComboLabel(a, clientSearchMode).localeCompare(
+        saleClientComboLabel(b, clientSearchMode),
+        'es',
+        { sensitivity: 'base' },
+      ),
+    )
+    return combined
   }, [safeClients, clientPickerQuery, clientSearchMode, isEditing, portalPickRows])
 
   const selectedClientObj =
@@ -3985,7 +4038,14 @@ export default function NuevaVentaModal({
                               pickSaleClient(c)
                             }}
                           >
-                            {saleClientComboLabel(c, clientSearchMode)}
+                            <span className="block font-medium leading-snug">
+                              {saleClientDropdownPrimary(c)}
+                            </span>
+                            {saleClientDropdownSubtitle(c) ? (
+                              <span className="block text-xs text-gray-500 mt-0.5 leading-snug">
+                                📺 {saleClientDropdownSubtitle(c)}
+                              </span>
+                            ) : null}
                           </button>
                         </li>
                       )
@@ -3993,7 +4053,7 @@ export default function NuevaVentaModal({
                     {unifiedClientDropdownRows.length === 0 && !portalPickLoading && (
                       <li className="px-3 py-2 text-xs text-gray-400">
                         {!isEditing && debouncedClientPickQuery.trim()
-                          ? 'No se encontraron usuarios'
+                          ? 'No se encontraron clientes'
                           : 'Sin coincidencias'}
                       </li>
                     )}

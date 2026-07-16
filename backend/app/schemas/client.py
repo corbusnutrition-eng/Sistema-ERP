@@ -250,3 +250,14 @@ class ClientPublicResponse(BaseModel):
     payment_token: uuid.UUID
 
     model_config = {"from_attributes": True}
+
+
+class ClientSalePickerRow(BaseModel):
+    """Fila ligera para el buscador de clientes en Nueva Venta."""
+
+    id: int
+    name: Optional[str] = None
+    email: str
+    username: str = Field(..., description="Usuario IPTV (campo ``clients.username``).")
+
+    model_config = {"from_attributes": True}
