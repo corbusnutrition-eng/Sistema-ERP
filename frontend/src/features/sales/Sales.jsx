@@ -1090,7 +1090,7 @@ export default function Sales() {
 
       {extendTimerModalSale && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-[2px]"
           role="presentation"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget && !extendTimerSubmitting) closeExtendTimerModal()
@@ -1100,7 +1100,7 @@ export default function Sales() {
             role="dialog"
             aria-labelledby="extend-timer-title"
             aria-modal="true"
-            className="relative w-full max-w-sm rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200/80 overflow-hidden"
+            className="relative w-[95%] sm:w-full max-w-sm rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200/80 max-h-[90vh] overflow-y-auto"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="px-6 pt-5 pb-2 border-b border-slate-100">
@@ -1153,7 +1153,7 @@ export default function Sales() {
 
       {rejectModalSale && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-900/50 backdrop-blur-[2px]"
           role="presentation"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) closeRejectModal()
@@ -1163,7 +1163,7 @@ export default function Sales() {
             role="dialog"
             aria-labelledby="reject-modal-title"
             aria-modal="true"
-            className="relative w-full max-w-md rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200/80 overflow-hidden"
+            className="relative w-[95%] sm:w-full max-w-md rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200/80 max-h-[90vh] overflow-y-auto"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="px-6 pt-5 pb-2 border-b border-slate-100">
@@ -1358,7 +1358,7 @@ export default function Sales() {
 
         {/* Solo la tabla reacciona al fetch de la pestaña activa */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden w-full min-h-[28rem] flex flex-col">
-          <div className="overflow-x-auto w-full flex-1 min-h-[22rem]">
+          <div className="overflow-x-auto scrollbar-hide w-full flex-1 min-h-[22rem]">
             <table className="w-full table-fixed min-w-[1200px] text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">

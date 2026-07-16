@@ -199,8 +199,8 @@ export default function PayBillsFormModal({ open, onClose, onSaved, prefillVendo
   const today = todayISO()
 
   return (
-    <div className="fixed inset-0 z-[89] flex items-center justify-center p-4 bg-black/45">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[96vh] flex flex-col overflow-hidden border border-gray-200">
+    <div className="fixed inset-0 z-[89] flex items-center justify-center p-2 sm:p-4 bg-black/45">
+      <div className="bg-white rounded-xl shadow-2xl w-[95%] sm:w-full max-w-6xl max-h-[96vh] flex flex-col overflow-y-auto sm:overflow-hidden border border-gray-200">
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
           <div className="flex items-center gap-2">
             <Landmark size={22} className="text-gray-500" />

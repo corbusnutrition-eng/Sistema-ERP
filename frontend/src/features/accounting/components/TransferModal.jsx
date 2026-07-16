@@ -525,7 +525,7 @@ export default function TransferModal({
   )
 
   return (
-    <div className="fixed inset-0 z-[215] flex items-center justify-center p-3 sm:p-6 font-sans text-gray-900">
+    <div className="fixed inset-0 z-[215] flex items-center justify-center p-2 sm:p-6 font-sans text-gray-900">
       <button
         type="button"
         className="absolute inset-0 bg-black/40"
@@ -536,7 +536,7 @@ export default function TransferModal({
       <div
         role="dialog"
         aria-labelledby="transfer-modal-title"
-        className="relative w-full max-w-5xl h-[min(92vh,900px)] flex flex-col bg-white rounded-md shadow-2xl border border-gray-200 overflow-hidden"
+        className="relative w-[95%] sm:w-full max-w-5xl h-[min(92vh,900px)] flex flex-col bg-white rounded-md shadow-2xl border border-gray-200 overflow-y-auto sm:overflow-hidden"
       >
         {/* Header QB */}
         <div className="flex items-start justify-between gap-3 px-5 py-3 border-b border-gray-200 shrink-0 bg-white">

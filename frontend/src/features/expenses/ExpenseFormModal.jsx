@@ -311,9 +311,9 @@ export default function ExpenseFormModal({ open, onClose, onSaved }) {
   const payBal = selectedPaymentAcc?.system_balance ?? selectedPaymentAcc?.current_balance ?? 0
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/45">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-2 sm:p-4 bg-black/45">
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[96vh] flex flex-col overflow-hidden border border-gray-200"
+        className="bg-white rounded-xl shadow-2xl w-[95%] sm:w-full max-w-5xl max-h-[96vh] flex flex-col overflow-y-auto sm:overflow-hidden border border-gray-200"
         role="dialog"
         aria-labelledby="expense-modal-title"
       >

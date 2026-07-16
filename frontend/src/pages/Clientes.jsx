@@ -694,8 +694,8 @@ function TagManagerModal({ onClose, globalTags, onRefresh, activeTagFilters, onT
   const atLimit = globalTags.length >= 10
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[85vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-gray-900/60 backdrop-blur-sm" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white rounded-2xl shadow-2xl w-[95%] sm:w-full max-w-md flex flex-col max-h-[85vh] overflow-y-auto">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100 shrink-0">
@@ -897,10 +897,10 @@ function Toast({ message, type = 'success', onClose }) {
 function DeleteConfirmDialog({ client, onClose, onConfirm, loading }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-gray-900/60 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl ring-1 ring-gray-100 overflow-hidden">
+      <div className="w-[95%] sm:w-full max-w-sm bg-white rounded-2xl shadow-2xl ring-1 ring-gray-100 overflow-y-auto max-h-[90vh]">
         <div className="px-6 pt-6 pb-4 text-center space-y-3">
           <div className="mx-auto w-11 h-11 rounded-full bg-slate-100 flex items-center justify-center">
             <Trash2 size={20} className="text-slate-500" />
@@ -977,10 +977,10 @@ export function RegisterModal({ onClose, onSave }) {
 
   return (
     <div
-      className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[95] flex items-center justify-center p-2 sm:p-4 bg-gray-900/60 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl ring-1 ring-gray-100 overflow-hidden">
+      <div className="relative w-[95%] sm:w-full max-w-lg bg-white rounded-2xl shadow-2xl ring-1 ring-gray-100 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div>
@@ -1176,10 +1176,10 @@ export function EditClientModal({ client, onClose, onSave, onSuccess }) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-gray-900/60 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl ring-1 ring-gray-100 overflow-hidden">
+      <div className="relative w-[95%] sm:w-full max-w-lg bg-white rounded-2xl shadow-2xl ring-1 ring-gray-100 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
@@ -1400,8 +1400,8 @@ function ClientTable({
         </div>
       )}
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto scrollbar-hide">
+        <table className="w-full text-sm min-w-max">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-100">
               {columns.map((col) => (
@@ -2168,11 +2168,11 @@ export default function Clientes() {
 
       {followUpTagTarget ? (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-gray-900/50 backdrop-blur-sm"
           onClick={(e) => e.target === e.currentTarget && setFollowUpTagTarget(null)}
         >
           <div
-            className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4"
+            className="bg-white rounded-2xl shadow-xl w-[95%] sm:w-full max-w-md p-5 space-y-4 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
             data-no-row-nav
           >

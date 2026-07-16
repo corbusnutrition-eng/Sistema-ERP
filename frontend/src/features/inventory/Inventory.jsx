@@ -515,8 +515,8 @@ function RowActions({ onEdit, onDelete, hideDelete }) {
 
 function DeleteConfirmModal({ label, onConfirm, onCancel, loading }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-5">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-xl w-[95%] sm:w-full max-w-sm p-6 space-y-5 max-h-[90vh] overflow-y-auto">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-red-50 ring-1 ring-red-200 flex items-center justify-center shrink-0">
             <AlertTriangle size={18} className="text-red-500" />
@@ -1366,7 +1366,7 @@ export default function Inventory() {
         ══════════════════════════════════════════════════════════════ */}
         {activeTab === 'full' && (
           <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100">
-            <div className="overflow-x-auto min-w-0">
+            <div className="overflow-x-auto scrollbar-hide min-w-0">
               <table className="w-full min-w-max text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
@@ -1578,7 +1578,7 @@ export default function Inventory() {
               {!fetchError && (loading || screens.length > 0) && (
                 <div
                   ref={screensScrollTopRef}
-                  className="overflow-x-auto overflow-y-hidden min-w-0 border-b border-gray-100 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300"
+                  className="overflow-x-auto overflow-y-hidden scrollbar-hide min-w-0 border-b border-gray-100"
                   style={{ height: 14 }}
                   onScroll={onScreensTopScroll}
                 >
@@ -1591,7 +1591,7 @@ export default function Inventory() {
               )}
               <div
                 ref={screensScrollBottomRef}
-                className="overflow-x-auto min-w-0 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300"
+                className="overflow-x-auto scrollbar-hide min-w-0"
                 onScroll={onScreensBottomScroll}
               >
                 <table

@@ -623,12 +623,12 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
 
   return (
     <div
-      className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 p-4 font-sans text-gray-800"
+      className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 p-2 sm:p-4 font-sans text-gray-800"
       onClick={(e) => e.target === e.currentTarget && onClose?.()}
       role="presentation"
     >
       <div
-        className="flex max-h-[min(92vh,920px)] w-full max-w-6xl flex-col overflow-hidden rounded-sm bg-white shadow-2xl ring-1 ring-black/10"
+        className="flex max-h-[min(92vh,920px)] w-[95%] sm:w-full max-w-6xl flex-col overflow-y-auto sm:overflow-hidden rounded-sm bg-white shadow-2xl ring-1 ring-black/10"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-300 px-6 py-4">

@@ -518,7 +518,7 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
   return (
     <div className="fixed inset-0 z-[85] flex justify-end">
       <button type="button" className="absolute inset-0 bg-gray-900/50 backdrop-blur-[2px]" aria-label="Cerrar" onClick={() => !saving && onClose()} />
-      <div className="relative h-full w-full max-w-4xl bg-white shadow-2xl flex flex-col border-l border-gray-200">
+      <div className="relative h-full w-[95%] sm:w-full max-w-4xl bg-white shadow-2xl flex flex-col border-l border-gray-200 overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0 bg-gray-50/80">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">

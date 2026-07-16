@@ -7,6 +7,28 @@ body {
   font-family: "Inter", "Segoe UI", system-ui, sans-serif;
 }
 
+/* Scroll horizontal en tablas: deslizable al tacto, barra oculta */
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Panel de modal adaptable a móvil */
+@layer components {
+  .modal-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4;
+  }
+  .modal-panel {
+    @apply relative w-[95%] sm:w-full bg-white rounded-2xl shadow-2xl max-h-[90vh] overflow-y-auto;
+  }
+}
+
 /* Pulso cuando el robot trae comprobantes de ventas desde catalogo-vip (Render). */
 @keyframes erp-web-sync-attention {
   0%,

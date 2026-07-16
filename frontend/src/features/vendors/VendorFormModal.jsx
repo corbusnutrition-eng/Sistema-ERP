@@ -90,11 +90,11 @@ export default function VendorFormModal({ open, onClose, initialVendor = null, o
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-gray-900/55 backdrop-blur-sm"
+      className="fixed inset-0 z-[90] flex items-center justify-center p-2 sm:p-4 bg-gray-900/55 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && !saving && onClose()}
       role="presentation"
     >
-      <div className="relative w-full max-w-lg bg-white rounded-xl shadow-2xl ring-1 ring-gray-100 overflow-hidden">
+      <div className="relative w-[95%] sm:w-full max-w-lg bg-white rounded-xl shadow-2xl ring-1 ring-gray-100 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-900">
             {isEdit ? 'Editar proveedor' : 'Nuevo proveedor'}

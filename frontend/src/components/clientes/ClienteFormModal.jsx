@@ -47,11 +47,11 @@ export default function ClienteFormModal({ onClose, onSave }) {
   return (
     /* ── Overlay ── */
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-gray-900/60 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       {/* ── Panel ── */}
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-gray-100 overflow-hidden">
+      <div className="relative w-[95%] sm:w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-gray-100 max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div>

@@ -103,13 +103,13 @@ export default function SaleActivationReviewModal({ sale, onClose, onConfirm, ac
 
   return (
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[110] flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-sm"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !activating) onClose()
       }}
     >
       <div
-        className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-200/80 overflow-hidden"
+        className="relative w-[95%] sm:w-full max-w-md bg-white rounded-2xl shadow-2xl ring-1 ring-slate-200/80 max-h-[90vh] overflow-y-auto"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">

@@ -147,9 +147,9 @@ function NewTransactionClassModal({ onClose, onCreated }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[65] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[65] flex items-center justify-center p-2 sm:p-4">
       <button type="button" className="absolute inset-0 bg-black/45" aria-label="Cerrar" onClick={() => !saving && onClose()} />
-      <div className="relative w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-gray-100 p-5 space-y-4">
+      <div className="relative w-[95%] sm:w-full max-w-sm rounded-2xl bg-white shadow-2xl border border-gray-100 p-5 space-y-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-gray-900">Nueva clase contable</h3>
           <button type="button" className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100" onClick={() => !saving && onClose()}>
@@ -3768,10 +3768,10 @@ export default function NuevaVentaModal({
   
   return (
     <>
-    <div className="fixed inset-0 z-[55] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[55] flex items-center justify-center p-2 sm:p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative w-full max-w-6xl bg-white rounded-2xl shadow-2xl z-10 max-h-[95vh] overflow-y-auto">
+      <div className="relative w-[95%] sm:w-full max-w-6xl bg-white rounded-2xl shadow-2xl z-10 max-h-[95vh] overflow-y-auto">
         <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10">
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold text-gray-900">

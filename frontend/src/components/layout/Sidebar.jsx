@@ -72,7 +72,7 @@ const CREATE_GROUPS = [
   },
 ]
 
-function CreateMenu({ collapsed, hasPermission }) {
+function CreateMenu({ collapsed, hasPermission, onMobileClose }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
   const navigate = useNavigate()
@@ -100,6 +100,7 @@ function CreateMenu({ collapsed, hasPermission }) {
 
   function handleAction(action) {
     setOpen(false)
+    onMobileClose?.()
     if (action === 'newClient') { openNewClient(); return }
     if (action === 'newSale') { openNewSale(); return }
     if (action === 'receivePayment') { openReceivePayment(); return }
@@ -169,7 +170,7 @@ function CreateMenu({ collapsed, hasPermission }) {
 
 // ── Contabilidad (submenú estilo menú Crear) ──────────────────────────────────
 
-function AccountingDropdown({ item, collapsed }) {
+function AccountingDropdown({ item, collapsed, onMobileClose }) {
   const location = useLocation()
   const { icon: Icon, label, submenu } = item
   const inSection = submenu?.some((s) => location.pathname === s.to)
@@ -208,7 +209,10 @@ function AccountingDropdown({ item, collapsed }) {
               <NavLink
                 key={s.to}
                 to={s.to}
-                onClick={() => setOpen(false)}
+                onClick={() => {
+                  setOpen(false)
+                  onMobileClose?.()
+                }}
                 className={({ isActive }) =>
                   `w-full flex items-center px-4 py-2.5 text-sm text-left transition-colors ${
                     isActive ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-blue-50 hover:text-blue-700'
@@ -251,6 +255,7 @@ function AccountingDropdown({ item, collapsed }) {
             <li key={s.to}>
               <NavLink
                 to={s.to}
+                onClick={() => onMobileClose?.()}
                 className={({ isActive }) =>
                   `block py-2 pl-1 pr-2 rounded-lg text-sm transition-colors ${
                     isActive
@@ -299,9 +304,10 @@ const BOTTOM_ITEMS = [
 
 // ── Componente ───────────────────────────────────────────────────────────────
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen = false, onMobileClose }) {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, isAdmin, hasAnyBaasAccess, hasPermission, permissions, clearSession } = useAuth()
 
   const navCtx = { role: user?.role, permissions, isAdmin, hasAnyBaasAccess }
@@ -309,6 +315,12 @@ export default function Sidebar() {
   const primaryLedgerPath = getPrimaryAssignedAccountPath(user)
   const restrictedLedger = isRestrictedLedgerUser(user)
   const directContabilidadNav = restrictedLedger && primaryLedgerPath
+
+  // Cerrar drawer móvil al cambiar de ruta
+  useEffect(() => {
+    onMobileClose?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al cambiar pathname
+  }, [location.pathname])
 
   const visibleNavItems = NAV_ITEMS
     .filter((item) => isNavItemVisible(item, navCtx))
@@ -325,15 +337,23 @@ export default function Sidebar() {
   const visibleBottomItems = BOTTOM_ITEMS.filter((item) => isNavItemVisible(item, navCtx))
 
   function handleLogout() {
+    onMobileClose?.()
     clearSession()
     navigate('/login', { replace: true })
   }
 
+  // En móvil el drawer siempre muestra etiquetas (ancho fijo w-60)
+  const effectiveCollapsed = collapsed && !mobileOpen
+
   return (
     <aside
-      className={`relative flex flex-col bg-white border-r border-gray-200 h-screen transition-all duration-300 shrink-0 ${
-        collapsed ? 'w-16' : 'w-60'
-      }`}
+      className={`
+        fixed inset-y-0 left-0 z-50 flex flex-col bg-white border-r border-gray-200 h-screen
+        w-60 transition-transform duration-300 ease-in-out
+        lg:static lg:z-auto lg:translate-x-0 lg:shrink-0 lg:transition-[width]
+        ${mobileOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full'}
+        ${collapsed ? 'lg:w-16' : 'lg:w-60'}
+      `}
     >
       {/* Logo */}
       <div className="flex items-center h-16 px-4 border-b border-gray-100 shrink-0">
@@ -341,7 +361,7 @@ export default function Sidebar() {
           <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
             <Tv2 size={16} className="text-white" />
           </div>
-          {!collapsed && (
+          {!effectiveCollapsed && (
             <span className="font-bold text-gray-800 text-sm tracking-wide whitespace-nowrap">
               IPTV ERP
             </span>
@@ -351,7 +371,11 @@ export default function Sidebar() {
 
       {/* Quick-create menu — oculto para trabajador/verificador con acceso limitado */}
       {!restrictedLedger && (
-        <CreateMenu collapsed={collapsed} hasPermission={hasPermission} />
+        <CreateMenu
+          collapsed={effectiveCollapsed}
+          hasPermission={hasPermission}
+          onMobileClose={onMobileClose}
+        />
       )}
 
       {/* Navigation */}
@@ -362,7 +386,8 @@ export default function Sidebar() {
               <li key={item.label}>
                 <NavLink
                   to={primaryLedgerPath}
-                  title={collapsed ? item.label : undefined}
+                  title={effectiveCollapsed ? item.label : undefined}
+                  onClick={() => onMobileClose?.()}
                   className={({ isActive }) =>
                     `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group ${
                       isActive
@@ -383,7 +408,7 @@ export default function Sidebar() {
                               : 'text-gray-400 group-hover:text-gray-600'
                           }`}
                         />
-                        {!collapsed && <span className="truncate">{item.label}</span>}
+                        {!effectiveCollapsed && <span className="truncate">{item.label}</span>}
                       </>
                     )
                   }}
@@ -391,14 +416,19 @@ export default function Sidebar() {
               </li>
             ) : item.submenu ? (
               <li key={item.label}>
-                <AccountingDropdown item={item} collapsed={collapsed} />
+                <AccountingDropdown
+                  item={item}
+                  collapsed={effectiveCollapsed}
+                  onMobileClose={onMobileClose}
+                />
               </li>
             ) : (
             <li key={item.label}>
               <NavLink
                 to={item.to}
                 end={item.to === '/'}
-                title={collapsed ? item.label : undefined}
+                title={effectiveCollapsed ? item.label : undefined}
+                onClick={() => onMobileClose?.()}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group ${
                     isActive
@@ -419,7 +449,7 @@ export default function Sidebar() {
                           : 'text-gray-400 group-hover:text-gray-600'
                       }`}
                     />
-                    {!collapsed && <span className="truncate">{item.label}</span>}
+                    {!effectiveCollapsed && <span className="truncate">{item.label}</span>}
                   </>
                   )
                 }}
@@ -436,7 +466,8 @@ export default function Sidebar() {
               key={label}
               to={to}
               end={to === '/equipo'}
-              title={collapsed ? label : undefined}
+              title={effectiveCollapsed ? label : undefined}
+              onClick={() => onMobileClose?.()}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors group ${
                   isActive
@@ -455,14 +486,14 @@ export default function Sidebar() {
                         : 'text-gray-400 group-hover:text-gray-600'
                     }`}
                   />
-                  {!collapsed && <span className="truncate">{label}</span>}
+                  {!effectiveCollapsed && <span className="truncate">{label}</span>}
                 </>
               )}
             </NavLink>
           ))}
 
           {/* User badge */}
-          {!collapsed && user && (
+          {!effectiveCollapsed && user && (
             <div className="px-3 py-2 mt-1 rounded-lg bg-gray-50 border border-gray-100">
               <p className="text-xs font-semibold text-gray-700 truncate">{user.name}</p>
               <p className="text-xs text-gray-400 capitalize">{user.role === 'admin' ? 'Administrador' : 'Trabajador'}</p>
@@ -472,20 +503,20 @@ export default function Sidebar() {
           {/* Logout button */}
           <button
             onClick={handleLogout}
-            title={collapsed ? 'Cerrar Sesión' : undefined}
+            title={effectiveCollapsed ? 'Cerrar Sesión' : undefined}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
                        text-red-500 hover:bg-red-50 hover:text-red-600 transition-colors group"
           >
             <LogOut size={18} className="shrink-0 text-red-400 group-hover:text-red-600" />
-            {!collapsed && <span className="truncate">Cerrar Sesión</span>}
+            {!effectiveCollapsed && <span className="truncate">Cerrar Sesión</span>}
           </button>
         </div>
       </nav>
 
-      {/* Collapse toggle */}
+      {/* Collapse toggle — solo escritorio */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="absolute -right-3 top-20 z-10 flex items-center justify-center w-6 h-6 rounded-full bg-white border border-gray-200 shadow-sm text-gray-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
+        className="hidden lg:flex absolute -right-3 top-20 z-10 items-center justify-center w-6 h-6 rounded-full bg-white border border-gray-200 shadow-sm text-gray-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
         aria-label={collapsed ? 'Expandir menú' : 'Colapsar menú'}
       >
         {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}

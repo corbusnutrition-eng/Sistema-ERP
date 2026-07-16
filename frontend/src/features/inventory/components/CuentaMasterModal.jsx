@@ -689,10 +689,10 @@ export default function CuentaMasterModal({
   }
 
   return (
-    <div className={`fixed inset-0 ${overlayZIndexClass} flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm`}>
+    <div className={`fixed inset-0 ${overlayZIndexClass} flex items-center justify-center p-2 sm:p-4 bg-black/40 backdrop-blur-sm`}>
       <div className="absolute inset-0" onClick={onClose} />
 
-      <div className={`relative w-full ${isScreens ? 'max-w-4xl' : isFull ? 'max-w-xl' : 'max-w-lg'} bg-white rounded-2xl shadow-2xl z-10 flex flex-col max-h-[92vh] transition-all duration-200`}>
+      <div className={`relative w-[95%] sm:w-full ${isScreens ? 'max-w-4xl' : isFull ? 'max-w-xl' : 'max-w-lg'} bg-white rounded-2xl shadow-2xl z-10 flex flex-col max-h-[92vh] overflow-y-auto transition-all duration-200`}>
 
         {/* ── Header ── */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
