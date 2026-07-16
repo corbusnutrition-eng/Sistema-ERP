@@ -849,7 +849,7 @@ export default function NewRechargeModal({
                       </button>
                     </div>
                   </div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Distribuidor</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Cliente / Distribuidor</label>
                   {renderClientesWarning && !renderClientesError ?
                     <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                       {renderClientesWarning}

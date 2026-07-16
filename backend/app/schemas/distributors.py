@@ -52,15 +52,15 @@ class CatalogClientPickerRow(BaseModel):
 
 class CatalogClientsPickerResponse(BaseModel):
     """
-    Opciones de «distribuidor / cliente» para solicitud de recarga BaaS.
-    Origen: webhook ``listar-clientes`` en Render o fallback tabla ``clients`` del ERP.
+    Opciones de «cliente / distribuidor» para solicitud de recarga BaaS.
+    Origen: unión CRM local (todos los activos) + webhook ``listar-clientes`` en Render.
     """
 
     status: str = Field(default="ok")
     clientes: list[CatalogClientPickerRow] = Field(default_factory=list)
     source: str = Field(
         ...,
-        description="render | local_fallback | local_only",
+        description="merged | local_fallback | local_only",
     )
     warning: Optional[str] = Field(
         default=None,
@@ -739,14 +739,19 @@ class WalletRechargeRequestAdminNoteUpdate(BaseModel):
 
 
 class GenerateRechargeLinkPayload(BaseModel):
-    """Admin crea una solicitud + enlace público para que el distribuidor pague y suba recibo."""
+    """Admin crea una solicitud + enlace público para que el cliente pague y suba recibo."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     distributor_email: EmailStr = Field(
         ...,
-        validation_alias=AliasChoices("distributor_email", "email", "correo"),
-        description="Correo del distribuidor (catálogo VIP / Render).",
+        validation_alias=AliasChoices(
+            "distributor_email",
+            "client_email",
+            "email",
+            "correo",
+        ),
+        description="Correo del cliente o distribuidor (CRM / catálogo VIP).",
     )
     amount: Optional[float] = Field(
         default=None,

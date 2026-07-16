@@ -86,7 +86,11 @@ from app.wallet_recharge_helpers import (
     wallet_recharge_admin_pending_sql_filter,
 )
 from app.services import render_sync
-from app.services.catalog_client_picker_rows import local_clients_catalog_picker_rows
+from app.services.catalog_client_picker_rows import (
+    local_clients_catalog_picker_rows,
+    merged_catalog_client_picker_rows,
+    render_catalog_row_to_picker_dict,
+)
 from app.services.client_payment_service import (
     finalize_wallet_recharge_payment_approval,
     get_client_credit_balance,
@@ -285,19 +289,28 @@ def _would_create_parent_cycle(db: Session, child_id: int, new_parent_id: Option
 
 
 def _get_or_create_client_by_distributor_email(db: Session, distributor_email: str) -> Client:
-    """Localiza cliente por correo (insensible a mayúsculas) o lo crea para mantener FK de la solicitud."""
+    """
+    Localiza cliente por correo (insensible a mayúsculas) o lo crea para mantener FK de la solicitud.
+
+    Acepta clientes directos, distribuidores y sub-clientes BaaS (sin filtro por ``parent_id``).
+    """
     email_norm = (distributor_email or "").strip().lower()
     if not email_norm or "@" not in email_norm:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Correo del distribuidor no válido.",
+            detail="Correo del cliente no válido.",
         )
 
     client = db.query(Client).filter(func.lower(Client.email) == email_norm).first()
     if client is not None:
+        if str(getattr(client, "status", "") or "").strip() == "Inactivo":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El cliente está inactivo; actívalo en el CRM antes de crear la recarga.",
+            )
         return client
 
-    local_part = email_norm.split("@", 1)[0].strip()[:120] or "distribuidor"
+    local_part = email_norm.split("@", 1)[0].strip()[:120] or "cliente"
     username = local_part
     suffix = 0
     while db.query(Client.id).filter(Client.username == username).first() is not None:
@@ -518,19 +531,17 @@ def client_credit_preview_for_recharge(
 @router.get("/catalog-clients", response_model=CatalogClientsPickerResponse)
 def list_catalog_clients_for_recharge_picker(db: DbDep, _: BaasDistributorsViewDep) -> CatalogClientsPickerResponse:
     """
-    Lista clientes desde el catálogo VIP (Render) vía servidor.
+    Opciones del picker de recargas BaaS: **todos** los clientes activos del CRM
+    (directos, distribuidores y sub-clientes), unidos con el catálogo VIP (Render) si responde.
 
-    Intenta ``POST …/api/webhook/listar-clientes`` con ``X-Webhook-Secret``.
-    Si la red o Render fallan, devuelve **siempre** 200 con clientes activos del CRM local
-    (nunca propaga error 502/503 al frontend).
+    Nunca propaga error 502/503 al frontend.
     """
-    rows_out: list[Any] = []
-    src = "render"
     warning: Optional[str] = None
-
     raw_rows, render_ok = render_sync.fetch_listar_clientes_raw_rows()
+
     if render_ok and raw_rows is not None:
-        rows_out = list(raw_rows)
+        rows_out = merged_catalog_client_picker_rows(db, raw_rows)
+        src = "merged"
     else:
         rows_out = local_clients_catalog_picker_rows(db)
         src = "local_fallback" if render_sync.bridge_enabled() else "local_only"
@@ -541,10 +552,11 @@ def list_catalog_clients_for_recharge_picker(db: DbDep, _: BaasDistributorsViewD
 
     clientes: list[CatalogClientPickerRow] = []
     for row in rows_out:
-        if not isinstance(row, dict):
+        normalized = row if isinstance(row, dict) else render_catalog_row_to_picker_dict(row)
+        if not normalized:
             continue
         try:
-            clientes.append(CatalogClientPickerRow.model_validate(row))
+            clientes.append(CatalogClientPickerRow.model_validate(normalized))
         except Exception:
             continue
 

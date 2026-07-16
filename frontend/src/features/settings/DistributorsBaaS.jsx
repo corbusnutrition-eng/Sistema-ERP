@@ -78,6 +78,25 @@ function normalizeRechargeStatus(status) {
     .toLowerCase()
 }
 
+/** Correo del cliente seleccionado en el modal (directo, distribuidor o sub-cliente). */
+function resolveRechargeClientEmail(extra, linkClientId, clientes) {
+  const fromExtra =
+    extra?.distributorEmail && String(extra.distributorEmail).trim().includes('@') ?
+      String(extra.distributorEmail).trim().toLowerCase()
+    : ''
+  if (fromExtra) return fromExtra
+
+  const selected =
+    Array.isArray(clientes) ?
+      clientes.find((c) => c?.id != null && String(c.id) === String(linkClientId))
+    : null
+  const fromSelected = String(selected?.email ?? '').trim().toLowerCase()
+  if (fromSelected.includes('@')) return fromSelected
+
+  const fallback = String(linkClientId ?? '').trim().toLowerCase()
+  return fallback.includes('@') ? fallback : ''
+}
+
 /** Filtro estricto por pestaña sobre el estado maestro (sin mezclar estados). */
 function rechargeRequestMatchesTab(row, tabId) {
   const st = normalizeRechargeStatus(row?.status)
@@ -919,13 +938,9 @@ export default function DistributorsBaaSPage() {
     }
     const { linePayload, subtotal, currency: builtCur } = built
 
-    const fromRow =
-      extra?.distributorEmail && String(extra.distributorEmail).trim().includes('@') ?
-        String(extra.distributorEmail).trim().toLowerCase()
-      : ''
-    const email = fromRow || String(linkClientId || '').trim().toLowerCase()
+    const email = resolveRechargeClientEmail(extra, linkClientId, clientes)
     if (!email || !email.includes('@')) {
-      showToast('Selecciona un distribuidor con correo válido.')
+      showToast('Selecciona un cliente activo con correo válido.')
       return
     }
     const pmIds = selectedPaymentMethodIds.map(Number).filter(Number.isFinite)
@@ -1210,7 +1225,7 @@ export default function DistributorsBaaSPage() {
     }
     const email = String(row.client_email ?? '').trim()
     if (!email.includes('@')) {
-      showToast('Esta solicitud no tiene correo de distribuidor para editar.')
+      showToast('Esta solicitud no tiene correo de cliente para editar.')
       return
     }
     let hydrated = row
@@ -1256,13 +1271,9 @@ export default function DistributorsBaaSPage() {
     }
     const { linePayload, subtotal, currency: builtCur } = built
 
-    const fromRow =
-      extra?.distributorEmail && String(extra.distributorEmail).trim().includes('@')
-        ? String(extra.distributorEmail).trim().toLowerCase()
-        : ''
-    const email = fromRow || String(linkClientId || '').trim().toLowerCase()
+    const email = resolveRechargeClientEmail(extra, linkClientId, clientes)
     if (!email || !email.includes('@')) {
-      showToast('Selecciona un distribuidor con correo válido.')
+      showToast('Selecciona un cliente activo con correo válido.')
       return
     }
     const pmIds = selectedPaymentMethodIds.map(Number).filter(Number.isFinite)
