@@ -26,8 +26,8 @@ export default function StatusFilterTabs({
 
   return (
     <div
-      className={`flex items-center gap-1 bg-gray-100 p-1 rounded-xl w-fit ${
-        wrap ? 'flex-wrap' : ''
+      className={`flex items-center gap-1 bg-gray-100 p-1 rounded-xl w-fit max-w-full ${
+        wrap ? 'flex-wrap' : 'flex-nowrap min-w-max'
       } ${className}`.trim()}
       role="tablist"
       aria-label="Filtrar por estado"
@@ -46,7 +46,7 @@ export default function StatusFilterTabs({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(id)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap shrink-0 ${
               active ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
             }`}
           >

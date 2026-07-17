@@ -895,21 +895,33 @@ export default function DistributorsBaaSPage() {
 
   async function handleCopyRechargePortalLink(row) {
     const cid = Number(row?.client_id)
-    if (!Number.isFinite(cid) || cid < 1) {
-      showToast('Este cliente no tiene enlace de portal disponible.')
-      return
-    }
+    const existingToken = String(
+      row?.client_portal_token ?? row?.portal_token ?? row?.client?.portal_token ?? '',
+    ).trim()
+
     try {
-      const { data } = await api.get(`/api/v1/distributors/clients/${cid}/portal-link`)
-      const path = String(data?.portal_path ?? '').trim()
-      if (!path) {
+      let token = existingToken
+      if (!token) {
+        if (!Number.isFinite(cid) || cid < 1) {
+          showToast('Este cliente no tiene enlace de portal disponible.')
+          return
+        }
+        const { data } = await api.get(`/api/v1/distributors/clients/${cid}/portal-link`)
+        const path = String(data?.portal_path ?? '').trim()
+        if (!path) {
+          showToast('Este cliente no tiene enlace de portal disponible.')
+          return
+        }
+        token = path.replace(/^\/portal\//, '')
+      }
+      await copyClientPortalLink(token)
+      showToast('Enlace del portal del cliente copiado')
+    } catch (err) {
+      const msg = String(err?.message ?? '')
+      if (msg.includes('Sin enlace') || msg.includes('Nada que copiar')) {
         showToast('Este cliente no tiene enlace de portal disponible.')
         return
       }
-      const token = path.replace(/^\/portal\//, '')
-      await copyClientPortalLink(token)
-      showToast('Enlace del portal del cliente copiado')
-    } catch {
       showToast('No se pudo copiar el enlace.')
     }
   }
@@ -1522,12 +1534,13 @@ export default function DistributorsBaaSPage() {
       </div>
 
       {/* Pestañas */}
-      <div className="flex gap-2 border-b border-gray-200 pb-px">
+      <div className="w-full overflow-x-auto scrollbar-hide border-b border-gray-200 pb-px">
+        <div className="flex gap-2 min-w-max">
         {hasPermission(BAAS_TAB_PERMISSIONS.users) && (
         <button
           type="button"
           onClick={() => setTab('users')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors whitespace-nowrap shrink-0 ${
             tab === 'users'
               ? 'border-blue-600 text-blue-700 bg-blue-50/50'
               : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
@@ -1541,7 +1554,7 @@ export default function DistributorsBaaSPage() {
         <button
           type="button"
           onClick={() => setTab('requests')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors whitespace-nowrap shrink-0 ${
             tab === 'requests'
               ? 'border-blue-600 text-blue-700 bg-blue-50/50'
               : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
@@ -1555,7 +1568,7 @@ export default function DistributorsBaaSPage() {
         <button
           type="button"
           onClick={() => setTab('notifications')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors whitespace-nowrap shrink-0 ${
             tab === 'notifications'
               ? 'border-blue-600 text-blue-700 bg-blue-50/50'
               : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
@@ -1565,6 +1578,7 @@ export default function DistributorsBaaSPage() {
           Gestión de Notificaciones
         </button>
         )}
+        </div>
       </div>
 
       {tab === 'users' && (
@@ -1621,15 +1635,15 @@ export default function DistributorsBaaSPage() {
               <p className="text-sm font-medium">Ningún cliente coincide con la búsqueda</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
+            <div className="w-full overflow-x-auto scrollbar-hide">
+              <table className="w-full min-w-max text-sm">
                 <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
                   <tr>
-                    <th className="text-left px-6 py-3 font-semibold">Cliente</th>
-                    <th className="text-left px-4 py-3 font-semibold">Email</th>
-                    <th className="text-left px-4 py-3 font-semibold">Usuario IPTV</th>
-                    <th className="text-right px-4 py-3 font-semibold">Saldo BaaS</th>
-                    <th className="text-right px-6 py-3 font-semibold">Acciones</th>
+                    <th className="text-left px-6 py-3 font-semibold whitespace-nowrap">Cliente</th>
+                    <th className="text-left px-4 py-3 font-semibold whitespace-nowrap">Email</th>
+                    <th className="text-left px-4 py-3 font-semibold whitespace-nowrap">Usuario IPTV</th>
+                    <th className="text-right px-4 py-3 font-semibold whitespace-nowrap">Saldo BaaS</th>
+                    <th className="text-right px-6 py-3 font-semibold whitespace-nowrap">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -1719,19 +1733,20 @@ export default function DistributorsBaaSPage() {
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 mx-6 mt-4 mb-2">
-            <StatusFilterTabs
-              tabs={RECHARGE_FILTERS}
-              activeId={rechargeActiveTab}
-              onChange={setRechargeActiveTab}
-              counts={rechargeTabCounts}
-              wrap
-            />
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mx-4 sm:mx-6 mt-4 mb-2">
+            <div className="w-full sm:w-auto overflow-x-auto scrollbar-hide">
+              <StatusFilterTabs
+                tabs={RECHARGE_FILTERS}
+                activeId={rechargeActiveTab}
+                onChange={setRechargeActiveTab}
+                counts={rechargeTabCounts}
+              />
+            </div>
             <button
               type="button"
               disabled={syncingWeb}
               onClick={() => void sincronizarConWeb(false)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-sky-800 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 disabled:opacity-50 whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-sky-800 bg-sky-50 border border-sky-200 rounded-lg hover:bg-sky-100 disabled:opacity-50 whitespace-nowrap shrink-0 self-start"
             >
               <RefreshCw size={14} className={syncingWeb ? 'animate-spin' : ''} aria-hidden />
               ☁️ Sincronizar (Auto)
@@ -1755,8 +1770,8 @@ export default function DistributorsBaaSPage() {
               </p>
             </div>
           ) : (
-            <div className="w-full overflow-x-auto">
-              <table className="w-full table-fixed text-sm">
+            <div className="w-full overflow-x-auto scrollbar-hide">
+              <table className="w-full table-fixed min-w-[1100px] text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
                     <ResizableTh

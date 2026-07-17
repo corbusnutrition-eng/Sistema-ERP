@@ -35,10 +35,59 @@ export function checkoutPortalUrl(paymentToken) {
   return `${origin}/checkout/${t}`
 }
 
+/**
+ * Copia texto al portapapeles con fallback para Safari iOS
+ * (navigator.clipboard suele fallar fuera del gesto de usuario o sin HTTPS estricto).
+ */
+export async function copyTextToClipboard(text) {
+  const val = String(text ?? '')
+  if (!val) throw new Error('Nada que copiar.')
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(val)
+      return true
+    } catch {
+      // continuar con fallback clásico
+    }
+  }
+
+  if (typeof document === 'undefined') throw new Error('Portapapeles no disponible.')
+
+  const ta = document.createElement('textarea')
+  ta.value = val
+  ta.setAttribute('readonly', '')
+  ta.setAttribute('aria-hidden', 'true')
+  ta.style.position = 'fixed'
+  ta.style.top = '0'
+  ta.style.left = '0'
+  ta.style.width = '1px'
+  ta.style.height = '1px'
+  ta.style.padding = '0'
+  ta.style.margin = '0'
+  ta.style.border = 'none'
+  ta.style.outline = 'none'
+  ta.style.boxShadow = 'none'
+  ta.style.background = 'transparent'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  ta.setSelectionRange(0, ta.value.length)
+  let ok = false
+  try {
+    ok = document.execCommand('copy')
+  } finally {
+    document.body.removeChild(ta)
+  }
+  if (!ok) throw new Error('No se pudo copiar al portapapeles.')
+  return true
+}
+
 export async function copyCheckoutPortalLink(paymentToken) {
   const url = checkoutPortalUrl(paymentToken)
   if (!url) throw new Error('Sin token de enlace público.')
-  await navigator.clipboard.writeText(url)
+  await copyTextToClipboard(url)
 }
 
 /** Enlace SPA de autogestión del cliente: ``/portal/{portal_token}`` (mismo UUID que ``payment_token`` del cliente). */
@@ -52,7 +101,7 @@ export function clientPortalPublicUrl(portalToken) {
 export async function copyClientPortalLink(portalToken) {
   const url = clientPortalPublicUrl(portalToken)
   if (!url) throw new Error('Sin enlace de portal.')
-  await navigator.clipboard.writeText(url)
+  await copyTextToClipboard(url)
 }
 
 /**

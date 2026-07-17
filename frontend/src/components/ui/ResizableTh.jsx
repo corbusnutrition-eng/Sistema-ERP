@@ -15,15 +15,19 @@ export default function ResizableTh({
 
   const widthStyle =
     width != null
-      ? { width: typeof width === 'number' ? `${width}px` : width, minWidth: 0 }
+      ? {
+          width: typeof width === 'number' ? `${width}px` : width,
+          // Evita que table-fixed aplaste el encabezado a 1 letra en móvil
+          minWidth: typeof width === 'number' ? `${Math.min(Number(width) || 72, 72)}px` : '4.5rem',
+        }
       : undefined
 
   return (
     <th
-      className={`relative px-3 py-2 ${textAlign} text-[11px] font-semibold text-gray-500 uppercase tracking-wide overflow-hidden ${className}`}
+      className={`relative px-3 py-2 ${textAlign} text-[11px] font-semibold text-gray-500 uppercase tracking-wide ${className}`}
       style={widthStyle}
     >
-      <span className="block truncate pr-2 leading-tight">{children}</span>
+      <span className="block whitespace-nowrap pr-2 leading-tight">{children}</span>
       {resizable && columnKey && onResizeStart ? (
         <span
           role="separator"
