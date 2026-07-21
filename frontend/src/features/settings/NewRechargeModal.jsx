@@ -8,6 +8,7 @@ import OcrSecurityBadges, {
 } from '../../components/OcrSecurityBadges'
 import PaymentReceiptAttachment from '../../components/ui/PaymentReceiptAttachment'
 import api from '../../api/axios'
+import { useModal } from '../../context/ModalContext'
 import { financialSummaryFromRechargeLinkedPayments } from '../../lib/financialSummaryUtils'
 import { salesApiOrigin } from '../sales/saleTableHelpers'
 import SearchableSelect from '../../components/ui/SearchableSelect'
@@ -151,6 +152,7 @@ export default function NewRechargeModal({
   ocrAiConfidenceScore = null,
   ocrPortalDeclaredAmount = null,
 }) {
+  const { openNewClient } = useModal()
   const [clientSearchMode, setClientSearchMode] = useState('nombre')
   const [clientesDesdeRender, setClientesDesdeRender] = useState([])
   const [renderClientesLoading, setRenderClientesLoading] = useState(false)
@@ -196,6 +198,47 @@ export default function NewRechargeModal({
       setRenderClientesLoading(false)
     }
   }, [])
+
+  const mergeClienteRecarga = useCallback(
+    (created) => {
+      const normalized =
+        normalizeClienteDesdeWebhook(created) ??
+        (created?.id != null ?
+          {
+            id: created.id,
+            name: String(created.name ?? '').trim() || 'Sin nombre',
+            full_name: String(created.name ?? '').trim() || 'Sin nombre',
+            email: String(created.email ?? '').trim(),
+            username: String(created.username ?? '').trim(),
+            iptv_username: String(created.username ?? created.iptv_username ?? '').trim(),
+          }
+        : null)
+      if (!normalized?.id) return null
+      setClientesDesdeRender((prev) => {
+        const idStr = String(normalized.id)
+        const next = [...prev.filter((c) => String(c?.id) !== idStr), normalized]
+        next.sort((a, b) =>
+          saleClientComboLabelRecarga(a, clientSearchMode).localeCompare(
+            saleClientComboLabelRecarga(b, clientSearchMode),
+            'es',
+            { sensitivity: 'base' },
+          ),
+        )
+        return next
+      })
+      return normalized
+    },
+    [clientSearchMode],
+  )
+
+  const handleAddNewClientFromPicker = useCallback(() => {
+    openNewClient((createdClient) => {
+      const merged = mergeClienteRecarga(createdClient)
+      if (!merged?.id) return
+      onLinkClientIdChange(String(merged.id))
+      void cargarClientesDesdeRender()
+    })
+  }, [openNewClient, mergeClienteRecarga, onLinkClientIdChange, cargarClientesDesdeRender])
 
   useEffect(() => {
     if (!open || (!editMode && !isReadOnly) || !clientSnapshotForEdit) return undefined
@@ -881,9 +924,11 @@ export default function NewRechargeModal({
                         value={linkClientId || ''}
                         onChange={(v) => onLinkClientIdChange(v === undefined || v === null ? '' : String(v))}
                         options={clientOptions}
-                        placeholder={clientOptions.length ? 'Buscar cliente…' : 'Sin clientes (catálogo)'}
-                        disabled={!clientOptions.length || generatingLink}
+                        placeholder={clientOptions.length ? 'Buscar cliente…' : 'Sin clientes — agrega uno nuevo'}
+                        disabled={generatingLink || renderClientesLoading}
                         hideClear
+                        onAddNew={handleAddNewClientFromPicker}
+                        addNewLabel="+ Agregar nuevo"
                         dropdownZClass="z-[6200]"
                         className="w-full"
                       />
