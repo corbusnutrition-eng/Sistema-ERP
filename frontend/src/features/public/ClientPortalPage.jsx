@@ -8886,7 +8886,7 @@ function ClientPortalPageInner() {
             <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleCreateSubClientSubmit}>
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
                 <label className="block text-xs font-semibold text-slate-300">
-                  Usuario IPTV <span className="text-red-300">*</span>
+                  Usuario <span className="text-red-300">*</span>
                   <input
                     type="text"
                     value={createSubClientForm.username}
