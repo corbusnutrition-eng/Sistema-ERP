@@ -51,7 +51,8 @@ import {
   SaleReceiptProofLink,
   RechargeAmountCell,
   CopyPaymentLinkButton,
-  copyClientPortalLink,
+  copyOrSharePaymentUrl,
+  resolveRechargePaymentUrl,
 } from '../sales/saleTableHelpers'
 import OcrSecurityBadges, {
   pickOcrFlagsFromRecharge,
@@ -307,6 +308,8 @@ export default function DistributorsBaaSPage() {
   const [rechargeRequests, setRechargeRequests] = useState([])
   const [loadingRequests, setLoadingRequests] = useState(false)
   const rechargeFetchGenRef = useRef(0)
+  /** Cache ``client_id → /portal/{uuid}`` para copiar en el gesto del usuario (iOS). */
+  const portalPathByClientIdRef = useRef(new Map())
   /** Coincide con valores canónicos del backend (pending, in_review, …). */
   const [rechargeActiveTab, setRechargeActiveTab] = useState('in_review')
   const { columnWidths: rechargeColumnWidths, startResize: startRechargeColumnResize } =
@@ -895,13 +898,16 @@ export default function DistributorsBaaSPage() {
 
   async function handleCopyRechargePortalLink(row) {
     const cid = Number(row?.client_id)
-    const existingToken = String(
-      row?.client_portal_token ?? row?.portal_token ?? row?.client?.portal_token ?? '',
-    ).trim()
+    const cachedPath =
+      Number.isFinite(cid) && cid > 0 ? portalPathByClientIdRef.current.get(cid) : undefined
 
     try {
-      let token = existingToken
-      if (!token) {
+      let urlToCopy = resolveRechargePaymentUrl({
+        ...row,
+        portal_path: row?.portal_path ?? cachedPath,
+      })
+
+      if (!urlToCopy) {
         if (!Number.isFinite(cid) || cid < 1) {
           showToast('Este cliente no tiene enlace de portal disponible.')
           return
@@ -912,11 +918,25 @@ export default function DistributorsBaaSPage() {
           showToast('Este cliente no tiene enlace de portal disponible.')
           return
         }
-        token = path.replace(/^\/portal\//, '')
+        portalPathByClientIdRef.current.set(cid, path)
+        urlToCopy = resolveRechargePaymentUrl({ ...row, portal_path: path })
       }
-      await copyClientPortalLink(token)
-      showToast('Enlace del portal del cliente copiado')
+
+      if (!urlToCopy) {
+        showToast('Este cliente no tiene enlace de portal disponible.')
+        return
+      }
+
+      if (import.meta.env?.DEV) {
+        console.debug('[copy-recharge-link]', { clientId: cid, urlToCopy })
+      }
+
+      const mode = await copyOrSharePaymentUrl(urlToCopy, { shareTitle: 'Enlace de Pago' })
+      showToast(
+        mode === 'shared' ? 'Enlace compartido' : 'Enlace del portal del cliente copiado',
+      )
     } catch (err) {
+      if (err?.name === 'AbortError') return
       const msg = String(err?.message ?? '')
       if (msg.includes('Sin enlace') || msg.includes('Nada que copiar')) {
         showToast('Este cliente no tiene enlace de portal disponible.')
@@ -925,6 +945,27 @@ export default function DistributorsBaaSPage() {
       showToast('No se pudo copiar el enlace.')
     }
   }
+
+  useEffect(() => {
+    if (tab !== 'requests' || !rechargeRequests.length) return
+    const clientIds = [
+      ...new Set(
+        rechargeRequests
+          .map((r) => Number(r?.client_id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ]
+    for (const clientId of clientIds) {
+      if (portalPathByClientIdRef.current.has(clientId)) continue
+      void api
+        .get(`/api/v1/distributors/clients/${clientId}/portal-link`)
+        .then(({ data }) => {
+          const path = String(data?.portal_path ?? '').trim()
+          if (path) portalPathByClientIdRef.current.set(clientId, path)
+        })
+        .catch(() => {})
+    }
+  }, [tab, rechargeRequests])
 
   useEffect(() => {
     if (!linkModalOpen || linkModalPrefillClient) return
@@ -1023,7 +1064,12 @@ export default function DistributorsBaaSPage() {
           { client_product_prices: extra.productPrices }
         : {}),
       }
-      await api.post('/api/v1/distributors/generate-recharge-link', body)
+      const { data: linkData } = await api.post('/api/v1/distributors/generate-recharge-link', body)
+      const portalPath = String(linkData?.portal_path ?? '').trim()
+      const cacheClientId = Number(linkClientId)
+      if (portalPath && Number.isFinite(cacheClientId) && cacheClientId > 0) {
+        portalPathByClientIdRef.current.set(cacheClientId, portalPath)
+      }
       closeLinkModal()
       showToast('Solicitud creada')
       setTab('requests')

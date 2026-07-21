@@ -35,6 +35,81 @@ export function checkoutPortalUrl(paymentToken) {
   return `${origin}/checkout/${t}`
 }
 
+/** Origen absoluto para rutas relativas del SPA (`/portal/...`, `/checkout/...`). */
+export function absolutizePublicUrl(pathOrUrl) {
+  const raw = String(pathOrUrl ?? '').trim()
+  if (!raw) return ''
+  if (/^https?:\/\//i.test(raw)) return raw
+  if (typeof window === 'undefined') return raw
+  const origin = String(window.location.origin || '').replace(/\/$/, '')
+  return `${origin}${raw.startsWith('/') ? raw : `/${raw}`}`
+}
+
+/**
+ * URL pública para copiar desde una fila de recarga BaaS (pendientes / revisión).
+ * Prioriza URLs explícitas, portal permanente del cliente y enlace legado por ``link_hash``.
+ */
+export function resolveRechargePaymentUrl(row) {
+  if (!row || typeof row !== 'object') return ''
+
+  for (const key of ['payment_url', 'checkout_url', 'portal_url', 'payment_link']) {
+    const abs = absolutizePublicUrl(row[key])
+    if (abs) return abs
+  }
+
+  const portalPath = String(row.portal_path ?? '').trim()
+  if (portalPath) return absolutizePublicUrl(portalPath)
+
+  const portalToken = String(
+    row.client_portal_token ??
+      row.portal_token ??
+      row.payment_token ??
+      row.client?.portal_token ??
+      row.client?.payment_token ??
+      '',
+  ).trim()
+  if (portalToken) return clientPortalPublicUrl(portalToken)
+
+  const linkHash = String(row.link_hash ?? row.token ?? '').trim()
+  if (linkHash) return absolutizePublicUrl(`/portal/recharge/${encodeURIComponent(linkHash)}`)
+
+  return ''
+}
+
+function legacyExecCommandCopy(val) {
+  const ta = document.createElement('textarea')
+  ta.value = val
+  ta.setAttribute('readonly', '')
+  ta.setAttribute('aria-hidden', 'true')
+  ta.contentEditable = 'true'
+  ta.readOnly = true
+  ta.style.position = 'fixed'
+  ta.style.top = '0'
+  ta.style.left = '0'
+  ta.style.width = '2em'
+  ta.style.height = '2em'
+  ta.style.padding = '0'
+  ta.style.margin = '0'
+  ta.style.border = 'none'
+  ta.style.outline = 'none'
+  ta.style.boxShadow = 'none'
+  ta.style.background = 'transparent'
+  ta.style.opacity = '0'
+  ta.style.fontSize = '16px'
+  ta.style.zIndex = '-1'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  ta.setSelectionRange(0, Math.max(val.length, 99999))
+  let ok = false
+  try {
+    ok = document.execCommand('copy')
+  } finally {
+    document.body.removeChild(ta)
+  }
+  return ok
+}
+
 /**
  * Copia texto al portapapeles con fallback para Safari iOS
  * (navigator.clipboard suele fallar fuera del gesto de usuario o sin HTTPS estricto).
@@ -54,34 +129,32 @@ export async function copyTextToClipboard(text) {
 
   if (typeof document === 'undefined') throw new Error('Portapapeles no disponible.')
 
-  const ta = document.createElement('textarea')
-  ta.value = val
-  ta.setAttribute('readonly', '')
-  ta.setAttribute('aria-hidden', 'true')
-  ta.style.position = 'fixed'
-  ta.style.top = '0'
-  ta.style.left = '0'
-  ta.style.width = '1px'
-  ta.style.height = '1px'
-  ta.style.padding = '0'
-  ta.style.margin = '0'
-  ta.style.border = 'none'
-  ta.style.outline = 'none'
-  ta.style.boxShadow = 'none'
-  ta.style.background = 'transparent'
-  ta.style.opacity = '0'
-  document.body.appendChild(ta)
-  ta.focus()
-  ta.select()
-  ta.setSelectionRange(0, ta.value.length)
-  let ok = false
+  if (legacyExecCommandCopy(val)) return true
+  throw new Error('No se pudo copiar al portapapeles.')
+}
+
+/**
+ * Copia o comparte un enlace. En móviles, si el portapapeles falla, usa Web Share API.
+ * @returns {'copied' | 'shared'}
+ */
+export async function copyOrSharePaymentUrl(url, { shareTitle = 'Enlace de Pago' } = {}) {
+  const val = String(url ?? '').trim()
+  if (!val) throw new Error('Sin enlace de pago.')
+
   try {
-    ok = document.execCommand('copy')
-  } finally {
-    document.body.removeChild(ta)
+    await copyTextToClipboard(val)
+    return 'copied'
+  } catch (clipErr) {
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: shareTitle, url: val })
+        return 'shared'
+      } catch (shareErr) {
+        if (shareErr?.name === 'AbortError') throw shareErr
+      }
+    }
+    throw clipErr
   }
-  if (!ok) throw new Error('No se pudo copiar al portapapeles.')
-  return true
 }
 
 export async function copyCheckoutPortalLink(paymentToken) {
