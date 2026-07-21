@@ -774,8 +774,8 @@ export default function NewRechargeModal({
         aria-label="Cerrar modal"
       />
 
-      <div className="relative w-[95%] sm:w-full max-w-6xl bg-white rounded-2xl shadow-2xl z-10 max-h-[95vh] flex flex-col min-h-0 overflow-hidden">
-        <div className="flex items-start justify-between gap-2 p-3 sm:px-6 sm:py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10 shrink-0">
+      <div className="relative w-[95%] sm:w-full max-w-6xl bg-white rounded-2xl shadow-2xl z-10 max-h-[95dvh] flex flex-col min-h-0 overflow-hidden">
+        <div className="flex items-start justify-between gap-2 p-3 sm:px-6 sm:py-4 border-b border-gray-100 bg-white rounded-t-2xl z-10 shrink-0">
           <div className="min-w-0 flex-1">
             <h2 className="text-lg sm:text-base font-semibold text-gray-900 leading-tight">
               {isReadOnly ?
@@ -812,14 +812,15 @@ export default function NewRechargeModal({
           </button>
         </div>
 
-        <div className="p-3 sm:p-6 overflow-y-auto min-h-0 flex-1">
+        <form onSubmit={(e) => handleSubmitForm(e)} className="flex flex-col flex-1 min-h-0">
+          <div className="modal-body p-3 sm:p-6">
           {isReadOnly ?
             <div className="mb-5 rounded-xl border border-gray-300 bg-gray-100 px-4 py-3 text-xs text-gray-800 leading-relaxed shadow-sm">
               {readOnlyBannerText}
             </div>
           : null}
 
-          <form onSubmit={(e) => handleSubmitForm(e)} className="space-y-5">
+          <div className="space-y-5">
               {!editMode && !isReadOnly ?
                 <div>
                   <div className="mb-4">
@@ -1360,8 +1361,11 @@ export default function NewRechargeModal({
                   />
                 </div>
               : null}
+          </div>
+          </div>
 
-              <div className="flex gap-2 justify-end pt-2">
+          <div className="modal-footer">
+            <div className="flex gap-2 justify-end">
                 {!isReadOnly ?
                   <>
                     <button
@@ -1401,9 +1405,9 @@ export default function NewRechargeModal({
                     Cerrar
                   </button>
                 )}
-              </div>
-            </form>
-        </div>
+            </div>
+          </div>
+        </form>
       </div>
     </div>
   )
