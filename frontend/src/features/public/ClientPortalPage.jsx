@@ -6026,7 +6026,7 @@ function ClientPortalPageInner() {
           isSortableDragging={isDragging}
           sectionId="portal-acc-orders"
           title="NUEVOS PEDIDOS PARA PAGO"
-          subtitle="Pedidos y recargas con saldo pendiente (incluye abonos parciales con saldo a favor)"
+          subtitle="Pedidos y recargas pendiente de pago (puedes realizar abonos parciales o totales )"
           headerAside={newOrdersAccordionAside}
           accent="sapphire"
           expanded={accordionOrdersOpen}
@@ -7803,7 +7803,7 @@ function ClientPortalPageInner() {
           isSortableDragging={isDragging}
           sectionId="portal-acc-reseller-network"
           title="MI RED DE DISTRIBUIDORES"
-          subtitle="Crea sub-clientes, transfiere saldo BaaS y asigna precios"
+          subtitle="Crea sub-clientes, transfiere saldo y asigna precios"
           headerAside={resellerNetworkAside}
           accent="violet"
           expanded={isResellerNetworkOpen}
