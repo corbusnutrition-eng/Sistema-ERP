@@ -678,3 +678,22 @@ class PortalWalletRechargeHistoryItem(BaseModel):
 class PortalWalletHistoryResponse(BaseModel):
     items: list[PortalWalletRechargeHistoryItem] = Field(default_factory=list)
     count: int = Field(default=0, ge=0)
+
+
+class PortalTransferHistoryItem(BaseModel):
+    """Transferencia BaaS enviada a un sub-cliente (vista portal)."""
+
+    id: int
+    date: datetime.datetime
+    amount: float = Field(..., ge=0)
+    currency: str = Field(default="USD", max_length=10)
+    recipient_name: str = Field(description="Nombre visible del sub-cliente receptor.")
+    recipient_username: Optional[str] = Field(
+        default=None,
+        description="Usuario IPTV del sub-cliente, si aplica.",
+    )
+
+
+class PortalTransferHistoryResponse(BaseModel):
+    items: list[PortalTransferHistoryItem] = Field(default_factory=list)
+    count: int = Field(default=0, ge=0)

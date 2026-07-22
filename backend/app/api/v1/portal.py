@@ -109,6 +109,8 @@ from app.schemas.portal_public import (
     PortalWalletRechargeHistoryItem,
     PortalWalletRechargeHistoryPayment,
     PortalWalletHistoryResponse,
+    PortalTransferHistoryItem,
+    PortalTransferHistoryResponse,
     ReceiptAnalysisResponse,
     SalePaymentEvent,
 )
@@ -127,7 +129,9 @@ from app.services.client_reseller_service import (
     TX_BAAS_TRANSFER_REVERT_IN,
     TX_BAAS_TRANSFER_REVERT_OUT,
     BAAS_TRANSFER_LEDGER_TYPES,
+    baas_transfer_already_reverted,
     create_subclient_with_prices,
+    get_baas_transfer_counterparty,
     get_direct_subclient,
     list_parent_selling_packages,
     list_subclient_pricing_matrix,
@@ -136,6 +140,7 @@ from app.services.client_reseller_service import (
     transfer_baas_balance_parent_to_child,
     update_subclient_for_parent,
     upsert_subclient_product_prices,
+    resolve_baas_transfer_parties,
 )
 from app.services.portal_network_dashboard_service import build_portal_network_dashboard
 from app.schemas.client_product_prices import ClientProductPriceItem
@@ -3083,6 +3088,107 @@ def portal_wallet_history(
 
     items = [_portal_wallet_recharge_history_item(db, r) for r in rows]
     return PortalWalletHistoryResponse(items=items, count=len(items))
+
+
+def _portal_transfer_history_recipient(
+    db: Session,
+    tx: WalletTransaction,
+) -> tuple[str, Optional[str]]:
+    cp_id, cp_name = get_baas_transfer_counterparty(db, tx)
+    recipient_name = (cp_name or "").strip()
+    recipient_username: Optional[str] = None
+
+    if cp_id is not None:
+        child = db.get(Client, int(cp_id))
+        if child is not None:
+            recipient_name = child.display_name()
+            recipient_username = (child.username or "").strip() or None
+
+    if not recipient_name:
+        desc = (tx.description or "").strip()
+        if " — " in desc:
+            recipient_name = desc.rsplit(" — ", 1)[-1].strip()
+        elif desc:
+            recipient_name = desc
+        else:
+            recipient_name = "Sub-cliente"
+
+    return recipient_name, recipient_username
+
+
+def _portal_transfer_history_item(
+    db: Session,
+    tx: WalletTransaction,
+    *,
+    currency: str,
+) -> Optional[PortalTransferHistoryItem]:
+    if str(getattr(tx, "transaction_type", "") or "") != TX_BAAS_TRANSFER_OUT:
+        return None
+
+    amt = round(abs(float(tx.amount or 0)), 2)
+    if amt <= 0:
+        return None
+
+    try:
+        _, _, _, canonical_id = resolve_baas_transfer_parties(db, tx)
+        if baas_transfer_already_reverted(db, int(canonical_id)):
+            return None
+    except HTTPException:
+        pass
+
+    ts = getattr(tx, "created_at", None)
+    if not isinstance(ts, datetime):
+        ts = now_ecuador()
+
+    recipient_name, recipient_username = _portal_transfer_history_recipient(db, tx)
+    return PortalTransferHistoryItem(
+        id=int(tx.id),
+        date=ts,
+        amount=amt,
+        currency=normalize_currency_code(currency, "USD"),
+        recipient_name=recipient_name,
+        recipient_username=recipient_username,
+    )
+
+
+@router.get(
+    "/{portal_token}/transfer-history",
+    response_model=PortalTransferHistoryResponse,
+    summary="Historial de transferencias BaaS hacia sub-clientes",
+)
+@limiter.limit(PORTAL_GET_LIMIT)
+def portal_transfer_history(
+    request: Request,
+    portal_token: uuid_pkg.UUID,
+    db: DbDep,
+    limit: int = Query(default=10, ge=1, le=10),
+) -> PortalTransferHistoryResponse:
+    from app.services.client_currency_service import get_client_currency
+
+    client = _portal_client_from_token(db, portal_token)
+    cur = get_client_currency(client)
+
+    rows = (
+        db.query(WalletTransaction)
+        .filter(
+            WalletTransaction.client_id == int(client.id),
+            WalletTransaction.transaction_type == TX_BAAS_TRANSFER_OUT,
+        )
+        .order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+        .limit(max(int(limit) * 5, 50))
+        .all()
+    )
+
+    items: list[PortalTransferHistoryItem] = []
+    for tx in rows:
+        item = _portal_transfer_history_item(db, tx, currency=cur)
+        if item is None:
+            continue
+        items.append(item)
+        if len(items) >= int(limit):
+            break
+
+    return PortalTransferHistoryResponse(items=items, count=len(items))
 
 
 @router.get("/{portal_token}", response_model=PortalHomeResponse)

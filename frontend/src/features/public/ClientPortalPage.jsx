@@ -40,6 +40,7 @@ import {
 import PortalManualAmountField from './PortalManualAmountField'
 import ClientRechargeRequestModal from './ClientRechargeRequestModal'
 import WalletHistoryModal from './WalletHistoryModal'
+import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
 
 function publicApi() {
@@ -2122,6 +2123,7 @@ function ClientPortalPageInner() {
   const [contactModalOpen, setContactModalOpen] = useState(false)
   const [rechargeRequestModalOpen, setRechargeRequestModalOpen] = useState(false)
   const [walletHistoryModalOpen, setWalletHistoryModalOpen] = useState(false)
+  const [transferHistoryModalOpen, setTransferHistoryModalOpen] = useState(false)
   const [contactDialCode, setContactDialCode] = useState('+593')
   const [contactLocalNumber, setContactLocalNumber] = useState('')
   const [contactSaving, setContactSaving] = useState(false)
@@ -7913,6 +7915,13 @@ function ClientPortalPageInner() {
                   >
                     Actualizar lista
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setTransferHistoryModalOpen(true)}
+                    className="rounded-lg border border-slate-500/40 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800/50"
+                  >
+                    Historial de transferencias
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -9642,6 +9651,15 @@ function ClientPortalPageInner() {
         <WalletHistoryModal
           open={walletHistoryModalOpen}
           onClose={() => setWalletHistoryModalOpen(false)}
+          token={token}
+          api={api}
+        />
+      ) : null}
+
+      {transferHistoryModalOpen ? (
+        <TransferHistoryModal
+          open={transferHistoryModalOpen}
+          onClose={() => setTransferHistoryModalOpen(false)}
           token={token}
           api={api}
         />
