@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import Select from 'react-select'
 import { ArrowLeftRight, Check, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, RefreshCw, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
 import PortalAccordionSortableList from './PortalAccordionSortableList'
@@ -38,6 +38,7 @@ import {
   paymentMethodNameById,
 } from './codigosRetiroPayment'
 import PortalManualAmountField from './PortalManualAmountField'
+import ClientRechargeRequestModal from './ClientRechargeRequestModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
 
 function publicApi() {
@@ -1813,6 +1814,8 @@ class PortalPageErrorBoundary extends Component {
 
 function ClientPortalPageInner() {
   const { token } = useParams()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const api = useMemo(() => publicApi(), [])
 
   const [data, setData] = useState(null)
@@ -2116,6 +2119,7 @@ function ClientPortalPageInner() {
   const [pricingErr, setPricingErr] = useState(null)
   const [pricingDraft, setPricingDraft] = useState({})
   const [contactModalOpen, setContactModalOpen] = useState(false)
+  const [rechargeRequestModalOpen, setRechargeRequestModalOpen] = useState(false)
   const [contactDialCode, setContactDialCode] = useState('+593')
   const [contactLocalNumber, setContactLocalNumber] = useState('')
   const [contactSaving, setContactSaving] = useState(false)
@@ -2183,6 +2187,24 @@ function ClientPortalPageInner() {
       setWalletRecharges([])
     }
   }, [api, token])
+
+  const handleClientRechargeRequestSuccess = useCallback(
+    async (created) => {
+      setRechargeRequestModalOpen(false)
+      const paymentUrl = String(created?.payment_url || created?.checkout_url || '').trim()
+      await Promise.all([loadPortal(), loadWalletRecharges()])
+      setAccordionOrdersOpen(true)
+      if (paymentUrl) {
+        navigate(paymentUrl, { replace: true })
+        return
+      }
+      const rid = Number(created?.request_id)
+      if (Number.isFinite(rid) && rid > 0 && token) {
+        navigate(`/portal/${encodeURIComponent(token)}?open_recharge=${rid}`, { replace: true })
+      }
+    },
+    [loadPortal, loadWalletRecharges, navigate, token],
+  )
 
   const loadAutoPurchaseCatalog = useCallback(async (opts = {}) => {
     const silent = Boolean(opts?.silent)
@@ -3107,6 +3129,17 @@ function ClientPortalPageInner() {
 
   newOrderWalletRechargesRef.current = newOrderWalletRecharges
   featuredWalletRechargeRowRef.current = newOrderWalletRecharges[0] ?? null
+
+  useEffect(() => {
+    const raw = searchParams.get('open_recharge')
+    const rid = Number(raw)
+    if (!Number.isFinite(rid) || rid < 1) return
+    setAccordionOrdersOpen(true)
+    const timer = window.setTimeout(() => {
+      document.getElementById(`portal-recharge-${rid}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [searchParams, newOrderWalletRecharges, loading])
 
   useEffect(() => {
     if (!data) return
@@ -6034,6 +6067,20 @@ function ClientPortalPageInner() {
         >
         <div className="rounded-[18px] border border-indigo-400/35 bg-gradient-to-br from-slate-950/70 to-indigo-950/35 p-[14px] transition-all duration-300 shadow-[inset_0_1px_0_rgba(199,210,254,0.07),0_14px_40px_rgba(0,0,0,0.28)]">
 
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <p className="m-0 text-[12px] leading-relaxed text-slate-400/90">
+            Solicita saldo BaaS y paga con comprobante desde este mismo portal.
+          </p>
+          <button
+            type="button"
+            onClick={() => setRechargeRequestModalOpen(true)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border-0 bg-gradient-to-r from-indigo-500 via-violet-500 to-cyan-400 px-4 py-2.5 text-[13px] font-bold text-slate-950 shadow-[0_12px_28px_rgba(99,102,241,0.35)] transition hover:brightness-105"
+          >
+            <Plus size={16} aria-hidden />
+            Solicitar Nueva Recarga BaaS
+          </button>
+        </div>
+
         {showNewOrderForms && newOrderWalletRecharges.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginBottom: 28 }}>
           {newOrderWalletRecharges.map((fr) => {
@@ -6159,7 +6206,7 @@ function ClientPortalPageInner() {
             }
 
             return (
-              <div key={`new-order-recharge-${frId}`} style={{ marginTop: 12 }}>
+              <div id={`portal-recharge-${frId}`} key={`new-order-recharge-${frId}`} style={{ marginTop: 12 }}>
                 {!showPayForm ? (
                   <p
                     style={{
@@ -9540,6 +9587,18 @@ function ClientPortalPageInner() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {rechargeRequestModalOpen ? (
+        <ClientRechargeRequestModal
+          open={rechargeRequestModalOpen}
+          onClose={() => setRechargeRequestModalOpen(false)}
+          token={token}
+          api={api}
+          currency={portalWalletCurrencyLabel}
+          assignedPaymentMethods={data?.assigned_payment_methods}
+          onSuccess={(created) => void handleClientRechargeRequestSuccess(created)}
+        />
       ) : null}
 
       {contactModalOpen ? (

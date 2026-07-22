@@ -594,6 +594,35 @@ class PortalCxcBalanceResponse(BaseModel):
     )
 
 
+class PortalCreateWalletRechargeRequest(BaseModel):
+    """POST /portal/{token}/recharges — solicitud BaaS creada por el cliente."""
+
+    amount: float = Field(..., gt=0, description="Monto a recargar en la moneda indicada.")
+    payment_method_id: int = Field(..., ge=1, description="Método de pago seleccionado en el portal.")
+    deposit_account_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Cuenta bancaria receptora; obligatoria si hay varias cuentas para el método.",
+    )
+    currency: Optional[str] = Field(
+        default=None,
+        max_length=10,
+        description="Moneda de cobro; omisión ⇒ moneda principal del cliente.",
+    )
+
+
+class PortalCreateWalletRechargeResponse(BaseModel):
+    """Respuesta al crear una solicitud BaaS desde el portal del cliente."""
+
+    request_id: int = Field(..., ge=1)
+    status: str = Field(default="pending")
+    amount_requested: float = Field(..., gt=0)
+    currency: str = Field(default="USD", max_length=10)
+    payment_url: str = Field(..., description="Ruta SPA con deep-link al formulario de pago.")
+    checkout_url: str = Field(..., description="Alias de payment_url.")
+    portal_path: str = Field(..., description="Ruta base del portal del cliente.")
+
+
 class DebtPaymentSubmitResponse(BaseModel):
     message: str
     debt_payment_id: int

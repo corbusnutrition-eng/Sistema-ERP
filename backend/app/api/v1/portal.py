@@ -77,6 +77,8 @@ from app.schemas.portal_public import (
     PortalClientBrief,
     PortalContactResponse,
     PortalContactUpdate,
+    PortalCreateWalletRechargeRequest,
+    PortalCreateWalletRechargeResponse,
     PortalCxcBalanceResponse,
     PortalDashboardMetrics,
     PortalCheckoutLinePublic,
@@ -1413,6 +1415,207 @@ def _portal_wallet_recharge_items_for_client(db: Session, client: Client) -> lis
             )
         )
     return out
+
+
+def _portal_recharge_payment_options_for_client(db: Session, client: Client) -> list[PortalAssignedPaymentMethod]:
+    """Métodos y cuentas disponibles para que el cliente solicite una recarga BaaS."""
+    from app.services.client_currency_service import get_client_currency
+    from app.services.client_payment_method_service import (
+        client_has_custom_payment_account_prefs,
+        get_client_assigned_payment_methods_with_accounts,
+        list_payment_methods_with_accounts_for_currency,
+    )
+
+    cur = normalize_currency_code(get_client_currency(client), "USD")
+    if client_has_custom_payment_account_prefs(db, int(client.id)):
+        nested = get_client_assigned_payment_methods_with_accounts(db, int(client.id), currency=cur)
+        if nested:
+            return nested
+
+    opts = list_payment_methods_with_accounts_for_currency(db, cur, active_only=True)
+    out: list[PortalAssignedPaymentMethod] = []
+    for o in opts:
+        dep_accounts: list[PortalDepositPick] = []
+        for acc in o.accounts or []:
+            dep_accounts.append(
+                PortalDepositPick(
+                    id=int(acc.id),
+                    bank_name=(acc.name or "").strip() or f"Cuenta {acc.id}",
+                    account_number=(acc.account_number or "").strip() or None,
+                    currency=normalize_currency_code(str(acc.currency or cur), "USD"),
+                    holder_note=None,
+                    payment_method_id=int(o.id),
+                )
+            )
+        if dep_accounts:
+            out.append(
+                PortalAssignedPaymentMethod(
+                    id=int(o.id),
+                    name=(o.name or "").strip() or f"Método #{o.id}",
+                    deposit_accounts=dep_accounts,
+                )
+            )
+    return out
+
+
+def _portal_create_wallet_recharge_for_client(
+    db: Session,
+    client: Client,
+    *,
+    amount: float,
+    payment_method_id: int,
+    deposit_account_id: Optional[int],
+    currency: Optional[str],
+) -> WalletRechargeRequest:
+    from app.services.client_currency_service import get_client_currency, lock_client_base_currency_on_recharge_create
+    from app.services.client_payment_method_service import (
+        validate_client_portal_deposit_account_id,
+        validate_client_portal_payment_method_id,
+    )
+    from app.services.client_payment_service import try_sweep_client_credit_on_new_cxc
+
+    aq = round(float(amount), 2)
+    if aq <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica un monto mayor a cero.")
+
+    cur = normalize_currency_code(currency or get_client_currency(client), "USD")
+    pm_id = int(payment_method_id)
+    validate_client_portal_payment_method_id(db, client, pm_id)
+
+    pm = db.get(PaymentMethod, pm_id)
+    if pm is None or not bool(pm.is_active):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Método de pago inválido o inactivo.")
+
+    options = _portal_recharge_payment_options_for_client(db, client)
+    allowed_pm_ids = {int(m.id) for m in options}
+    if allowed_pm_ids and pm_id not in allowed_pm_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El método de pago seleccionado no está disponible para solicitar recargas.",
+        )
+
+    method_node = next((m for m in options if int(m.id) == pm_id), None)
+    dep_ids = [int(d.id) for d in (method_node.deposit_accounts if method_node else [])]
+    if not dep_ids:
+        pm_rows = [pm]
+        matched, _by_id = _matched_accounts_for_payment_methods(db, pm_rows)
+        dep_ids = [int(a.id) for a in matched]
+
+    dep_resolved: Optional[int] = int(deposit_account_id) if deposit_account_id is not None else None
+    if dep_resolved is None:
+        if len(dep_ids) == 1:
+            dep_resolved = dep_ids[0]
+        elif len(dep_ids) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selecciona la cuenta bancaria donde realizarás el depósito.",
+            )
+    elif dep_ids and dep_resolved not in dep_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La cuenta seleccionada no corresponde al método de pago elegido.",
+        )
+
+    validate_client_portal_deposit_account_id(
+        db,
+        client,
+        dep_resolved,
+        currency=cur,
+        payment_method_id=pm_id,
+    )
+
+    if dep_resolved is not None:
+        dep_acc = db.get(Account, int(dep_resolved))
+        if dep_acc is None or not dep_acc.is_active or not is_liquid_deposit_account(dep_acc):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cuenta de depósito inválida.")
+        from app.services.client_payment_method_service import _account_belongs_to_payment_method
+
+        if not _account_belongs_to_payment_method(db, pm, int(dep_resolved)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La cuenta de depósito no pertenece al método de pago seleccionado.",
+            )
+
+    allowed_dep_norm = [int(dep_resolved)] if dep_resolved is not None else None
+
+    req = WalletRechargeRequest(
+        client_id=int(client.id),
+        amount_requested=aq,
+        receipt_url=None,
+        status=REQ_STATUS_PENDING,
+        allowed_payment_methods=[pm_id],
+        allowed_deposit_account_ids=allowed_dep_norm,
+        link_hash=None,
+        recharge_currency=cur,
+        recharge_exchange_rate=1.0,
+        amount_paid=0.0,
+        balance_pending=aq,
+        surplus_credited=0.0,
+        admin_note="Solicitud creada por el cliente desde el portal.",
+        recharge_detail_lines=[
+            {
+                "product_name": "Saldo BaaS",
+                "tipo_moneda": cur,
+                "importe": aq,
+                "saldo_recargar": aq,
+            }
+        ],
+    )
+    db.add(req)
+    db.flush()
+    lock_client_base_currency_on_recharge_create(db, client, cur)
+    try_sweep_client_credit_on_new_cxc(db, client, currency=cur, strict_accounting=False)
+    db.commit()
+    db.refresh(req)
+    return req
+
+
+@router.get("/{portal_token}/recharge-payment-options", response_model=list[PortalAssignedPaymentMethod])
+def portal_recharge_payment_options(portal_token: uuid_pkg.UUID, db: DbDep) -> list[PortalAssignedPaymentMethod]:
+    """Métodos de pago disponibles para auto-solicitud de recarga BaaS."""
+    client = _portal_client_from_token(db, portal_token)
+    return _portal_recharge_payment_options_for_client(db, client)
+
+
+@router.post(
+    "/{portal_token}/recharges",
+    response_model=PortalCreateWalletRechargeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def portal_create_wallet_recharge(
+    portal_token: uuid_pkg.UUID,
+    payload: PortalCreateWalletRechargeRequest,
+    db: DbDep,
+) -> PortalCreateWalletRechargeResponse:
+    """El cliente crea una solicitud BaaS en estado pending y recibe la URL de pago del portal."""
+    client = _portal_client_from_token(db, portal_token)
+    ptok = getattr(client, "payment_token", None)
+    if ptok is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tu cuenta no tiene enlace de portal configurado. Contacta a soporte.",
+        )
+    req = _portal_create_wallet_recharge_for_client(
+        db,
+        client,
+        amount=float(payload.amount),
+        payment_method_id=int(payload.payment_method_id),
+        deposit_account_id=payload.deposit_account_id,
+        currency=payload.currency,
+    )
+    token_out = str(ptok)
+    portal_path = f"/portal/{token_out}"
+    payment_url = f"{portal_path}?open_recharge={int(req.id)}"
+    cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+    return PortalCreateWalletRechargeResponse(
+        request_id=int(req.id),
+        status=str(req.status or REQ_STATUS_PENDING),
+        amount_requested=float(req.amount_requested),
+        currency=cur,
+        payment_url=payment_url,
+        checkout_url=payment_url,
+        portal_path=portal_path,
+    )
 
 
 @router.get("/{portal_token}/recharges", response_model=list[PortalWalletRechargeItem])
