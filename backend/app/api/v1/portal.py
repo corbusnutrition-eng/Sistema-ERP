@@ -997,40 +997,10 @@ def _portal_wallet_recharge_client_allowed_ids(
     client: Client,
     req: WalletRechargeRequest,
 ) -> tuple[list[int], list[int]]:
-    """IDs de método/cuenta alineados con lo que el portal muestra (CRM granular o solicitud)."""
-    from app.services.client_currency_service import get_client_currency
-    from app.services.client_payment_method_service import (
-        client_has_custom_payment_account_prefs,
-        get_client_assigned_payment_methods_with_accounts,
-    )
-
-    recharge_cur = normalize_currency_code(
-        getattr(req, "recharge_currency", None),
-        get_client_currency(client),
-    )
-    if client_has_custom_payment_account_prefs(db, int(client.id)):
-        nested = get_client_assigned_payment_methods_with_accounts(
-            db,
-            int(client.id),
-            currency=recharge_cur,
-        )
-        if nested:
-            pm_ids = sorted({int(m.id) for m in nested if m.deposit_accounts})
-            dep_ids: list[int] = []
-            seen_dep: set[int] = set()
-            for method in nested:
-                for dep in method.deposit_accounts:
-                    did = int(dep.id)
-                    if did in seen_dep:
-                        continue
-                    seen_dep.add(did)
-                    dep_ids.append(did)
-            return pm_ids, dep_ids
-
-    raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else None
-    pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm)
+    """IDs de método/cuenta alineados con lo que el portal muestra (lista completa, sin bloqueo por abono previo)."""
+    pm_picks, dep_picks, _, _ = _portal_resolve_payment_picks_for_recharge(db, client, req)
     pm_ids = sorted({int(p.id) for p in pm_picks})
-    dep_ids = _portal_wallet_recharge_deposit_pick_ids_ordered(db, req)
+    dep_ids = sorted({int(d.id) for d in dep_picks})
     return pm_ids, dep_ids
 
 
@@ -1330,14 +1300,113 @@ def _validate_wallet_recharge_declared_payment_method(
 # ── Wallet recharge (BaaS) ────────────────────────────────────────────────────
 
 
+def _portal_filter_recharge_payment_options_by_currency(
+    options: list[PortalAssignedPaymentMethod],
+    currency: str,
+) -> list[PortalAssignedPaymentMethod]:
+    """Conserva métodos con al menos una cuenta en la moneda de la recarga."""
+    cur = normalize_currency_code(currency, "USD")
+    out: list[PortalAssignedPaymentMethod] = []
+    for m in options:
+        dep_filtered = [
+            d
+            for d in (m.deposit_accounts or [])
+            if normalize_currency_code(str(d.currency or "USD"), "USD") == cur
+        ]
+        if dep_filtered:
+            out.append(m.model_copy(update={"deposit_accounts": dep_filtered}))
+    return out
+
+
+def _portal_resolve_payment_picks_for_recharge(
+    db: Session,
+    client: Client,
+    req: WalletRechargeRequest,
+) -> tuple[list[PortalPaymentMethodPick], list[PortalDepositPick], list[PortalAssignedPaymentMethod], str]:
+    """
+    Métodos/cuentas visibles en el portal para una recarga BaaS.
+
+    Siempre devuelve la lista completa permitida (CRM, catálogo del cliente o allowlist
+    inicial de la solicitud con todas sus cuentas), sin reducirla al método del último abono.
+    """
+    from app.services.client_currency_service import get_client_currency
+
+    recharge_cur = normalize_currency_code(
+        getattr(req, "recharge_currency", None),
+        get_client_currency(client),
+    )
+
+    methods, deps, tree = _portal_resolve_payment_picks_for_client(
+        db,
+        client,
+        currency=recharge_cur,
+        sale=None,
+        recharge_raw_pm=None,
+    )
+    if tree:
+        pm_disp = ", ".join(p.name for p in methods) if methods else ""
+        return methods, deps, tree, pm_disp
+
+    full_options = _portal_filter_recharge_payment_options_by_currency(
+        _portal_recharge_payment_options_for_client(db, client),
+        recharge_cur,
+    )
+    if full_options:
+        pm_picks = [PortalPaymentMethodPick(id=int(m.id), name=m.name) for m in full_options]
+        dep_picks: list[PortalDepositPick] = []
+        seen_dep: set[int] = set()
+        for method in full_options:
+            for dep in method.deposit_accounts or []:
+                did = int(dep.id)
+                if did in seen_dep:
+                    continue
+                seen_dep.add(did)
+                dep_picks.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
+        pm_disp = ", ".join(p.name for p in pm_picks) if pm_picks else ""
+        return pm_picks, dep_picks, full_options, pm_disp
+
+    raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else None
+    pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm)
+    if not pm_picks:
+        return [], [], [], ""
+
+    pm_rows = (
+        db.query(PaymentMethod)
+        .filter(
+            PaymentMethod.id.in_([int(p.id) for p in pm_picks]),
+            PaymentMethod.is_active.is_(True),
+        )
+        .order_by(PaymentMethod.id.asc())
+        .all()
+    )
+    matched, _by_id = _matched_accounts_for_payment_methods(db, pm_rows)
+    matched_cur = [
+        a
+        for a in matched
+        if normalize_currency_code(str(a.currency or "USD"), "USD") == recharge_cur
+    ]
+    dep_picks = _portal_build_deposit_picks(db, [int(a.id) for a in matched_cur])
+    pm_tree = _portal_build_payment_methods_tree(db, pm_picks, dep_picks)
+    pm_disp = payment_methods_display(db, raw_pm)
+    return pm_picks, dep_picks, pm_tree, pm_disp
+
+
+def _portal_sync_recharge_allowed_payment_lists(
+    db: Session,
+    client: Client,
+    req: WalletRechargeRequest,
+) -> None:
+    """Persiste en la solicitud el allowlist completo (no solo el método del último abono)."""
+    pm_picks, dep_picks, _, _ = _portal_resolve_payment_picks_for_recharge(db, client, req)
+    if pm_picks:
+        req.allowed_payment_methods = sorted({int(p.id) for p in pm_picks})
+    if dep_picks:
+        req.allowed_deposit_account_ids = sorted({int(d.id) for d in dep_picks})
+
+
 def _portal_wallet_recharge_items_for_client(db: Session, client: Client) -> list[PortalWalletRechargeItem]:
     """Todas las solicitudes BaaS abiertas del cliente (sin limitar a una sola fila)."""
     from sqlalchemy import and_, or_
-
-    from app.services.client_payment_method_service import (
-        client_has_custom_payment_account_prefs,
-        get_client_assigned_payment_methods_with_accounts,
-    )
 
     rows = (
         db.query(WalletRechargeRequest)
@@ -1355,43 +1424,8 @@ def _portal_wallet_recharge_items_for_client(db: Session, client: Client) -> lis
         .all()
     )
     out: list[PortalWalletRechargeItem] = []
-    client_has_custom_accounts = client_has_custom_payment_account_prefs(db, int(client.id))
     for r in rows:
-        recharge_cur = normalize_currency_code(getattr(r, "recharge_currency", None), "USD")
-        pm_tree: list[PortalAssignedPaymentMethod] = []
-        nested = None
-        pm_picks: list[PortalPaymentMethodPick] = []
-        dep_picks: list[PortalDepositPick] = []
-        pm_disp = ""
-        if client_has_custom_accounts:
-            nested = get_client_assigned_payment_methods_with_accounts(
-                db,
-                int(client.id),
-                currency=recharge_cur,
-            )
-            if nested:
-                pm_picks = [
-                    PortalPaymentMethodPick(id=int(m.id), name=m.name)
-                    for m in nested
-                    if m.deposit_accounts
-                ]
-                pm_disp = ", ".join(p.name for p in pm_picks) if pm_picks else ""
-                seen_dep: set[int] = set()
-                for method in nested:
-                    for dep in method.deposit_accounts:
-                        if int(dep.id) in seen_dep:
-                            continue
-                        seen_dep.add(int(dep.id))
-                        dep_picks.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
-                pm_tree = nested
-
-        if not nested:
-            raw_pm = r.allowed_payment_methods if isinstance(r.allowed_payment_methods, list) else None
-            pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm)
-            pm_disp = payment_methods_display(db, raw_pm)
-            dep_ids = _portal_wallet_recharge_deposit_pick_ids_ordered(db, r)
-            dep_picks = _portal_build_deposit_picks(db, dep_ids)
-            pm_tree = _portal_build_payment_methods_tree(db, pm_picks, dep_picks)
+        pm_picks, dep_picks, pm_tree, pm_disp = _portal_resolve_payment_picks_for_recharge(db, client, r)
         ts = r.created_at
         pre_raw = getattr(r, "admin_precheck_receipt_url", None)
         pre_out = str(pre_raw).strip() if pre_raw else None
@@ -1538,13 +1572,30 @@ def _portal_create_wallet_recharge_for_client(
 
     allowed_dep_norm = [int(dep_resolved)] if dep_resolved is not None else None
 
+    full_options = _portal_filter_recharge_payment_options_by_currency(
+        _portal_recharge_payment_options_for_client(db, client),
+        cur,
+    )
+    all_pm_ids = sorted({int(m.id) for m in full_options}) if full_options else [pm_id]
+    all_dep_ids: list[int] = []
+    seen_all_dep: set[int] = set()
+    for method in full_options:
+        for dep in method.deposit_accounts or []:
+            did = int(dep.id)
+            if did in seen_all_dep:
+                continue
+            seen_all_dep.add(did)
+            all_dep_ids.append(did)
+    if not all_dep_ids and dep_resolved is not None:
+        all_dep_ids = [int(dep_resolved)]
+
     req = WalletRechargeRequest(
         client_id=int(client.id),
         amount_requested=aq,
         receipt_url=None,
         status=REQ_STATUS_PENDING,
-        allowed_payment_methods=[pm_id],
-        allowed_deposit_account_ids=allowed_dep_norm,
+        allowed_payment_methods=all_pm_ids,
+        allowed_deposit_account_ids=all_dep_ids or allowed_dep_norm,
         link_hash=None,
         recharge_currency=cur,
         recharge_exchange_rate=1.0,
@@ -2136,6 +2187,7 @@ async def _portal_wallet_recharge_submit_abono_manual_review(
         ai_confidence_score=safe_confidence,
         allow_zero_declared=bool(paid_f <= 0 and allow_zero),
     )
+    _portal_sync_recharge_allowed_payment_lists(db, client, req)
     commit_db_or_rollback(db)
     db.refresh(req)
     return req

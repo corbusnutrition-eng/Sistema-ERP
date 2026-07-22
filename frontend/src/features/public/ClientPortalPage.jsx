@@ -3962,7 +3962,6 @@ function ClientPortalPageInner() {
       for (const r of newOrderWalletRecharges) {
         const rid = Number(r?.id)
         if (!Number.isFinite(rid)) continue
-        if (next[rid] != null && next[rid] !== '') continue
         const cur =
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
@@ -3975,6 +3974,14 @@ function ClientPortalPageInner() {
           r?.payment_methods_tree,
         )
         const methods = portalParentMethods(tree)
+        const featPaid = Math.max(0, parseMoneyNum(r?.amount_paid) || 0)
+        const pend = portalRechargeOpenBalance(r)
+        const isPartialFollowUp = featPaid > 1e-9 && pend > 1e-9
+        if (isPartialFollowUp && methods.length > 1) {
+          delete next[rid]
+          continue
+        }
+        if (next[rid] != null && next[rid] !== '') continue
         if (methods[0]?.id != null) next[rid] = String(methods[0].id)
       }
       return next
@@ -3984,7 +3991,6 @@ function ClientPortalPageInner() {
       for (const r of newOrderWalletRecharges) {
         const rid = Number(r?.id)
         if (!Number.isFinite(rid)) continue
-        if (next[rid] != null && next[rid] !== '') continue
         const cur =
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
@@ -3997,7 +4003,15 @@ function ClientPortalPageInner() {
           r?.payment_methods_tree,
         )
         const methods = portalParentMethods(tree)
+        const featPaid = Math.max(0, parseMoneyNum(r?.amount_paid) || 0)
+        const pend = portalRechargeOpenBalance(r)
+        const isPartialFollowUp = featPaid > 1e-9 && pend > 1e-9
         const methodId = next[rid] || prev[rid] || methods[0]?.id
+        if (isPartialFollowUp && methods.length > 1) {
+          delete next[rid]
+          continue
+        }
+        if (next[rid] != null && next[rid] !== '') continue
         const accs = portalAccountsForMethod(tree, methodId)
         if (accs.length === 1) next[rid] = String(accs[0].id)
       }
@@ -4023,12 +4037,22 @@ function ClientPortalPageInner() {
           r?.payment_methods_tree,
         )
         const methods = portalParentMethods(tree)
-        const methodId = curForm.method || methods[0]?.id
-        const accs = portalAccountsForMethod(tree, methodId)
+        const featPaid = Math.max(0, parseMoneyNum(r?.amount_paid) || 0)
+        const pend = portalRechargeOpenBalance(r)
+        const isPartialFollowUp = featPaid > 1e-9 && pend > 1e-9
         const patch = {}
-        if (!curForm.method && methodId != null) patch.method = String(methodId)
-        if (!curForm.account && accs.length === 1 && accs[0]?.id != null) {
-          patch.account = String(accs[0].id)
+        if (isPartialFollowUp && methods.length > 1) {
+          if (curForm.method) {
+            patch.method = ''
+            patch.account = ''
+          }
+        } else {
+          const methodId = curForm.method || methods[0]?.id
+          const accs = portalAccountsForMethod(tree, methodId)
+          if (!curForm.method && methodId != null) patch.method = String(methodId)
+          if (!curForm.account && accs.length === 1 && accs[0]?.id != null) {
+            patch.account = String(accs[0].id)
+          }
         }
         if (Object.keys(patch).length) {
           next[k] = { ...curForm, ...patch }
