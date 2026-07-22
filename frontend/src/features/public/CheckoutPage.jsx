@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
+import PortalCustomSelect from './PortalCustomSelect'
 
 function publicApi() {
   return axios.create({
@@ -190,6 +191,24 @@ export default function CheckoutPage() {
       return String(list[0].id)
     })
   }, [detail, depositsForSelectedMethod, needsDepositPick, sent])
+
+  const paymentMethodOptions = useMemo(
+    () =>
+      (Array.isArray(detail?.payment_methods) ? detail.payment_methods : []).map((m) => ({
+        value: String(m.id),
+        label: String(m.name || `Método #${m.id}`),
+      })),
+    [detail?.payment_methods],
+  )
+
+  const depositAccountOptions = useMemo(
+    () =>
+      depositsForSelectedMethod.map((d) => ({
+        value: String(d.id),
+        label: `${d.bank_name || 'Cuenta'}${d.account_number ? ` · ${d.account_number}` : ''}`,
+      })),
+    [depositsForSelectedMethod],
+  )
 
   async function submitPay(e) {
     e.preventDefault()
@@ -473,28 +492,15 @@ export default function CheckoutPage() {
               <label htmlFor="pm" style={{ display: 'block', fontSize: 12, opacity: 0.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>
                 Método de pago
               </label>
-              <select
+              <PortalCustomSelect
                 id="pm"
-                value={methodId}
                 required
-                onChange={(ev) => setMethodId(ev.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '14px 16px',
-                  borderRadius: 14,
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  background: 'rgba(255,255,255,0.06)',
-                  color: '#f8fafc',
-                  fontSize: 15,
-                  fontWeight: 600,
-                }}
-              >
-                {(detail.payment_methods || []).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
+                disabled={(detail.payment_methods || []).length === 0}
+                value={methodId}
+                onChange={setMethodId}
+                options={paymentMethodOptions}
+                placeholder="Seleccionar…"
+              />
               {(detail.payment_methods || []).length === 0 ? (
                 <p style={{ margin: '12px 0 0', fontSize: 13, color: '#fbbf24', opacity: 0.92 }}>
                   No hay métodos de pago habilitados para este pedido desde el ERP. Solicita que el proveedor seleccione
@@ -555,29 +561,14 @@ export default function CheckoutPage() {
                     <label htmlFor="depacc" style={{ display: 'block', fontSize: 12, opacity: 0.55, marginBottom: 8 }}>
                       Elige la cuenta donde transferiste:
                     </label>
-                    <select
+                    <PortalCustomSelect
                       id="depacc"
-                      value={depositAccountId}
                       required={needsDepositPick}
-                      onChange={(ev) => setDepositAccountId(ev.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '14px 16px',
-                        borderRadius: 14,
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        background: 'rgba(255,255,255,0.06)',
-                        color: '#f8fafc',
-                        fontSize: 15,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {depositsForSelectedMethod.map((d) => (
-                        <option key={d.id} value={String(d.id)}>
-                          {d.bank_name}
-                          {d.account_number ? ` · ${d.account_number}` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      value={depositAccountId}
+                      onChange={setDepositAccountId}
+                      options={depositAccountOptions}
+                      placeholder="Seleccionar cuenta…"
+                    />
                   </>
                 )}
               </section>
