@@ -982,6 +982,7 @@ def request_wallet_recharge(
         amount_paid=0.0,
         balance_pending=aq,
         surplus_credited=0.0,
+        is_client_initiated=False,
     )
     db.add(req)
     db.flush()
@@ -1657,6 +1658,7 @@ def generate_wallet_recharge_link(
             amount_paid=0.0,
             balance_pending=aq,
             surplus_credited=0.0,
+            is_client_initiated=False,
             admin_note=creation_note_trim,
             recharge_detail_lines=lines_json,
             declared_deposit_usd=dep_usd,

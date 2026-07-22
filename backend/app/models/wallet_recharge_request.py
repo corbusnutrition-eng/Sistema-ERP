@@ -74,5 +74,9 @@ class WalletRechargeRequest(Base):
     )
     #: Confianza 0–100 de la lectura IA del último comprobante portal.
     ai_confidence_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, server_default=text("100"))
+    #: True si el cliente creó la solicitud desde el portal público (no desde el ERP).
+    is_client_initiated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
 
     client: Mapped["Client"] = relationship(back_populates="wallet_recharge_requests")

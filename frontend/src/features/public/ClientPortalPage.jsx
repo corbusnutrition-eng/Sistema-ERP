@@ -977,8 +977,9 @@ function isPortalNewOrderWalletRecharge(r) {
   return st !== 'rejected' && st !== 'canceled'
 }
 
-/** Recarga pending sin abonos: el cliente puede editar monto o cancelar. */
+/** Recarga pending sin abonos, creada por el cliente en el portal: editable/cancelable. */
 function portalCanClientEditOrCancelRecharge(recharge) {
+  if (!Boolean(recharge?.is_client_initiated)) return false
   const st = String(recharge?.status ?? '').toLowerCase()
   if (st !== 'pending') return false
   const amountReq = parseMoneyNum(recharge?.amount_requested)

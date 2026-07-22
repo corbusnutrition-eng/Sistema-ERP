@@ -287,6 +287,10 @@ class PortalWalletRechargeItem(BaseModel):
         default=0.0,
         description="Excedente acumulado enviado a saldo a favor CxC por esta solicitud.",
     )
+    is_client_initiated: bool = Field(
+        default=False,
+        description="True si el cliente creó la solicitud desde el portal (editable/cancelable por él).",
+    )
 
 
 class PortalNetworkLevelCount(BaseModel):

@@ -1443,6 +1443,7 @@ def _portal_wallet_recharge_item_from_request(
         allowed_deposit_accounts=dep_picks,
         payment_methods_tree=pm_tree,
         payment_methods_display=pm_disp,
+        is_client_initiated=bool(getattr(req, "is_client_initiated", False)),
     )
 
 
@@ -1503,7 +1504,12 @@ def _portal_get_client_owned_recharge(
 
 
 def _portal_assert_client_may_edit_or_cancel_recharge(db: Session, req: WalletRechargeRequest) -> None:
-    """Solo pending sin abonos ni comprobantes (saldo pendiente = total)."""
+    """Solo pending sin abonos ni comprobantes (saldo pendiente = total), creadas por el cliente."""
+    if not bool(getattr(req, "is_client_initiated", False)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo puedes modificar solicitudes de recarga que hayas creado tú desde el portal.",
+        )
     if str(getattr(req, "status", "") or "") != REQ_STATUS_PENDING:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1674,6 +1680,7 @@ def _portal_create_wallet_recharge_for_client(
         amount_paid=0.0,
         balance_pending=aq,
         surplus_credited=0.0,
+        is_client_initiated=True,
         admin_note="Solicitud creada por el cliente desde el portal.",
         recharge_detail_lines=[
             {
