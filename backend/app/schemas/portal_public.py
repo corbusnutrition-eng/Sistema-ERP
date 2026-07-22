@@ -650,19 +650,31 @@ class ReceiptAnalysisResponse(BaseModel):
     )
 
 
-class PortalWalletHistoryItem(BaseModel):
-    """Movimiento reciente de la billetera BaaS (portal, solo 1.er nivel)."""
+class PortalWalletRechargeHistoryPayment(BaseModel):
+    """Abono o comprobante vinculado a una solicitud de recarga (vista portal)."""
+
+    id: Optional[int] = None
+    date: Optional[datetime.datetime] = None
+    amount: float = Field(..., ge=0)
+    currency: str = Field(default="USD", max_length=10)
+    payment_method_name: str = Field(default="Transferencia bancaria")
+    status: str = Field(description="approved | pending_review | rejected")
+    is_successful: bool = Field(default=False)
+
+
+class PortalWalletRechargeHistoryItem(BaseModel):
+    """Solicitud de recarga BaaS con sus abonos (historial portal)."""
 
     id: int
-    date: datetime.datetime
-    description: str
-    amount: float = Field(..., ge=0, description="Importe absoluto mostrado al cliente.")
+    reference: str = Field(description="Referencia legible, ej. REC-00059.")
+    created_at: datetime.datetime
+    amount_requested: float = Field(..., ge=0)
     currency: str = Field(default="USD", max_length=10)
-    direction: str = Field(description="``income`` (ingreso) o ``expense`` (egreso).")
-    transaction_type: str
-    type_label: str = Field(description="Etiqueta legible del tipo de movimiento.")
+    status: str
+    status_label: str
+    payments: list[PortalWalletRechargeHistoryPayment] = Field(default_factory=list)
 
 
 class PortalWalletHistoryResponse(BaseModel):
-    items: list[PortalWalletHistoryItem] = Field(default_factory=list)
+    items: list[PortalWalletRechargeHistoryItem] = Field(default_factory=list)
     count: int = Field(default=0, ge=0)

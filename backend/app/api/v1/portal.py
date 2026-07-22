@@ -106,7 +106,8 @@ from app.schemas.portal_public import (
     PortalTrackedPurchaseUpdate,
     PortalTrackedPurchaseUpdateResponse,
     PortalWalletRechargeItem,
-    PortalWalletHistoryItem,
+    PortalWalletRechargeHistoryItem,
+    PortalWalletRechargeHistoryPayment,
     PortalWalletHistoryResponse,
     ReceiptAnalysisResponse,
     SalePaymentEvent,
@@ -2894,57 +2895,169 @@ def portal_cxc_balance(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalCxcBalan
     return _compute_portal_cxc_balance(db, client)
 
 
-def _portal_wallet_history_type_label(tx_type: str) -> str:
-    mapping = {
-        TX_BAAS_TRANSFER_IN: "Recarga recibida",
-        TX_BAAS_TRANSFER_OUT: "Transferencia enviada",
-        TX_BAAS_TRANSFER_REVERT_IN: "Reversión · ingreso",
-        TX_BAAS_TRANSFER_REVERT_OUT: "Reversión · egreso",
-        TX_WALLET_DEPOSIT: "Comisión de red",
-        TX_NETWORK_PROFIT: "Ganancia de red",
-        TX_AUTO_PURCHASE: "Autocompra BaaS",
-        "recharge": "Recarga BaaS",
-    }
-    return mapping.get(str(tx_type or "").strip(), "Movimiento BaaS")
+def _portal_payment_method_display_name(db: Session, cp: ClientPayment) -> str:
+    raw = (cp.payment_method or "").strip()
+    if raw:
+        return raw
+    pm_id = getattr(cp, "payment_method_id", None)
+    if pm_id is not None:
+        pm = db.get(PaymentMethod, int(pm_id))
+        if pm is not None and (pm.name or "").strip():
+            return str(pm.name).strip()
+    dep_id = getattr(cp, "deposit_account_id", None)
+    if dep_id is not None:
+        acc = db.get(Account, int(dep_id))
+        if acc is not None and (acc.name or "").strip():
+            return str(acc.name).strip()
+    return "Transferencia bancaria"
 
 
-def _portal_wallet_history_item_from_tx(wtx: WalletTransaction) -> Optional[PortalWalletHistoryItem]:
-    try:
-        raw_amt = float(wtx.amount or 0)
-    except (TypeError, ValueError):
-        return None
-    if abs(raw_amt) <= 1e-9:
-        return None
+def _portal_recharge_declared_payment_method_name(db: Session, req: WalletRechargeRequest) -> str:
+    dep_id = getattr(req, "portal_submitted_deposit_account_id", None)
+    if dep_id is None:
+        return "Transferencia bancaria"
+    acc = db.get(Account, int(dep_id))
+    if acc is None:
+        return "Transferencia bancaria"
+    linked = (acc.linked_payment_method or "").strip()
+    if linked:
+        return linked
+    if acc.linked_wallet_id is not None:
+        pm = db.get(PaymentMethod, int(acc.linked_wallet_id))
+        if pm is not None and (pm.name or "").strip():
+            return str(pm.name).strip()
+    return (acc.name or "").strip() or "Transferencia bancaria"
 
-    desc_raw = (wtx.description or "").strip()
-    ledger_cur = "USD"
-    if " · " in desc_raw:
-        tail = desc_raw.rsplit(" · ", 1)[-1].strip()
-        if len(tail) >= 3:
-            ledger_cur = normalize_currency_code(tail, "USD")
 
-    tx_type = str(wtx.transaction_type or "")
-    direction = "income" if raw_amt >= 0 else "expense"
-    ts = getattr(wtx, "created_at", None)
+def _portal_wallet_recharge_history_payments(
+    db: Session,
+    req: WalletRechargeRequest,
+) -> list[PortalWalletRechargeHistoryPayment]:
+    """Abonos/comprobantes de una recarga en formato amigable para el portal."""
+    from app.models.client_payment import ClientPaymentStatus
+    from app.services.client_payment_service import linked_payments_financial_for_wallet_recharge
+    from app.services.wallet_recharge_client_payment import parse_notes_meta_wallet_recharge_id
+
+    rid = int(req.id)
+    cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+    out: list[PortalWalletRechargeHistoryPayment] = []
+    seen_cp_ids: set[int] = set()
+
+    payments = (
+        db.query(ClientPayment)
+        .filter(ClientPayment.client_id == int(req.client_id))
+        .order_by(ClientPayment.created_at.desc(), ClientPayment.id.desc())
+        .all()
+    )
+    for cp in payments:
+        if parse_notes_meta_wallet_recharge_id(cp.notes) != rid:
+            continue
+        cpid = int(cp.id)
+        seen_cp_ids.add(cpid)
+        st_raw = cp.status.value if cp.status is not None else ClientPaymentStatus.pending_review.value
+        is_ok = st_raw == ClientPaymentStatus.approved.value
+        dt = cp.approved_at if is_ok and cp.approved_at is not None else cp.created_at
+        out.append(
+            PortalWalletRechargeHistoryPayment(
+                id=cpid,
+                date=dt if isinstance(dt, datetime) else None,
+                amount=round(float(cp.amount or 0), 2),
+                currency=normalize_currency_code(str(cp.currency or cur), cur),
+                payment_method_name=_portal_payment_method_display_name(db, cp),
+                status=st_raw,
+                is_successful=is_ok,
+            )
+        )
+
+    approved_rows, pending_rows = linked_payments_financial_for_wallet_recharge(db, req)
+
+    for row in approved_rows:
+        pid_raw = row.get("payment_id")
+        pid = int(pid_raw) if pid_raw is not None else None
+        if pid is not None and pid in seen_cp_ids:
+            continue
+        if pid is not None and pid < 1_000_000_000:
+            continue
+        dt = row.get("date")
+        out.append(
+            PortalWalletRechargeHistoryPayment(
+                id=pid,
+                date=dt if isinstance(dt, datetime) else None,
+                amount=round(float(row.get("amount_applied") or 0), 2),
+                currency=cur,
+                payment_method_name="Saldo acreditado",
+                status=ClientPaymentStatus.approved.value,
+                is_successful=True,
+            )
+        )
+
+    for row in pending_rows:
+        pid_raw = row.get("payment_id")
+        pid = int(pid_raw) if pid_raw is not None else None
+        if pid is not None and pid in seen_cp_ids:
+            continue
+        dt = row.get("created_at")
+        amt = round(float(row.get("amount_applied_to_sale") or row.get("amount") or 0), 2)
+        if pid is not None and pid >= 2_000_000_000:
+            pm_name = _portal_recharge_declared_payment_method_name(db, req)
+        elif pid is not None and pid < 1_000_000_000:
+            cp = db.get(ClientPayment, pid)
+            pm_name = _portal_payment_method_display_name(db, cp) if cp is not None else "Transferencia bancaria"
+        else:
+            pm_name = str(row.get("payment_method") or "").strip() or "Transferencia bancaria"
+        out.append(
+            PortalWalletRechargeHistoryPayment(
+                id=pid,
+                date=dt if isinstance(dt, datetime) else None,
+                amount=amt,
+                currency=normalize_currency_code(str(row.get("currency") or cur), cur),
+                payment_method_name=pm_name,
+                status=ClientPaymentStatus.pending_review.value,
+                is_successful=False,
+            )
+        )
+
+    out.sort(
+        key=lambda p: (_portal_dt_sort_key(p.date), p.id or 0),
+        reverse=True,
+    )
+    return out
+
+
+def _portal_dt_sort_key(dt: Optional[datetime]) -> float:
+    if not isinstance(dt, datetime):
+        return 0.0
+    aware = ensure_aware(dt)
+    return aware.timestamp() if aware else 0.0
+
+
+def _portal_wallet_recharge_history_item(
+    db: Session,
+    req: WalletRechargeRequest,
+) -> PortalWalletRechargeHistoryItem:
+    from app.services.client_payment_service import _wallet_recharge_status_label_es, wallet_recharge_ref_number
+
+    cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+    st = str(getattr(req, "status", "") or "")
+    ts = getattr(req, "created_at", None)
     if not isinstance(ts, datetime):
         ts = now_ecuador()
-
-    return PortalWalletHistoryItem(
-        id=int(wtx.id),
-        date=ts,
-        description=desc_raw or _portal_wallet_history_type_label(tx_type),
-        amount=round(abs(raw_amt), 2),
-        currency=ledger_cur,
-        direction=direction,
-        transaction_type=tx_type,
-        type_label=_portal_wallet_history_type_label(tx_type),
+    return PortalWalletRechargeHistoryItem(
+        id=int(req.id),
+        reference=wallet_recharge_ref_number(int(req.id)),
+        created_at=ts,
+        amount_requested=round(float(getattr(req, "amount_requested", 0) or 0), 2),
+        currency=cur,
+        status=st,
+        status_label=_wallet_recharge_status_label_es(st),
+        payments=_portal_wallet_recharge_history_payments(db, req),
     )
 
 
 @router.get(
     "/{portal_token}/wallet-history",
     response_model=PortalWalletHistoryResponse,
-    summary="Últimos movimientos de billetera BaaS (solo cliente 1.er nivel)",
+    summary="Historial de recargas BaaS (solo cliente 1.er nivel)",
 )
 @limiter.limit(PORTAL_GET_LIMIT)
 def portal_wallet_history(
@@ -2960,24 +3073,15 @@ def portal_wallet_history(
             detail="El historial de billetera solo está disponible para clientes de primer nivel.",
         )
 
-    allowed_types = tuple(BAAS_TRANSFER_LEDGER_TYPES) + tuple(BAAS_COMMISSION_LEDGER_TYPES) + (TX_AUTO_PURCHASE, "recharge")
     rows = (
-        db.query(WalletTransaction)
-        .filter(
-            WalletTransaction.client_id == int(client.id),
-            WalletTransaction.transaction_type.in_(allowed_types),
-        )
-        .order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+        db.query(WalletRechargeRequest)
+        .filter(WalletRechargeRequest.client_id == int(client.id))
+        .order_by(WalletRechargeRequest.created_at.desc(), WalletRechargeRequest.id.desc())
         .limit(int(limit))
         .all()
     )
 
-    items: list[PortalWalletHistoryItem] = []
-    for wtx in rows:
-        item = _portal_wallet_history_item_from_tx(wtx)
-        if item is not None:
-            items.append(item)
-
+    items = [_portal_wallet_recharge_history_item(db, r) for r in rows]
     return PortalWalletHistoryResponse(items=items, count=len(items))
 
 

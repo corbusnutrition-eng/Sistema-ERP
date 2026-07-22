@@ -7431,7 +7431,7 @@ function ClientPortalPageInner() {
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-400/40 bg-violet-950/35 px-4 py-2.5 text-[13px] font-semibold text-violet-50 transition hover:bg-violet-950/55 sm:w-auto"
                 >
                   <History size={16} aria-hidden />
-                  Historial de transacciones
+                  Historial de recargas
                 </button>
               ) : null}
 
