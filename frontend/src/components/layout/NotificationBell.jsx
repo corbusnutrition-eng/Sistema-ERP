@@ -94,12 +94,13 @@ export default function NotificationBell() {
   const visibleItems = items.filter((item) => !dismissedKeys.has(notificationKey(item)))
   const count = visibleItems.length
 
-  function dismiss(item) {
+  function dismiss(item, event) {
+    event?.stopPropagation?.()
     const key = notificationKey(item)
     setDismissedKeys((prev) => new Set(prev).add(key))
   }
 
-  function goToItem(item) {
+  function handleNotificationClick(item) {
     setOpen(false)
     navigate(notificationTargetPath(item))
   }
@@ -163,7 +164,16 @@ export default function NotificationBell() {
               return (
                 <li
                   key={key}
-                  className="flex items-start gap-3 px-4 py-3 bg-amber-50/40 hover:bg-amber-50 transition-colors"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleNotificationClick(item)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      handleNotificationClick(item)
+                    }
+                  }}
+                  className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
                 >
                   <div
                     className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${kindIconBg(item.kind)}`}
@@ -176,7 +186,7 @@ export default function NotificationBell() {
                         {clientName}
                       </p>
                       <button
-                        onClick={() => dismiss(item)}
+                        onClick={(e) => dismiss(item, e)}
                         className="shrink-0 p-0.5 text-gray-300 hover:text-gray-500 rounded transition-colors"
                         title="Descartar"
                         type="button"
@@ -190,14 +200,10 @@ export default function NotificationBell() {
                     <p className="text-xs text-gray-500 mt-0.5">
                       {amountLabel} {currency} · Pendiente de revisión
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => goToItem(item)}
-                      className="mt-1.5 text-[10px] font-semibold text-amber-600 hover:text-amber-700 transition-colors inline-flex items-center gap-1"
-                    >
+                    <span className="mt-1.5 text-[10px] font-semibold text-amber-600 inline-flex items-center gap-1">
                       <Clock size={10} />
                       Aprobar pago
-                    </button>
+                    </span>
                   </div>
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 mt-2" />
                 </li>
