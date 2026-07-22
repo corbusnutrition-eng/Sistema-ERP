@@ -8451,19 +8451,18 @@ function ClientPortalPageInner() {
                   <label htmlFor="portal-ledger-obligation-select" className="text-[11px] uppercase tracking-wide text-emerald-200/55">
                     Ver estado y movimientos de
                   </label>
-                  <select
+                  <PortalCustomSelect
                     id="portal-ledger-obligation-select"
-                    className={`${PORTAL_TOUCH_INPUT_CLASS} mt-2`}
+                    className="mt-2"
+                    buttonClassName="border-emerald-500/25 bg-slate-950/60 text-[13px] font-medium text-emerald-50 hover:border-emerald-400/50"
                     value={effectiveLedgerFocusKey}
-                    onChange={(e) => setLedgerFocusKey(e.target.value)}
-                    className="w-full rounded-xl border border-emerald-500/25 bg-slate-950/60 px-3 py-2.5 text-[13px] font-medium text-emerald-50 outline-none ring-0 focus:border-emerald-400/50"
-                  >
-                    {pendingLedgerObligations.map((o) => (
-                      <option key={o.key} value={o.key}>
-                        {o.summaryLabel} — {formatMoney(o.pendingAmount, o.currency)} pendiente
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(key) => setLedgerFocusKey(key)}
+                    options={pendingLedgerObligations.map((o) => ({
+                      value: o.key,
+                      label: `${o.summaryLabel} — ${formatMoney(o.pendingAmount, o.currency)} pendiente`,
+                    }))}
+                    placeholder="Seleccionar…"
+                  />
                 </div>
               : null}
               <button
