@@ -3695,12 +3695,12 @@ function ClientPortalPageInner() {
     if (unreadCount <= 0) return null
     return (
       <span className="inline-flex items-center gap-2">
-        <span className="text-red-400 text-sm font-semibold">
+        <span className="text-[#39FF14] text-sm font-semibold">
           {unreadCount === 1 ? 'Nuevo mensaje' : 'Nuevos mensajes'}
         </span>
         <span
           aria-label={`${unreadCount} notificación${unreadCount !== 1 ? 'es' : ''} sin leer`}
-          className="inline-flex min-w-[1.75rem] items-center justify-center rounded-full bg-red-600 px-2.5 py-0.5 text-xs font-bold tabular-nums text-white shadow-sm animate-pulse"
+          className="inline-flex min-w-[1.75rem] items-center justify-center rounded-full bg-[#39FF14] px-2.5 py-0.5 text-xs font-bold tabular-nums text-black shadow-sm animate-pulse"
         >
           {unreadCount}
         </span>
@@ -5967,7 +5967,7 @@ function ClientPortalPageInner() {
                           key={`portal-notif-${nid}`}
                           className={`rounded-xl border px-3 py-2.5 transition ${
                             !row?.is_read
-                              ? 'border-orange-500 bg-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.5)]'
+                              ? 'border-[#39FF14] bg-[#39FF14]/10 shadow-[0_0_15px_rgba(57,255,20,0.5)]'
                               : 'border-gray-700 bg-gray-800/50 opacity-60'
                           }`}
                         >
@@ -5982,7 +5982,7 @@ function ClientPortalPageInner() {
                               </p>
                               <p
                                 className={`m-0 mt-0.5 text-[11px] tabular-nums ${
-                                  isRead ? 'text-slate-500' : 'text-orange-100/90'
+                                  isRead ? 'text-slate-500' : 'text-[#39FF14]/90'
                                 }`}
                               >
                                 {createdLabel}
@@ -5993,7 +5993,7 @@ function ClientPortalPageInner() {
                                 type="button"
                                 disabled={markingNotificationId === nid}
                                 onClick={() => void markPortalNotificationRead(nid)}
-                                className="shrink-0 rounded-md border border-orange-400/60 bg-orange-950/50 px-2 py-1 text-[10px] font-semibold text-orange-50 hover:bg-orange-900/60 disabled:opacity-50"
+                                className="shrink-0 rounded-md border border-[#39FF14]/60 bg-[#39FF14]/10 px-2 py-1 text-[10px] font-semibold text-[#39FF14] hover:bg-[#39FF14]/20 disabled:opacity-50"
                               >
                                 {markingNotificationId === nid ? '…' : 'Marcar como leído'}
                               </button>
