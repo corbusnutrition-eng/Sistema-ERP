@@ -39,6 +39,7 @@ import {
 } from './codigosRetiroPayment'
 import PortalManualAmountField from './PortalManualAmountField'
 import ClientRechargeRequestModal from './ClientRechargeRequestModal'
+import PortalCustomSelect from './PortalCustomSelect'
 import WalletHistoryModal from './WalletHistoryModal'
 import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
@@ -127,10 +128,11 @@ function portalPaymentMethodOptions(methods) {
   }))
 }
 
-function portalPaymentMethodSelectValue(methods, selectedId) {
-  const idStr = selectedId != null && String(selectedId).trim() !== '' ? String(selectedId) : ''
-  if (!idStr) return null
-  return portalPaymentMethodOptions(methods).find((o) => o.value === idStr) ?? null
+function portalDepositAccountOptions(accounts) {
+  return (Array.isArray(accounts) ? accounts : []).map((d) => ({
+    value: String(d.id),
+    label: `${d.bank_name || 'Cuenta'}${d.account_number ? ` · ${d.account_number}` : ''}`,
+  }))
 }
 
 function formatMoney(amount, currency) {
@@ -5679,24 +5681,19 @@ function ClientPortalPageInner() {
         >
           Método de pago
         </label>
-        <Select
-          inputId="portal-debt-payment-method"
-          classNamePrefix="portal-rs"
-          options={portalPaymentMethodOptions(debtPaymentMethods)}
-          value={portalPaymentMethodSelectValue(debtPaymentMethods, debtForm.method)}
-          onChange={(selectedOption) =>
+        <PortalCustomSelect
+          id="portal-debt-payment-method"
+          disabled={!obligationReady || debtPaymentMethods.length === 0}
+          value={debtForm.method}
+          onChange={(mid) =>
             setDebtForm((p) => ({
               ...p,
-              method: selectedOption ? String(selectedOption.value) : '',
+              method: mid,
               account: '',
             }))
           }
-          isDisabled={!obligationReady || debtPaymentMethods.length === 0}
-          isClearable={false}
+          options={portalPaymentMethodOptions(debtPaymentMethods)}
           placeholder="Seleccionar…"
-          styles={portalPaymentMethodSelectStyles}
-          menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
-          menuPosition="fixed"
         />
       </div>
 
@@ -5709,24 +5706,20 @@ function ClientPortalPageInner() {
           >
             Cuenta donde depositaste
           </label>
-          <select
+          <PortalCustomSelect
             id="portal-debt-deposit-account"
             disabled={!obligationReady || debtPaymentAccounts.length <= 1}
             value={debtForm.account}
-            onChange={(e) => {
-              const depVal = e.target.value
+            onChange={(depVal) => {
               setDebtForm((p) => ({ ...p, account: depVal }))
               const filesNow = debtReceiptFilesRef.current
               const expected = currentDebtPayObligation?.pendingAmount ?? null
               if (filesNow?.length) analyzeDebtReceiptWithAI(filesNow, expected, debtCurrency)
             }}
-            className={`${PORTAL_TOUCH_INPUT_CLASS} mb-3`}
-          >
-            <option value="" disabled>Seleccionar cuenta…</option>
-            {debtPaymentAccounts.map((d) => (
-              <option key={d.id} value={String(d.id)}>{d.bank_name}{d.account_number ? ` · ${d.account_number}` : ''}</option>
-            ))}
-          </select>
+            options={portalDepositAccountOptions(debtPaymentAccounts)}
+            placeholder="Seleccionar cuenta…"
+            className="mb-3"
+          />
         </>
       )}
       {debtPaymentAccounts.length === 1 && (
@@ -6420,26 +6413,17 @@ function ClientPortalPageInner() {
                       >
                         Método de pago
                       </label>
-                      <Select
-                        inputId={`recharge-baas-pm-${frId}`}
-                        classNamePrefix="portal-rs"
-                        options={portalPaymentMethodOptions(rechargePaymentMethods)}
-                        value={portalPaymentMethodSelectValue(
-                          rechargePaymentMethods,
-                          rechargeForm.method || methodForDeps,
-                        )}
-                        onChange={(selectedOption) => {
-                          const mid = selectedOption ? String(selectedOption.value) : ''
+                      <PortalCustomSelect
+                        id={`recharge-baas-pm-${frId}`}
+                        disabled={rechargePaymentMethods.length === 0}
+                        value={rechargeForm.method || methodForDeps || ''}
+                        onChange={(mid) => {
                           setRechargeForm({ method: mid, account: '' })
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
                           setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
                         }}
-                        isDisabled={rechargePaymentMethods.length === 0}
-                        isClearable={false}
+                        options={portalPaymentMethodOptions(rechargePaymentMethods)}
                         placeholder="Seleccionar…"
-                        styles={portalPaymentMethodSelectStyles}
-                        menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
-                        menuPosition="fixed"
                       />
                       {rechargePaymentMethods.length === 0 ?
                         <p style={{ margin: '12px 0 0', fontSize: 13, color: '#fbbf24', opacity: 0.92 }}>
@@ -6486,12 +6470,11 @@ function ClientPortalPageInner() {
                             >
                               Elige la cuenta donde transferiste:
                             </label>
-                            <select
+                            <PortalCustomSelect
                               id={`recharge-baas-dep-${frId}`}
-                              value={rechargeForm.account}
                               required
-                              onChange={(ev) => {
-                                const depVal = ev.target.value
+                              value={rechargeForm.account}
+                              onChange={(depVal) => {
                                 setRechargeForm({ account: depVal })
                                 setPayAccountByRecharge((p) => ({ ...p, [frId]: depVal }))
                                 const filesNow = receiptFilesByRecharge[frId] || []
@@ -6504,18 +6487,9 @@ function ClientPortalPageInner() {
                                   )
                                 }
                               }}
-                              className={PORTAL_TOUCH_INPUT_CLASS}
-                            >
-                              <option value="" disabled>
-                                Seleccionar cuenta…
-                              </option>
-                              {rechargeDepositAccounts.map((d) => (
-                                <option key={d.id} value={String(d.id)}>
-                                  {d.bank_name}
-                                  {d.account_number ? ` · ${d.account_number}` : ''}
-                                </option>
-                              ))}
-                            </select>
+                              options={portalDepositAccountOptions(rechargeDepositAccounts)}
+                              placeholder="Seleccionar cuenta…"
+                            />
                           </>
                         )}
                       </section>
@@ -7025,13 +6999,11 @@ function ClientPortalPageInner() {
                             >
                               Método de pago
                             </label>
-                            <Select
-                              inputId={`pm-${sid}`}
-                              classNamePrefix="portal-rs"
-                              options={portalPaymentMethodOptions(pmList)}
-                              value={portalPaymentMethodSelectValue(pmList, methodId)}
-                              onChange={(selectedOption) => {
-                                const nextMethod = selectedOption ? String(selectedOption.value) : ''
+                            <PortalCustomSelect
+                              id={`pm-${sid}`}
+                              disabled={pmList.length === 0}
+                              value={methodId || ''}
+                              onChange={(nextMethod) => {
                                 setPayMethodBySale((p) => ({ ...p, [sid]: nextMethod }))
                                 setPayAccountBySale((p) => {
                                   const n = { ...p }
@@ -7041,12 +7013,8 @@ function ClientPortalPageInner() {
                                   return n
                                 })
                               }}
-                              isDisabled={pmList.length === 0}
-                              isClearable={false}
+                              options={portalPaymentMethodOptions(pmList)}
                               placeholder="Seleccionar…"
-                              styles={portalPaymentMethodSelectStyles}
-                              menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
-                              menuPosition="fixed"
                             />
                             {pmList.length === 0 ? (
                               <p style={{ margin: '12px 0 0', fontSize: 13, color: '#fbbf24', opacity: 0.92 }}>
@@ -7095,12 +7063,11 @@ function ClientPortalPageInner() {
                                 >
                                   Elige la cuenta donde transferiste:
                                 </label>
-                                <select
+                                <PortalCustomSelect
                                   id={`depacc-${sid}`}
-                                  value={depositAccountId}
                                   required={needsDepositPick}
-                                  onChange={(ev) => {
-                                    const depVal = ev.target.value
+                                  value={depositAccountId || ''}
+                                  onChange={(depVal) => {
                                     setPayAccountBySale((p) => ({ ...p, [sid]: depVal }))
                                     const filesNow = receiptFilesRef.current[sid]
                                     analyzeReceiptWithAI(
@@ -7110,18 +7077,9 @@ function ClientPortalPageInner() {
                                       saleCurrency,
                                     )
                                   }}
-                                  className={PORTAL_TOUCH_INPUT_CLASS}
-                                >
-                                  <option value="" disabled>
-                                    Seleccionar cuenta…
-                                  </option>
-                                  {depList.map((d) => (
-                                    <option key={d.id} value={String(d.id)}>
-                                      {d.bank_name}
-                                      {d.account_number ? ` · ${d.account_number}` : ''}
-                                    </option>
-                                  ))}
-                                </select>
+                                  options={portalDepositAccountOptions(depList)}
+                                  placeholder="Seleccionar cuenta…"
+                                />
                               </>
                             )}
                           </section>

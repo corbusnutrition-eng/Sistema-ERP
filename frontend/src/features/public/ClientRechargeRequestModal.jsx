@@ -1,40 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
-import Select from 'react-select'
+import PortalCustomSelect from './PortalCustomSelect'
 
 function parseAmount(raw) {
   const n = parseFloat(String(raw ?? '').trim().replace(',', '.'))
   return Number.isFinite(n) ? n : NaN
-}
-
-function portalSelectStyles() {
-  return {
-    control: (base, state) => ({
-      ...base,
-      minHeight: 40,
-      borderRadius: 10,
-      borderColor: state.isFocused ? 'rgba(129,140,248,0.65)' : 'rgba(71,85,105,0.85)',
-      backgroundColor: 'rgb(2,6,23)',
-      boxShadow: state.isFocused ? '0 0 0 1px rgba(129,140,248,0.35)' : 'none',
-      '&:hover': { borderColor: 'rgba(129,140,248,0.55)' },
-    }),
-    menu: (base) => ({
-      ...base,
-      borderRadius: 10,
-      backgroundColor: 'rgb(15,23,42)',
-      border: '1px solid rgba(71,85,105,0.75)',
-      zIndex: 60,
-    }),
-    option: (base, state) => ({
-      ...base,
-      fontSize: 13,
-      backgroundColor: state.isSelected ? 'rgba(99,102,241,0.35)' : state.isFocused ? 'rgba(51,65,85,0.85)' : 'transparent',
-      color: '#e2e8f0',
-    }),
-    singleValue: (base) => ({ ...base, color: '#f8fafc' }),
-    input: (base) => ({ ...base, color: '#f8fafc' }),
-    placeholder: (base) => ({ ...base, color: '#64748b' }),
-  }
 }
 
 /**
@@ -272,22 +242,22 @@ export default function ClientRechargeRequestModal({
           {!isEditMode ? (
             <>
               <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-300">Método de pago</label>
+                <label htmlFor="client-recharge-method" className="mb-1.5 block text-xs font-semibold text-slate-300">
+                  Método de pago
+                </label>
                 {optionsLoading ? (
                   <p className="m-0 flex items-center gap-2 text-sm text-slate-400">
                     <Loader2 size={14} className="animate-spin" />
                     Cargando métodos…
                   </p>
                 ) : (
-                  <Select
+                  <PortalCustomSelect
+                    id="client-recharge-method"
+                    disabled={submitting || methodOptions.length === 0}
+                    value={methodId}
+                    onChange={setMethodId}
                     options={methodOptions}
-                    value={methodOptions.find((o) => o.value === String(methodId)) ?? null}
-                    onChange={(opt) => setMethodId(opt?.value ?? '')}
-                    isDisabled={submitting || methodOptions.length === 0}
-                    styles={portalSelectStyles()}
                     placeholder="Selecciona cómo pagarás…"
-                    className="text-sm"
-                    classNamePrefix="portal-recharge-method"
                   />
                 )}
                 {optionsErr ? <p className="mt-1.5 mb-0 text-xs text-amber-300">{optionsErr}</p> : null}
@@ -295,16 +265,16 @@ export default function ClientRechargeRequestModal({
 
               {depositAccounts.length > 1 ? (
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-300">Cuenta bancaria</label>
-                  <Select
+                  <label htmlFor="client-recharge-account" className="mb-1.5 block text-xs font-semibold text-slate-300">
+                    Cuenta bancaria
+                  </label>
+                  <PortalCustomSelect
+                    id="client-recharge-account"
+                    disabled={submitting}
+                    value={accountId}
+                    onChange={setAccountId}
                     options={accountOptions}
-                    value={accountOptions.find((o) => o.value === String(accountId)) ?? null}
-                    onChange={(opt) => setAccountId(opt?.value ?? '')}
-                    isDisabled={submitting}
-                    styles={portalSelectStyles()}
                     placeholder="Selecciona la cuenta receptora…"
-                    className="text-sm"
-                    classNamePrefix="portal-recharge-account"
                   />
                 </div>
               ) : depositAccounts.length === 1 ? (
