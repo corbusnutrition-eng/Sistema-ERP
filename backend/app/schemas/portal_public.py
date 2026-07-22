@@ -623,6 +623,18 @@ class PortalCreateWalletRechargeResponse(BaseModel):
     portal_path: str = Field(..., description="Ruta base del portal del cliente.")
 
 
+class PortalUpdateWalletRechargeRequest(BaseModel):
+    """PATCH /portal/{token}/recharges/{id} — cambio de monto sin pagos asociados."""
+
+    amount: float = Field(..., gt=0, description="Nuevo monto solicitado.")
+
+
+class PortalWalletRechargeDeleteResponse(BaseModel):
+    ok: bool = True
+    request_id: int = Field(..., ge=1)
+    status: str
+
+
 class DebtPaymentSubmitResponse(BaseModel):
     message: str
     debt_payment_id: int

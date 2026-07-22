@@ -977,6 +977,20 @@ function isPortalNewOrderWalletRecharge(r) {
   return st !== 'rejected' && st !== 'canceled'
 }
 
+/** Recarga pending sin abonos: el cliente puede editar monto o cancelar. */
+function portalCanClientEditOrCancelRecharge(recharge) {
+  const st = String(recharge?.status ?? '').toLowerCase()
+  if (st !== 'pending') return false
+  const amountReq = parseMoneyNum(recharge?.amount_requested)
+  const pend = parseMoneyNum(recharge?.balance_pending)
+  const paid = parseMoneyNum(recharge?.amount_paid)
+  if (paid > 1e-9) return false
+  if (!(Number.isFinite(amountReq) && Number.isFinite(pend))) return false
+  if (Math.abs(pend - amountReq) > 1e-6) return false
+  if (String(recharge?.receipt_url || '').trim()) return false
+  return true
+}
+
 /** Deuda real en «Saldo pendiente»: excluye pedidos abiertos del acordeón «Nuevos pedidos». */
 function isPortalHistoricalDebtSale(sale) {
   if (isPortalNewOrderSale(sale)) return false
@@ -1613,15 +1627,19 @@ function PortalNeoOrderSummaryCard({
   partialBadge,
   detailLinesSlot,
   footerText,
+  actionsSlot,
 }) {
   return (
     <div className={`portal-order-summary-glow-wrap ${PORTAL_SECTION_SHELL_CLASS} mb-4 md:mb-6`}>
       <section className="portal-order-summary-card w-full min-w-0">
         <div className="portal-order-summary-circuit-overlay" aria-hidden />
         <div className="portal-order-summary-inner border-b border-white/10 px-3 pb-4 pt-4 md:px-5 md:pb-5 md:pt-5">
-          <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-            Resumen del pedido
-          </p>
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <p className="m-0 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+              Resumen del pedido
+            </p>
+            {actionsSlot ?? null}
+          </div>
           {pricingBreakdownSlot ?? null}
           <div className="flex min-w-0 items-start justify-between gap-3 sm:gap-4">
             <div className="min-w-0 flex-1 break-words">
@@ -2122,6 +2140,8 @@ function ClientPortalPageInner() {
   const [pricingDraft, setPricingDraft] = useState({})
   const [contactModalOpen, setContactModalOpen] = useState(false)
   const [rechargeRequestModalOpen, setRechargeRequestModalOpen] = useState(false)
+  const [rechargeEditTarget, setRechargeEditTarget] = useState(null)
+  const [rechargeCancelBusyId, setRechargeCancelBusyId] = useState(null)
   const [walletHistoryModalOpen, setWalletHistoryModalOpen] = useState(false)
   const [transferHistoryModalOpen, setTransferHistoryModalOpen] = useState(false)
   const [contactDialCode, setContactDialCode] = useState('+593')
@@ -2208,6 +2228,40 @@ function ClientPortalPageInner() {
       }
     },
     [loadPortal, loadWalletRecharges, navigate, token],
+  )
+
+  const handleClientRechargeEditSuccess = useCallback(
+    async (updated) => {
+      setRechargeEditTarget(null)
+      const rid = Number(updated?.id)
+      if (Number.isFinite(rid) && rid > 0) {
+        setWalletRechargePatchById((prev) => ({ ...prev, [rid]: updated }))
+      }
+      await Promise.all([loadPortal(), loadWalletRecharges()])
+    },
+    [loadPortal, loadWalletRecharges],
+  )
+
+  const handleCancelClientRecharge = useCallback(
+    async (rechargeRow) => {
+      const frId = Number(rechargeRow?.id)
+      if (!Number.isFinite(frId) || frId < 1 || !token) return
+      if (!window.confirm('¿Seguro que deseas cancelar esta solicitud?')) return
+      setRechargeCancelBusyId(frId)
+      try {
+        await api.delete(`/api/v1/portal/${encodeURIComponent(token)}/recharges/${frId}`)
+        await Promise.all([loadPortal(), loadWalletRecharges()])
+        if (String(searchParams.get('open_recharge')) === String(frId)) {
+          navigate(`/portal/${encodeURIComponent(token)}`, { replace: true })
+        }
+      } catch (err) {
+        const d = err?.response?.data?.detail
+        window.alert(typeof d === 'string' ? d : 'No se pudo cancelar la solicitud.')
+      } finally {
+        setRechargeCancelBusyId(null)
+      }
+    },
+    [api, loadPortal, loadWalletRecharges, navigate, searchParams, token],
   )
 
   const loadAutoPurchaseCatalog = useCallback(async (opts = {}) => {
@@ -6208,6 +6262,38 @@ function ClientPortalPageInner() {
             const featCreditAvail = portalCreditForCurrency(data, creditRowsDisplay, cur)
             const featCreditApply = Math.min(featCreditAvail, Math.max(0, pend))
             const showFeatCreditBtn = showPayForm && featCreditAvail > 1e-9
+            const canEditOrCancelRecharge = portalCanClientEditOrCancelRecharge(fr)
+            const rechargeSummaryActions = canEditOrCancelRecharge ? (
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRechargeEditTarget({
+                      id: frId,
+                      amount: amountReq,
+                      currency: cur,
+                    })
+                  }
+                  className="inline-flex items-center gap-1 rounded-lg border border-indigo-400/35 bg-indigo-950/35 px-2 py-1 text-[11px] font-semibold text-indigo-100 hover:bg-indigo-950/55"
+                >
+                  <Pencil size={12} aria-hidden />
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  disabled={rechargeCancelBusyId === frId}
+                  onClick={() => void handleCancelClientRecharge(fr)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-red-400/35 bg-red-950/25 px-2 py-1 text-[11px] font-semibold text-red-100 hover:bg-red-950/45 disabled:opacity-50"
+                >
+                  {rechargeCancelBusyId === frId ? (
+                    <Loader2 size={12} className="animate-spin" aria-hidden />
+                  ) : (
+                    <Trash2 size={12} aria-hidden />
+                  )}
+                  Cancelar
+                </button>
+              </div>
+            ) : null
 
             const pickRechargeReceipt = (fileList) => {
               const incomingRaw = [...(fileList || [])].filter(Boolean)
@@ -6273,6 +6359,7 @@ function ClientPortalPageInner() {
                       headlineAmountFormatted={formatMoney(headlineAmt, cur)}
                       headlineCaption={headlineCaption}
                       countdownMmSs={null}
+                      actionsSlot={rechargeSummaryActions}
                       detailLinesSlot={
                         <div className="portal-order-summary-inner divide-y divide-white/10">
                           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 px-5 py-4">
@@ -9644,6 +9731,20 @@ function ClientPortalPageInner() {
           currency={portalWalletCurrencyLabel}
           assignedPaymentMethods={data?.assigned_payment_methods}
           onSuccess={(created) => void handleClientRechargeRequestSuccess(created)}
+        />
+      ) : null}
+
+      {rechargeEditTarget ? (
+        <ClientRechargeRequestModal
+          open={Boolean(rechargeEditTarget)}
+          mode="edit"
+          rechargeId={rechargeEditTarget.id}
+          initialAmount={rechargeEditTarget.amount}
+          onClose={() => setRechargeEditTarget(null)}
+          token={token}
+          api={api}
+          currency={rechargeEditTarget.currency || portalWalletCurrencyLabel}
+          onSuccess={(updated) => void handleClientRechargeEditSuccess(updated)}
         />
       ) : null}
 

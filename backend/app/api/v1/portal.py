@@ -79,6 +79,8 @@ from app.schemas.portal_public import (
     PortalContactUpdate,
     PortalCreateWalletRechargeRequest,
     PortalCreateWalletRechargeResponse,
+    PortalUpdateWalletRechargeRequest,
+    PortalWalletRechargeDeleteResponse,
     PortalCxcBalanceResponse,
     PortalDashboardMetrics,
     PortalCheckoutLinePublic,
@@ -157,6 +159,7 @@ from app.wallet_recharge_helpers import (
     REQ_STATUS_IN_REVIEW,
     REQ_STATUS_PARTIALLY_PAID,
     REQ_STATUS_PENDING,
+    REQ_STATUS_CANCELED,
     mark_wallet_recharge_portal_receipt_submitted,
     payment_methods_display,
     wallet_recharge_accepts_client_receipt,
@@ -1415,6 +1418,34 @@ def _portal_sync_recharge_allowed_payment_lists(
         req.allowed_deposit_account_ids = sorted({int(d.id) for d in dep_picks})
 
 
+def _portal_wallet_recharge_item_from_request(
+    db: Session,
+    client: Client,
+    req: WalletRechargeRequest,
+) -> PortalWalletRechargeItem:
+    pm_picks, dep_picks, pm_tree, pm_disp = _portal_resolve_payment_picks_for_recharge(db, client, req)
+    ts = req.created_at
+    pre_raw = getattr(req, "admin_precheck_receipt_url", None)
+    pre_out = str(pre_raw).strip() if pre_raw else None
+    return PortalWalletRechargeItem(
+        id=int(req.id),
+        amount_requested=float(req.amount_requested),
+        amount_paid=float(getattr(req, "amount_paid", 0) or 0),
+        balance_pending=float(getattr(req, "balance_pending", 0) or 0),
+        surplus_credited=float(getattr(req, "surplus_credited", 0) or 0),
+        receipt_url=req.receipt_url or None,
+        status=str(req.status or REQ_STATUS_PENDING),
+        created_at=ts if isinstance(ts, datetime) else now_ecuador(),
+        recharge_currency=normalize_currency_code(getattr(req, "recharge_currency", None), "USD"),
+        recharge_exchange_rate=float(getattr(req, "recharge_exchange_rate", None) or 1.0),
+        admin_precheck_receipt_url=pre_out,
+        allowed_payment_methods=pm_picks,
+        allowed_deposit_accounts=dep_picks,
+        payment_methods_tree=pm_tree,
+        payment_methods_display=pm_disp,
+    )
+
+
 def _portal_wallet_recharge_items_for_client(db: Session, client: Client) -> list[PortalWalletRechargeItem]:
     """Todas las solicitudes BaaS abiertas del cliente (sin limitar a una sola fila)."""
     from sqlalchemy import and_, or_
@@ -1434,32 +1465,62 @@ def _portal_wallet_recharge_items_for_client(db: Session, client: Client) -> lis
         .order_by(WalletRechargeRequest.created_at.desc())
         .all()
     )
-    out: list[PortalWalletRechargeItem] = []
-    for r in rows:
-        pm_picks, dep_picks, pm_tree, pm_disp = _portal_resolve_payment_picks_for_recharge(db, client, r)
-        ts = r.created_at
-        pre_raw = getattr(r, "admin_precheck_receipt_url", None)
-        pre_out = str(pre_raw).strip() if pre_raw else None
-        out.append(
-            PortalWalletRechargeItem(
-                id=r.id,
-                amount_requested=float(r.amount_requested),
-                amount_paid=float(getattr(r, "amount_paid", 0) or 0),
-                balance_pending=float(getattr(r, "balance_pending", 0) or 0),
-                surplus_credited=float(getattr(r, "surplus_credited", 0) or 0),
-                receipt_url=r.receipt_url or None,
-                status=r.status,
-                created_at=ts if isinstance(ts, datetime) else now_ecuador(),
-                recharge_currency=normalize_currency_code(getattr(r, "recharge_currency", None), "USD"),
-                recharge_exchange_rate=float(getattr(r, "recharge_exchange_rate", None) or 1.0),
-                admin_precheck_receipt_url=pre_out,
-                allowed_payment_methods=pm_picks,
-                allowed_deposit_accounts=dep_picks,
-                payment_methods_tree=pm_tree,
-                payment_methods_display=pm_disp,
-            )
+    return [_portal_wallet_recharge_item_from_request(db, client, r) for r in rows]
+
+
+_PORTAL_RECHARGE_MUTATION_EPS = 1e-6
+
+
+def _portal_recharge_has_any_payment_or_receipt(db: Session, req: WalletRechargeRequest) -> bool:
+    """True si la solicitud ya tiene abonos, comprobantes o pagos vinculados."""
+    from app.services.client_payment_service import linked_payments_financial_for_wallet_recharge
+    from app.services.wallet_recharge_client_payment import find_pending_client_payment_for_wallet_recharge
+
+    if float(getattr(req, "amount_paid", 0) or 0) > _PORTAL_RECHARGE_MUTATION_EPS:
+        return True
+    if float(getattr(req, "surplus_credited", 0) or 0) > _PORTAL_RECHARGE_MUTATION_EPS:
+        return True
+    if str(getattr(req, "receipt_url", None) or "").strip():
+        return True
+    if find_pending_client_payment_for_wallet_recharge(db, req) is not None:
+        return True
+    approved, pending = linked_payments_financial_for_wallet_recharge(db, req)
+    return bool(approved or pending)
+
+
+def _portal_get_client_owned_recharge(
+    db: Session,
+    client: Client,
+    request_id: int,
+) -> WalletRechargeRequest:
+    req = db.get(WalletRechargeRequest, int(request_id))
+    if req is None or int(req.client_id) != int(client.id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Solicitud de recarga no encontrada.",
         )
-    return out
+    return req
+
+
+def _portal_assert_client_may_edit_or_cancel_recharge(db: Session, req: WalletRechargeRequest) -> None:
+    """Solo pending sin abonos ni comprobantes (saldo pendiente = total)."""
+    if str(getattr(req, "status", "") or "") != REQ_STATUS_PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo puedes modificar solicitudes pendientes sin pagos enviados.",
+        )
+    if _portal_recharge_has_any_payment_or_receipt(db, req):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes modificar esta solicitud porque ya tiene abonos o comprobantes asociados.",
+        )
+    amt_req = float(getattr(req, "amount_requested", 0) or 0)
+    bal_pend = float(getattr(req, "balance_pending", 0) or 0)
+    if abs(bal_pend - amt_req) > _PORTAL_RECHARGE_MUTATION_EPS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes modificar esta solicitud porque ya tiene abonos parciales aplicados.",
+        )
 
 
 def _portal_recharge_payment_options_for_client(db: Session, client: Client) -> list[PortalAssignedPaymentMethod]:
@@ -1685,6 +1746,61 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
     """Solicitudes de recarga abiertas para el cliente (incluye pagos parciales en curso)."""
     client = _portal_client_from_token(db, portal_token)
     return _portal_wallet_recharge_items_for_client(db, client)
+
+
+@router.patch(
+    "/{portal_token}/recharges/{request_id}",
+    response_model=PortalWalletRechargeItem,
+    summary="Editar monto de recarga BaaS (solo pending sin pagos)",
+)
+@limiter.limit(PORTAL_FINANCIAL_LIMIT)
+def portal_update_wallet_recharge(
+    request: Request,
+    portal_token: uuid_pkg.UUID,
+    request_id: int,
+    payload: PortalUpdateWalletRechargeRequest,
+    db: DbDep,
+) -> PortalWalletRechargeItem:
+    client = _portal_client_from_token(db, portal_token)
+    req = _portal_get_client_owned_recharge(db, client, int(request_id))
+    _portal_assert_client_may_edit_or_cancel_recharge(db, req)
+
+    new_amt = round(float(payload.amount), 2)
+    if new_amt <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica un monto mayor a cero.")
+
+    req.amount_requested = new_amt
+    req.balance_pending = new_amt
+    req.recharge_detail_lines = None
+    db.commit()
+    db.refresh(req)
+    return _portal_wallet_recharge_item_from_request(db, client, req)
+
+
+@router.delete(
+    "/{portal_token}/recharges/{request_id}",
+    response_model=PortalWalletRechargeDeleteResponse,
+    summary="Cancelar recarga BaaS (solo pending sin pagos)",
+)
+@limiter.limit(PORTAL_FINANCIAL_LIMIT)
+def portal_delete_wallet_recharge(
+    request: Request,
+    portal_token: uuid_pkg.UUID,
+    request_id: int,
+    db: DbDep,
+) -> PortalWalletRechargeDeleteResponse:
+    client = _portal_client_from_token(db, portal_token)
+    req = _portal_get_client_owned_recharge(db, client, int(request_id))
+    _portal_assert_client_may_edit_or_cancel_recharge(db, req)
+
+    req.status = REQ_STATUS_CANCELED
+    db.commit()
+    db.refresh(req)
+    return PortalWalletRechargeDeleteResponse(
+        ok=True,
+        request_id=int(req.id),
+        status=str(req.status or REQ_STATUS_CANCELED),
+    )
 
 
 def _is_portal_client_blocked(client: Client) -> bool:

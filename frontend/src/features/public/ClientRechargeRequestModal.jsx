@@ -38,7 +38,7 @@ function portalSelectStyles() {
 }
 
 /**
- * Modal para que el cliente/distribuidor solicite una recarga BaaS desde el portal.
+ * Modal para crear o editar una solicitud de recarga BaaS desde el portal.
  */
 export default function ClientRechargeRequestModal({
   open,
@@ -48,7 +48,11 @@ export default function ClientRechargeRequestModal({
   currency = 'USD',
   assignedPaymentMethods = [],
   onSuccess,
+  mode = 'create',
+  rechargeId = null,
+  initialAmount = null,
 }) {
+  const isEditMode = mode === 'edit'
   const [amount, setAmount] = useState('')
   const [paymentOptions, setPaymentOptions] = useState([])
   const [optionsLoading, setOptionsLoading] = useState(false)
@@ -59,7 +63,7 @@ export default function ClientRechargeRequestModal({
   const [submitErr, setSubmitErr] = useState('')
 
   const loadOptions = useCallback(async () => {
-    if (!token) return
+    if (!token || isEditMode) return
     setOptionsLoading(true)
     setOptionsErr('')
     try {
@@ -83,16 +87,20 @@ export default function ClientRechargeRequestModal({
     } finally {
       setOptionsLoading(false)
     }
-  }, [api, assignedPaymentMethods, token])
+  }, [api, assignedPaymentMethods, isEditMode, token])
 
   useEffect(() => {
     if (!open) return
-    setAmount('')
+    const seed =
+      initialAmount != null && Number.isFinite(Number(initialAmount)) && Number(initialAmount) > 0
+        ? String(initialAmount)
+        : ''
+    setAmount(seed)
     setMethodId('')
     setAccountId('')
     setSubmitErr('')
     void loadOptions()
-  }, [open, loadOptions])
+  }, [open, loadOptions, initialAmount])
 
   const methodOptions = useMemo(
     () =>
@@ -122,6 +130,7 @@ export default function ClientRechargeRequestModal({
   )
 
   useEffect(() => {
+    if (isEditMode) return
     if (depositAccounts.length === 1) {
       setAccountId(String(depositAccounts[0].id))
     } else if (depositAccounts.length === 0) {
@@ -129,7 +138,7 @@ export default function ClientRechargeRequestModal({
     } else if (!depositAccounts.some((d) => String(d.id) === String(accountId))) {
       setAccountId('')
     }
-  }, [depositAccounts, accountId])
+  }, [depositAccounts, accountId, isEditMode])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -139,6 +148,35 @@ export default function ClientRechargeRequestModal({
       setSubmitErr('Indica un monto válido mayor a cero.')
       return
     }
+
+    if (isEditMode) {
+      const rid = Number(rechargeId)
+      if (!Number.isFinite(rid) || rid < 1) {
+        setSubmitErr('Solicitud de recarga inválida.')
+        return
+      }
+      setSubmitting(true)
+      try {
+        const { data } = await api.patch(
+          `/api/v1/portal/${encodeURIComponent(token)}/recharges/${rid}`,
+          { amount: amt },
+        )
+        onSuccess?.(data)
+      } catch (err) {
+        const detail = err?.response?.data?.detail
+        setSubmitErr(
+          typeof detail === 'string'
+            ? detail
+            : Array.isArray(detail)
+              ? detail.map((x) => x?.msg || x).join('; ')
+              : 'No se pudo actualizar la solicitud de recarga.',
+        )
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+
     const pm = Number(methodId)
     if (!Number.isFinite(pm) || pm < 1) {
       setSubmitErr('Selecciona un método de pago.')
@@ -193,9 +231,13 @@ export default function ClientRechargeRequestModal({
       <div className="relative z-10 w-full max-w-md rounded-2xl border border-indigo-400/35 bg-slate-900 shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-slate-700/50 px-5 py-4">
           <div>
-            <h2 className="m-0 text-lg font-extrabold text-indigo-50">Solicitar recarga BaaS</h2>
+            <h2 className="m-0 text-lg font-extrabold text-indigo-50">
+              {isEditMode ? 'Editar solicitud de recarga' : 'Solicitar recarga BaaS'}
+            </h2>
             <p className="m-1 mb-0 text-xs text-slate-400">
-              Crearemos tu pedido y te llevaremos al formulario de pago para subir el comprobante.
+              {isEditMode
+                ? 'Puedes cambiar el monto mientras no hayas enviado ningún pago.'
+                : 'Crearemos tu pedido y te llevaremos al formulario de pago para subir el comprobante.'}
             </p>
           </div>
           <button
@@ -227,49 +269,53 @@ export default function ClientRechargeRequestModal({
             />
           </div>
 
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold text-slate-300">Método de pago</label>
-            {optionsLoading ? (
-              <p className="m-0 flex items-center gap-2 text-sm text-slate-400">
-                <Loader2 size={14} className="animate-spin" />
-                Cargando métodos…
-              </p>
-            ) : (
-              <Select
-                options={methodOptions}
-                value={methodOptions.find((o) => o.value === String(methodId)) ?? null}
-                onChange={(opt) => setMethodId(opt?.value ?? '')}
-                isDisabled={submitting || methodOptions.length === 0}
-                styles={portalSelectStyles()}
-                placeholder="Selecciona cómo pagarás…"
-                className="text-sm"
-                classNamePrefix="portal-recharge-method"
-              />
-            )}
-            {optionsErr ? <p className="mt-1.5 mb-0 text-xs text-amber-300">{optionsErr}</p> : null}
-          </div>
+          {!isEditMode ? (
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-300">Método de pago</label>
+                {optionsLoading ? (
+                  <p className="m-0 flex items-center gap-2 text-sm text-slate-400">
+                    <Loader2 size={14} className="animate-spin" />
+                    Cargando métodos…
+                  </p>
+                ) : (
+                  <Select
+                    options={methodOptions}
+                    value={methodOptions.find((o) => o.value === String(methodId)) ?? null}
+                    onChange={(opt) => setMethodId(opt?.value ?? '')}
+                    isDisabled={submitting || methodOptions.length === 0}
+                    styles={portalSelectStyles()}
+                    placeholder="Selecciona cómo pagarás…"
+                    className="text-sm"
+                    classNamePrefix="portal-recharge-method"
+                  />
+                )}
+                {optionsErr ? <p className="mt-1.5 mb-0 text-xs text-amber-300">{optionsErr}</p> : null}
+              </div>
 
-          {depositAccounts.length > 1 ? (
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-300">Cuenta bancaria</label>
-              <Select
-                options={accountOptions}
-                value={accountOptions.find((o) => o.value === String(accountId)) ?? null}
-                onChange={(opt) => setAccountId(opt?.value ?? '')}
-                isDisabled={submitting}
-                styles={portalSelectStyles()}
-                placeholder="Selecciona la cuenta receptora…"
-                className="text-sm"
-                classNamePrefix="portal-recharge-account"
-              />
-            </div>
-          ) : depositAccounts.length === 1 ? (
-            <p className="m-0 text-xs text-slate-400">
-              Cuenta:{' '}
-              <span className="font-semibold text-slate-200">
-                {[depositAccounts[0].bank_name, depositAccounts[0].account_number].filter(Boolean).join(' · ')}
-              </span>
-            </p>
+              {depositAccounts.length > 1 ? (
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-300">Cuenta bancaria</label>
+                  <Select
+                    options={accountOptions}
+                    value={accountOptions.find((o) => o.value === String(accountId)) ?? null}
+                    onChange={(opt) => setAccountId(opt?.value ?? '')}
+                    isDisabled={submitting}
+                    styles={portalSelectStyles()}
+                    placeholder="Selecciona la cuenta receptora…"
+                    className="text-sm"
+                    classNamePrefix="portal-recharge-account"
+                  />
+                </div>
+              ) : depositAccounts.length === 1 ? (
+                <p className="m-0 text-xs text-slate-400">
+                  Cuenta:{' '}
+                  <span className="font-semibold text-slate-200">
+                    {[depositAccounts[0].bank_name, depositAccounts[0].account_number].filter(Boolean).join(' · ')}
+                  </span>
+                </p>
+              ) : null}
+            </>
           ) : null}
 
           {submitErr ? <p className="m-0 text-sm text-red-300">{submitErr}</p> : null}
@@ -285,14 +331,16 @@ export default function ClientRechargeRequestModal({
             </button>
             <button
               type="submit"
-              disabled={submitting || optionsLoading || methodOptions.length === 0}
+              disabled={submitting || (!isEditMode && (optionsLoading || methodOptions.length === 0))}
               className="inline-flex items-center gap-2 rounded-xl border-0 bg-gradient-to-r from-indigo-500 via-violet-500 to-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-[0_10px_28px_rgba(99,102,241,0.35)] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? (
                 <>
                   <Loader2 size={15} className="animate-spin" />
-                  Creando…
+                  {isEditMode ? 'Guardando…' : 'Creando…'}
                 </>
+              ) : isEditMode ? (
+                'Guardar cambios'
               ) : (
                 'Continuar al pago'
               )}
