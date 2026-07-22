@@ -654,7 +654,7 @@ class PortalWalletHistoryItem(BaseModel):
     """Movimiento reciente de la billetera BaaS (portal, solo 1.er nivel)."""
 
     id: int
-    date: datetime
+    date: datetime.datetime
     description: str
     amount: float = Field(..., ge=0, description="Importe absoluto mostrado al cliente.")
     currency: str = Field(default="USD", max_length=10)
