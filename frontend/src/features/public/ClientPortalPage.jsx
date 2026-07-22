@@ -2,7 +2,7 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, Check, ChevronDown, ChevronsUp, Copy, GripVertical, Loader2, Link2, Pencil, Phone, Plus, RefreshCw, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, Check, ChevronDown, ChevronsUp, Copy, GripVertical, History, Loader2, Link2, Pencil, Phone, Plus, RefreshCw, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
 import PortalAccordionSortableList from './PortalAccordionSortableList'
 import {
   filterVisiblePortalAccordionOrder,
@@ -39,6 +39,7 @@ import {
 } from './codigosRetiroPayment'
 import PortalManualAmountField from './PortalManualAmountField'
 import ClientRechargeRequestModal from './ClientRechargeRequestModal'
+import WalletHistoryModal from './WalletHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
 
 function publicApi() {
@@ -2120,6 +2121,7 @@ function ClientPortalPageInner() {
   const [pricingDraft, setPricingDraft] = useState({})
   const [contactModalOpen, setContactModalOpen] = useState(false)
   const [rechargeRequestModalOpen, setRechargeRequestModalOpen] = useState(false)
+  const [walletHistoryModalOpen, setWalletHistoryModalOpen] = useState(false)
   const [contactDialCode, setContactDialCode] = useState('+593')
   const [contactLocalNumber, setContactLocalNumber] = useState('')
   const [contactSaving, setContactSaving] = useState(false)
@@ -7422,6 +7424,17 @@ function ClientPortalPageInner() {
                 )}
               </p>
 
+              {isDirectLineClient ? (
+                <button
+                  type="button"
+                  onClick={() => setWalletHistoryModalOpen(true)}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-violet-400/40 bg-violet-950/35 px-4 py-2.5 text-[13px] font-semibold text-violet-50 transition hover:bg-violet-950/55 sm:w-auto"
+                >
+                  <History size={16} aria-hidden />
+                  Historial de transacciones
+                </button>
+              ) : null}
+
               {latestActiveScreen ? (
                 <div
                   className="rounded-2xl border border-cyan-400/35 p-5 transition-all duration-300"
@@ -9622,6 +9635,15 @@ function ClientPortalPageInner() {
           currency={portalWalletCurrencyLabel}
           assignedPaymentMethods={data?.assigned_payment_methods}
           onSuccess={(created) => void handleClientRechargeRequestSuccess(created)}
+        />
+      ) : null}
+
+      {walletHistoryModalOpen ? (
+        <WalletHistoryModal
+          open={walletHistoryModalOpen}
+          onClose={() => setWalletHistoryModalOpen(false)}
+          token={token}
+          api={api}
         />
       ) : null}
 

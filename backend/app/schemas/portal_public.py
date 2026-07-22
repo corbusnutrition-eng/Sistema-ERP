@@ -648,3 +648,21 @@ class ReceiptAnalysisResponse(BaseModel):
         le=100,
         description="Confianza 0–100 de la lectura IA según nitidez del comprobante.",
     )
+
+
+class PortalWalletHistoryItem(BaseModel):
+    """Movimiento reciente de la billetera BaaS (portal, solo 1.er nivel)."""
+
+    id: int
+    date: datetime
+    description: str
+    amount: float = Field(..., ge=0, description="Importe absoluto mostrado al cliente.")
+    currency: str = Field(default="USD", max_length=10)
+    direction: str = Field(description="``income`` (ingreso) o ``expense`` (egreso).")
+    transaction_type: str
+    type_label: str = Field(description="Etiqueta legible del tipo de movimiento.")
+
+
+class PortalWalletHistoryResponse(BaseModel):
+    items: list[PortalWalletHistoryItem] = Field(default_factory=list)
+    count: int = Field(default=0, ge=0)

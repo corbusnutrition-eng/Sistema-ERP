@@ -106,6 +106,8 @@ from app.schemas.portal_public import (
     PortalTrackedPurchaseUpdate,
     PortalTrackedPurchaseUpdateResponse,
     PortalWalletRechargeItem,
+    PortalWalletHistoryItem,
+    PortalWalletHistoryResponse,
     ReceiptAnalysisResponse,
     SalePaymentEvent,
 )
@@ -121,6 +123,9 @@ from app.services.baas_commission_cascade_service import BAAS_COMMISSION_LEDGER_
 from app.services.client_reseller_service import (
     TX_BAAS_TRANSFER_IN,
     TX_BAAS_TRANSFER_OUT,
+    TX_BAAS_TRANSFER_REVERT_IN,
+    TX_BAAS_TRANSFER_REVERT_OUT,
+    BAAS_TRANSFER_LEDGER_TYPES,
     create_subclient_with_prices,
     get_direct_subclient,
     list_parent_selling_packages,
@@ -2887,6 +2892,93 @@ def _compute_portal_cxc_balance(db: Session, client: Client) -> PortalCxcBalance
 def portal_cxc_balance(portal_token: uuid_pkg.UUID, db: DbDep) -> PortalCxcBalanceResponse:
     client = _portal_client_from_token(db, portal_token)
     return _compute_portal_cxc_balance(db, client)
+
+
+def _portal_wallet_history_type_label(tx_type: str) -> str:
+    mapping = {
+        TX_BAAS_TRANSFER_IN: "Recarga recibida",
+        TX_BAAS_TRANSFER_OUT: "Transferencia enviada",
+        TX_BAAS_TRANSFER_REVERT_IN: "Reversión · ingreso",
+        TX_BAAS_TRANSFER_REVERT_OUT: "Reversión · egreso",
+        TX_WALLET_DEPOSIT: "Comisión de red",
+        TX_NETWORK_PROFIT: "Ganancia de red",
+        TX_AUTO_PURCHASE: "Autocompra BaaS",
+        "recharge": "Recarga BaaS",
+    }
+    return mapping.get(str(tx_type or "").strip(), "Movimiento BaaS")
+
+
+def _portal_wallet_history_item_from_tx(wtx: WalletTransaction) -> Optional[PortalWalletHistoryItem]:
+    try:
+        raw_amt = float(wtx.amount or 0)
+    except (TypeError, ValueError):
+        return None
+    if abs(raw_amt) <= 1e-9:
+        return None
+
+    desc_raw = (wtx.description or "").strip()
+    ledger_cur = "USD"
+    if " · " in desc_raw:
+        tail = desc_raw.rsplit(" · ", 1)[-1].strip()
+        if len(tail) >= 3:
+            ledger_cur = normalize_currency_code(tail, "USD")
+
+    tx_type = str(wtx.transaction_type or "")
+    direction = "income" if raw_amt >= 0 else "expense"
+    ts = getattr(wtx, "created_at", None)
+    if not isinstance(ts, datetime):
+        ts = now_ecuador()
+
+    return PortalWalletHistoryItem(
+        id=int(wtx.id),
+        date=ts,
+        description=desc_raw or _portal_wallet_history_type_label(tx_type),
+        amount=round(abs(raw_amt), 2),
+        currency=ledger_cur,
+        direction=direction,
+        transaction_type=tx_type,
+        type_label=_portal_wallet_history_type_label(tx_type),
+    )
+
+
+@router.get(
+    "/{portal_token}/wallet-history",
+    response_model=PortalWalletHistoryResponse,
+    summary="Últimos movimientos de billetera BaaS (solo cliente 1.er nivel)",
+)
+@limiter.limit(PORTAL_GET_LIMIT)
+def portal_wallet_history(
+    request: Request,
+    portal_token: uuid_pkg.UUID,
+    db: DbDep,
+    limit: int = Query(default=10, ge=1, le=10),
+) -> PortalWalletHistoryResponse:
+    client = _portal_client_from_token(db, portal_token)
+    if client.parent_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El historial de billetera solo está disponible para clientes de primer nivel.",
+        )
+
+    allowed_types = tuple(BAAS_TRANSFER_LEDGER_TYPES) + tuple(BAAS_COMMISSION_LEDGER_TYPES) + (TX_AUTO_PURCHASE, "recharge")
+    rows = (
+        db.query(WalletTransaction)
+        .filter(
+            WalletTransaction.client_id == int(client.id),
+            WalletTransaction.transaction_type.in_(allowed_types),
+        )
+        .order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+        .limit(int(limit))
+        .all()
+    )
+
+    items: list[PortalWalletHistoryItem] = []
+    for wtx in rows:
+        item = _portal_wallet_history_item_from_tx(wtx)
+        if item is not None:
+            items.append(item)
+
+    return PortalWalletHistoryResponse(items=items, count=len(items))
 
 
 @router.get("/{portal_token}", response_model=PortalHomeResponse)
