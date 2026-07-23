@@ -605,11 +605,15 @@ class PortalCreateWalletRechargeRequest(BaseModel):
     """POST /portal/{token}/recharges — solicitud BaaS creada por el cliente."""
 
     amount: float = Field(..., gt=0, description="Monto a recargar en la moneda indicada.")
-    payment_method_id: int = Field(..., ge=1, description="Método de pago seleccionado en el portal.")
+    payment_method_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Opcional al crear; el cliente elige el método en la vista de pago.",
+    )
     deposit_account_id: Optional[int] = Field(
         default=None,
         ge=1,
-        description="Cuenta bancaria receptora; obligatoria si hay varias cuentas para el método.",
+        description="Opcional al crear; cuenta elegida en la vista de pago del pedido.",
     )
     currency: Optional[str] = Field(
         default=None,

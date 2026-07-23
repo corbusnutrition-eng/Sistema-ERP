@@ -1619,9 +1619,9 @@ def _portal_create_wallet_recharge_for_client(
     client: Client,
     *,
     amount: float,
-    payment_method_id: int,
-    deposit_account_id: Optional[int],
-    currency: Optional[str],
+    payment_method_id: Optional[int] = None,
+    deposit_account_id: Optional[int] = None,
+    currency: Optional[str] = None,
 ) -> WalletRechargeRequest:
     from app.services.client_currency_service import get_client_currency, lock_client_base_currency_on_recharge_create
     from app.services.client_payment_method_service import (
@@ -1635,70 +1635,12 @@ def _portal_create_wallet_recharge_for_client(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica un monto mayor a cero.")
 
     cur = normalize_currency_code(currency or get_client_currency(client), "USD")
-    pm_id = int(payment_method_id)
-    validate_client_portal_payment_method_id(db, client, pm_id)
-
-    pm = db.get(PaymentMethod, pm_id)
-    if pm is None or not bool(pm.is_active):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Método de pago inválido o inactivo.")
-
-    options = _portal_recharge_payment_options_for_client(db, client)
-    allowed_pm_ids = {int(m.id) for m in options}
-    if allowed_pm_ids and pm_id not in allowed_pm_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El método de pago seleccionado no está disponible para solicitar recargas.",
-        )
-
-    method_node = next((m for m in options if int(m.id) == pm_id), None)
-    dep_ids = [int(d.id) for d in (method_node.deposit_accounts if method_node else [])]
-    if not dep_ids:
-        pm_rows = [pm]
-        matched, _by_id = _matched_accounts_for_payment_methods(db, pm_rows)
-        dep_ids = [int(a.id) for a in matched]
-
-    dep_resolved: Optional[int] = int(deposit_account_id) if deposit_account_id is not None else None
-    if dep_resolved is None:
-        if len(dep_ids) == 1:
-            dep_resolved = dep_ids[0]
-        elif len(dep_ids) > 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Selecciona la cuenta bancaria donde realizarás el depósito.",
-            )
-    elif dep_ids and dep_resolved not in dep_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La cuenta seleccionada no corresponde al método de pago elegido.",
-        )
-
-    validate_client_portal_deposit_account_id(
-        db,
-        client,
-        dep_resolved,
-        currency=cur,
-        payment_method_id=pm_id,
-    )
-
-    if dep_resolved is not None:
-        dep_acc = db.get(Account, int(dep_resolved))
-        if dep_acc is None or not dep_acc.is_active or not is_liquid_deposit_account(dep_acc):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cuenta de depósito inválida.")
-        from app.services.client_payment_method_service import _account_belongs_to_payment_method
-
-        if not _account_belongs_to_payment_method(db, pm, int(dep_resolved)):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La cuenta de depósito no pertenece al método de pago seleccionado.",
-            )
-
-    allowed_dep_norm = [int(dep_resolved)] if dep_resolved is not None else None
 
     full_options = _portal_filter_recharge_payment_options_by_currency(
         _portal_recharge_payment_options_for_client(db, client),
         cur,
     )
-    all_pm_ids = sorted({int(m.id) for m in full_options}) if full_options else [pm_id]
+    all_pm_ids = sorted({int(m.id) for m in full_options}) if full_options else []
     all_dep_ids: list[int] = []
     seen_all_dep: set[int] = set()
     for method in full_options:
@@ -1708,10 +1650,78 @@ def _portal_create_wallet_recharge_for_client(
                 continue
             seen_all_dep.add(did)
             all_dep_ids.append(did)
-    if not all_dep_ids and dep_resolved is not None:
-        all_dep_ids = [int(dep_resolved)]
 
-    hotmart_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+    hotmart_links = None
+    allowed_dep_norm: Optional[list[int]] = None
+
+    if payment_method_id is not None:
+        pm_id = int(payment_method_id)
+        validate_client_portal_payment_method_id(db, client, pm_id)
+
+        pm = db.get(PaymentMethod, pm_id)
+        if pm is None or not bool(pm.is_active):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Método de pago inválido o inactivo.")
+
+        allowed_pm_ids = {int(m.id) for m in full_options} if full_options else set()
+        if allowed_pm_ids and pm_id not in allowed_pm_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El método de pago seleccionado no está disponible para solicitar recargas.",
+            )
+
+        method_node = next((m for m in full_options if int(m.id) == pm_id), None)
+        dep_ids = [int(d.id) for d in (method_node.deposit_accounts if method_node else [])]
+        if not dep_ids:
+            pm_rows = [pm]
+            matched, _by_id = _matched_accounts_for_payment_methods(db, pm_rows)
+            dep_ids = [int(a.id) for a in matched]
+
+        dep_resolved: Optional[int] = int(deposit_account_id) if deposit_account_id is not None else None
+        if dep_resolved is None:
+            if len(dep_ids) == 1:
+                dep_resolved = dep_ids[0]
+            elif len(dep_ids) > 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Selecciona la cuenta bancaria donde realizarás el depósito.",
+                )
+        elif dep_ids and dep_resolved not in dep_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La cuenta seleccionada no corresponde al método de pago elegido.",
+            )
+
+        validate_client_portal_deposit_account_id(
+            db,
+            client,
+            dep_resolved,
+            currency=cur,
+            payment_method_id=pm_id,
+        )
+
+        if dep_resolved is not None:
+            dep_acc = db.get(Account, int(dep_resolved))
+            if dep_acc is None or not dep_acc.is_active or not is_liquid_deposit_account(dep_acc):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cuenta de depósito inválida.")
+            from app.services.client_payment_method_service import _account_belongs_to_payment_method
+
+            if not _account_belongs_to_payment_method(db, pm, int(dep_resolved)):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="La cuenta de depósito no pertenece al método de pago seleccionado.",
+                )
+
+        allowed_dep_norm = [int(dep_resolved)] if dep_resolved is not None else None
+        if not all_pm_ids:
+            all_pm_ids = [pm_id]
+        if not all_dep_ids and dep_resolved is not None:
+            all_dep_ids = [int(dep_resolved)]
+        hotmart_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+    elif not all_pm_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No hay métodos de pago disponibles para solicitar recargas. Contacta a soporte.",
+        )
 
     req = WalletRechargeRequest(
         client_id=int(client.id),
@@ -1776,7 +1786,7 @@ def portal_create_wallet_recharge(
         db,
         client,
         amount=float(payload.amount),
-        payment_method_id=int(payload.payment_method_id),
+        payment_method_id=payload.payment_method_id,
         deposit_account_id=payload.deposit_account_id,
         currency=payload.currency,
     )

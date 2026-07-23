@@ -9731,7 +9731,6 @@ function ClientPortalPageInner() {
           token={token}
           api={api}
           currency={portalWalletCurrencyLabel}
-          assignedPaymentMethods={data?.assigned_payment_methods}
           onSuccess={(created) => void handleClientRechargeRequestSuccess(created)}
         />
       ) : null}
