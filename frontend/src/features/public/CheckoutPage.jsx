@@ -5,6 +5,9 @@ import PortalCustomSelect from './PortalCustomSelect'
 import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
 import { portalMethodLabelIsHotmart } from '../../utils/hotmartLinks'
 
+const CHECKOUT_PAYMENT_GLOW_WRAP_CLASS = 'portal-order-summary-glow-wrap portal-public-section w-full min-w-0'
+const CHECKOUT_PAYMENT_CARD_CLASS = 'portal-order-summary-card w-full min-w-0'
+
 function publicApi() {
   return axios.create({
     baseURL: (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/?$/, ''),
@@ -487,15 +490,8 @@ export default function CheckoutPage() {
               </p>
             </section>
 
-            <section
-              style={{
-                padding: '18px',
-                marginBottom: 14,
-                borderRadius: 22,
-                background: 'rgba(15,23,42,0.55)',
-                border: '1px solid rgba(255,255,255,0.1)',
-              }}
-            >
+            <div className={CHECKOUT_PAYMENT_GLOW_WRAP_CLASS} style={{ marginBottom: 14 }}>
+              <section className={CHECKOUT_PAYMENT_CARD_CLASS} style={{ padding: 18, borderRadius: 22 }}>
               <label htmlFor="pm" style={{ display: 'block', fontSize: 12, opacity: 0.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>
                 Método de pago
               </label>
@@ -514,22 +510,16 @@ export default function CheckoutPage() {
                   métodos permitidos antes de usar este enlace.
                 </p>
               ) : null}
-            </section>
+              </section>
+            </div>
 
             {selectedMethodIsHotmart && (detail?.hotmart_links || []).length > 0 ? (
               <PortalHotmartLinksPanel links={detail.hotmart_links} currency={detail?.currency || 'USD'} />
             ) : null}
 
             {(detail?.allowed_deposit_accounts || []).length > 0 ? (
-              <section
-                style={{
-                  padding: '18px',
-                  marginBottom: 14,
-                  borderRadius: 22,
-                  background: 'rgba(15,23,42,0.45)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                }}
-              >
+              <div className={CHECKOUT_PAYMENT_GLOW_WRAP_CLASS} style={{ marginBottom: 14 }}>
+                <section className={CHECKOUT_PAYMENT_CARD_CLASS} style={{ padding: 18, borderRadius: 22 }}>
                 <p style={{ margin: '0 0 4px', fontSize: 12, opacity: 0.5, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                   Cuenta donde depositar
                 </p>
@@ -582,7 +572,8 @@ export default function CheckoutPage() {
                     />
                   </>
                 )}
-              </section>
+                </section>
+              </div>
             ) : null}
 
             <section

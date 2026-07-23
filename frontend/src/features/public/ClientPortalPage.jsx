@@ -60,8 +60,20 @@ const PORTAL_PAGE_MAIN_CLASS = 'portal-public-main mx-auto w-full max-w-full md:
 
 const PORTAL_SECTION_SHELL_CLASS = 'portal-public-section w-full min-w-0'
 
-const PORTAL_PAYMENT_SHELL_CLASS =
-  'portal-payment-method-shell mb-3.5 w-full min-w-0 rounded-[20px] border border-white/10 bg-slate-900/55 p-3 md:mb-4 md:rounded-[22px] md:p-4'
+const PORTAL_PAYMENT_SHELL_GLOW_CLASS =
+  'portal-order-summary-glow-wrap portal-public-section mb-3.5 w-full min-w-0 md:mb-4'
+
+const PORTAL_PAYMENT_SHELL_INNER_CLASS =
+  'portal-order-summary-card w-full min-w-0 rounded-[20px] p-3 md:rounded-[22px] md:p-4'
+
+/** Contenedor neón (cyan) para método de pago / cuenta de depósito en el portal. */
+function PortalPaymentSectionShell({ children, className = '' }) {
+  return (
+    <div className={`${PORTAL_PAYMENT_SHELL_GLOW_CLASS} ${className}`.trim()}>
+      <section className={PORTAL_PAYMENT_SHELL_INNER_CLASS}>{children}</section>
+    </div>
+  )
+}
 
 const PORTAL_TOUCH_INPUT_CLASS =
   'w-full min-h-[44px] rounded-xl border border-white/15 bg-white/[0.06] px-3 py-2.5 text-sm text-slate-50 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50 touch-manipulation'
@@ -5701,7 +5713,7 @@ function ClientPortalPageInner() {
         </>
       ) : null}
 
-      <div className={`${PORTAL_PAYMENT_SHELL_CLASS} mb-3`}>
+      <PortalPaymentSectionShell className="mb-3">
         <label
           htmlFor="portal-debt-payment-method"
           className="mb-2 block text-[11px] uppercase tracking-[0.07em] text-white/55"
@@ -5722,7 +5734,7 @@ function ClientPortalPageInner() {
           options={portalPaymentMethodOptions(debtPaymentMethods)}
           placeholder="Seleccionar…"
         />
-      </div>
+      </PortalPaymentSectionShell>
 
       {/* Account */}
       {debtPaymentAccounts.length > 1 && (
@@ -6433,7 +6445,7 @@ function ClientPortalPageInner() {
                       </>
                     ) : null}
 
-                    <section className={PORTAL_PAYMENT_SHELL_CLASS}>
+                    <PortalPaymentSectionShell>
                       <label
                         htmlFor={`recharge-baas-pm-${frId}`}
                         className="mb-2.5 block text-xs uppercase tracking-[0.06em] text-white/50"
@@ -6458,7 +6470,7 @@ function ClientPortalPageInner() {
                           No hay métodos de pago habilitados para esta recarga.
                         </p>
                       : null}
-                    </section>
+                    </PortalPaymentSectionShell>
 
                     {portalMethodLabelIsHotmart(rechargeForm.method || methodForDeps, rechargePaymentMethods) &&
                     Array.isArray(fr.hotmart_links) &&
@@ -6467,7 +6479,7 @@ function ClientPortalPageInner() {
                     ) : null}
 
                     {needsDepositPickFeat ? (
-                      <section className={PORTAL_PAYMENT_SHELL_CLASS}>
+                      <PortalPaymentSectionShell>
                         <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
                           Cuenta donde depositar
                         </p>
@@ -6530,7 +6542,7 @@ function ClientPortalPageInner() {
                             />
                           </>
                         )}
-                      </section>
+                      </PortalPaymentSectionShell>
                     ) : null}
 
                     {isRechargeRetiroMethod ? (
@@ -7030,7 +7042,7 @@ function ClientPortalPageInner() {
                             </p>
                           </section>
                         ) : (
-                          <section className={PORTAL_PAYMENT_SHELL_CLASS}>
+                          <PortalPaymentSectionShell>
                             <label
                               htmlFor={`pm-${sid}`}
                               className="mb-2.5 block text-xs uppercase tracking-[0.06em] text-white/50"
@@ -7060,7 +7072,7 @@ function ClientPortalPageInner() {
                                 métodos permitidos en la venta.
                               </p>
                             ) : null}
-                          </section>
+                          </PortalPaymentSectionShell>
                         )}
 
                         {portalMethodLabelIsHotmart(methodId, pmList) &&
@@ -7070,7 +7082,7 @@ function ClientPortalPageInner() {
                         ) : null}
 
                         {!paysOnlyWithCredit && needsDepositPick ? (
-                          <section className={PORTAL_PAYMENT_SHELL_CLASS}>
+                          <PortalPaymentSectionShell>
                             <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
                               Cuenta donde depositar
                             </p>
@@ -7126,7 +7138,7 @@ function ClientPortalPageInner() {
                                 />
                               </>
                             )}
-                          </section>
+                          </PortalPaymentSectionShell>
                         ) : null}
 
                         {!paysOnlyWithCredit ? (
