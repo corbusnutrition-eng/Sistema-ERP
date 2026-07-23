@@ -64,12 +64,14 @@ const PORTAL_PAYMENT_SHELL_GLOW_CLASS =
   'portal-order-summary-glow-wrap portal-public-section mb-3.5 w-full min-w-0 md:mb-4'
 
 const PORTAL_PAYMENT_SHELL_INNER_CLASS =
-  'portal-order-summary-card w-full min-w-0 rounded-[20px] p-3 md:rounded-[22px] md:p-4'
+  'portal-order-summary-card portal-order-summary-card--overflow-visible w-full min-w-0 rounded-[20px] p-3 md:rounded-[22px] md:p-4'
 
 /** Contenedor neón (cyan) para método de pago / cuenta de depósito en el portal. */
-function PortalPaymentSectionShell({ children, className = '' }) {
+function PortalPaymentSectionShell({ children, className = '', layer }) {
+  const layerClass =
+    layer === 'method' ? 'relative z-30' : layer === 'deposit' ? 'relative z-10' : ''
   return (
-    <div className={`${PORTAL_PAYMENT_SHELL_GLOW_CLASS} ${className}`.trim()}>
+    <div className={`${PORTAL_PAYMENT_SHELL_GLOW_CLASS} ${layerClass} ${className}`.trim()}>
       <section className={PORTAL_PAYMENT_SHELL_INNER_CLASS}>{children}</section>
     </div>
   )
@@ -5713,7 +5715,7 @@ function ClientPortalPageInner() {
         </>
       ) : null}
 
-      <PortalPaymentSectionShell className="mb-3">
+      <PortalPaymentSectionShell className="mb-3" layer="method">
         <label
           htmlFor="portal-debt-payment-method"
           className="mb-2 block text-[11px] uppercase tracking-[0.07em] text-white/55"
@@ -6445,7 +6447,7 @@ function ClientPortalPageInner() {
                       </>
                     ) : null}
 
-                    <PortalPaymentSectionShell>
+                    <PortalPaymentSectionShell layer="method">
                       <label
                         htmlFor={`recharge-baas-pm-${frId}`}
                         className="mb-2.5 block text-xs uppercase tracking-[0.06em] text-white/50"
@@ -6479,7 +6481,7 @@ function ClientPortalPageInner() {
                     ) : null}
 
                     {needsDepositPickFeat ? (
-                      <PortalPaymentSectionShell>
+                      <PortalPaymentSectionShell layer="deposit">
                         <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
                           Cuenta donde depositar
                         </p>
@@ -7042,7 +7044,7 @@ function ClientPortalPageInner() {
                             </p>
                           </section>
                         ) : (
-                          <PortalPaymentSectionShell>
+                          <PortalPaymentSectionShell layer="method">
                             <label
                               htmlFor={`pm-${sid}`}
                               className="mb-2.5 block text-xs uppercase tracking-[0.06em] text-white/50"
@@ -7082,7 +7084,7 @@ function ClientPortalPageInner() {
                         ) : null}
 
                         {!paysOnlyWithCredit && needsDepositPick ? (
-                          <PortalPaymentSectionShell>
+                          <PortalPaymentSectionShell layer="deposit">
                             <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
                               Cuenta donde depositar
                             </p>

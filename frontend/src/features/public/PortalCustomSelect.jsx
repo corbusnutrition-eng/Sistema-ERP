@@ -91,7 +91,7 @@ export default function PortalCustomSelect({
           id={listboxId}
           role="listbox"
           aria-labelledby={controlId}
-          className="absolute z-[200] mt-1.5 max-h-56 w-full overflow-y-auto rounded-xl border border-slate-600/80 bg-slate-900 py-1 shadow-lg shadow-black/50"
+          className="absolute z-50 mt-1.5 max-h-56 w-full overflow-y-auto rounded-xl border border-slate-600/80 bg-slate-900 py-1 shadow-lg shadow-black/50"
         >
           {options.length === 0 ? (
             <li className="px-3 py-2.5 text-sm text-slate-500">Sin opciones disponibles</li>

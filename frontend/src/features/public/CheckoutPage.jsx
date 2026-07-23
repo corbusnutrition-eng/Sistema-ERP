@@ -6,7 +6,8 @@ import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
 import { portalMethodLabelIsHotmart } from '../../utils/hotmartLinks'
 
 const CHECKOUT_PAYMENT_GLOW_WRAP_CLASS = 'portal-order-summary-glow-wrap portal-public-section w-full min-w-0'
-const CHECKOUT_PAYMENT_CARD_CLASS = 'portal-order-summary-card w-full min-w-0'
+const CHECKOUT_PAYMENT_CARD_CLASS =
+  'portal-order-summary-card portal-order-summary-card--overflow-visible w-full min-w-0'
 
 function publicApi() {
   return axios.create({
@@ -490,7 +491,7 @@ export default function CheckoutPage() {
               </p>
             </section>
 
-            <div className={CHECKOUT_PAYMENT_GLOW_WRAP_CLASS} style={{ marginBottom: 14 }}>
+            <div className={`${CHECKOUT_PAYMENT_GLOW_WRAP_CLASS} relative z-30`} style={{ marginBottom: 14 }}>
               <section className={CHECKOUT_PAYMENT_CARD_CLASS} style={{ padding: 18, borderRadius: 22 }}>
               <label htmlFor="pm" style={{ display: 'block', fontSize: 12, opacity: 0.5, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>
                 Método de pago
@@ -518,7 +519,7 @@ export default function CheckoutPage() {
             ) : null}
 
             {(detail?.allowed_deposit_accounts || []).length > 0 ? (
-              <div className={CHECKOUT_PAYMENT_GLOW_WRAP_CLASS} style={{ marginBottom: 14 }}>
+              <div className={`${CHECKOUT_PAYMENT_GLOW_WRAP_CLASS} relative z-10`} style={{ marginBottom: 14 }}>
                 <section className={CHECKOUT_PAYMENT_CARD_CLASS} style={{ padding: 18, borderRadius: 22 }}>
                 <p style={{ margin: '0 0 4px', fontSize: 12, opacity: 0.5, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                   Cuenta donde depositar
