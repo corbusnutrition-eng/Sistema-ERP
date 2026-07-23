@@ -1,8 +1,11 @@
 import { emptyHotmartLinkRow } from '../../../utils/hotmartLinks'
 
+const READONLY_INPUT_CLASS =
+  'w-full rounded-md border border-gray-200 bg-gray-100 px-2.5 py-2 text-sm text-gray-500 cursor-not-allowed focus:border-gray-200 focus:outline-none focus:ring-0 read-only:bg-gray-100 read-only:cursor-not-allowed read-only:text-gray-500 disabled:opacity-60'
+
 /**
- * Editor de links Hotmart (URL + monto) para ventas y recargas BaaS.
- * Muestra una o varias filas editables (sin +/-); el payload sigue siendo un array.
+ * Vista de links Hotmart (URL + monto) para ventas y recargas BaaS.
+ * Solo lectura: los valores se autocompletan desde el Gestor de Links.
  */
 export default function HotmartLinksEditor({
   rows = [],
@@ -13,19 +16,14 @@ export default function HotmartLinksEditor({
 }) {
   const list = Array.isArray(rows) && rows.length ? rows : [emptyHotmartLinkRow()]
 
-  function updateRow(rowId, patch) {
-    onChange?.(list.map((r) => (r.id === rowId ? { ...r, ...patch } : r)))
-  }
-
   return (
     <div className={`rounded-lg border border-orange-200 bg-orange-50/60 p-3 ${className}`.trim()}>
       <p className="text-sm font-medium text-orange-950 mb-0.5">
         {list.length > 1 ? 'Links de pago Hotmart' : 'Link de pago Hotmart'}
       </p>
       <p className="text-[11px] text-orange-900/80 mb-3 leading-snug">
-        {list.length > 1
-          ? 'El cliente verá estos enlaces al elegir un método Hotmart en su portal.'
-          : 'El cliente verá este enlace al elegir un método Hotmart en su portal.'}
+        Los links se autocompletan desde el Gestor. Para modificarlos, ve a Informes {'>'} Administrar
+        Listas {'>'} Links de pago.
       </p>
       <div className="space-y-2.5">
         {list.map((row, index) => (
@@ -40,9 +38,11 @@ export default function HotmartLinksEditor({
                 inputMode="url"
                 placeholder="https://pay.hotmart.com/..."
                 value={row.url}
+                readOnly
                 disabled={disabled}
-                onChange={(e) => updateRow(row.id, { url: e.target.value })}
-                className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-sm focus:border-orange-400 focus:ring-orange-400 disabled:bg-gray-100"
+                aria-readonly="true"
+                tabIndex={-1}
+                className={READONLY_INPUT_CLASS}
               />
             </div>
             <div className="w-full shrink-0 sm:w-28">
@@ -57,9 +57,11 @@ export default function HotmartLinksEditor({
                 inputMode="decimal"
                 placeholder="0.00"
                 value={row.amount}
+                readOnly
                 disabled={disabled}
-                onChange={(e) => updateRow(row.id, { amount: e.target.value })}
-                className="w-full rounded-md border border-gray-300 px-2.5 py-2 text-sm tabular-nums focus:border-orange-400 focus:ring-orange-400 disabled:bg-gray-100"
+                aria-readonly="true"
+                tabIndex={-1}
+                className={`${READONLY_INPUT_CLASS} tabular-nums`}
               />
             </div>
           </div>
