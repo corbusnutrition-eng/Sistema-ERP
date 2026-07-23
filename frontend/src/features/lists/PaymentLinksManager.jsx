@@ -3,6 +3,12 @@ import { Link } from 'react-router-dom'
 import { ArrowLeft, Link2, Loader2, Trash2 } from 'lucide-react'
 import api from '../../api/axios'
 import SearchableSelect from '../../components/ui/SearchableSelect'
+import SaleLineProductSelect from '../sales/components/SaleLineProductSelect'
+import useInventorySalesProductOptions from '../sales/hooks/useInventorySalesProductOptions'
+import {
+  productIdFromSalesInventoryOption,
+  salesInventoryOptionKeyForProductId,
+} from '../sales/buildInventorySalesProductOptions'
 import PaymentLinksTemplateEditor from './PaymentLinksTemplateEditor'
 import {
   buildHotmartLinksPayload,
@@ -17,12 +23,17 @@ const MODULE_OPTIONS = [
 
 export default function PaymentLinksManager() {
   const [paymentMethods, setPaymentMethods] = useState([])
-  const [products, setProducts] = useState([])
-  const [loadingCatalogs, setLoadingCatalogs] = useState(true)
+  const [loadingPaymentMethods, setLoadingPaymentMethods] = useState(true)
 
   const [paymentMethodId, setPaymentMethodId] = useState('')
   const [moduleType, setModuleType] = useState('VENTAS')
-  const [productId, setProductId] = useState('')
+  const [productOptionKey, setProductOptionKey] = useState('')
+
+  const { options: salesProductOptions, inventorySalesOpts, loading: salesProductLoading } =
+    useInventorySalesProductOptions({
+      includeScreenPicks: false,
+      includeDraftRecharge: false,
+    })
 
   const [templateId, setTemplateId] = useState(null)
   const [linkRows, setLinkRows] = useState([emptyHotmartLinkRow()])
@@ -31,6 +42,12 @@ export default function PaymentLinksManager() {
   const [deleting, setDeleting] = useState(false)
   const [statusMsg, setStatusMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+  const [pendingProductIdHydrate, setPendingProductIdHydrate] = useState(null)
+
+  const productId = useMemo(
+    () => productIdFromSalesInventoryOption(productOptionKey, inventorySalesOpts),
+    [productOptionKey, inventorySalesOpts],
+  )
 
   const pmOptions = useMemo(
     () =>
@@ -41,44 +58,35 @@ export default function PaymentLinksManager() {
     [paymentMethods],
   )
 
-  const productOptions = useMemo(
-    () =>
-      (Array.isArray(products) ? products : [])
-        .filter((p) => p?.is_active !== false)
-        .map((p) => ({
-          value: String(p.id),
-          label: String(p.name || `Producto #${p.id}`),
-        })),
-    [products],
-  )
-
   const selectionReady =
     Boolean(paymentMethodId) &&
     (moduleType === 'BAAS' || (moduleType === 'VENTAS' && Boolean(productId)))
 
   useEffect(() => {
     let cancelled = false
-    async function loadCatalogs() {
-      setLoadingCatalogs(true)
+    async function loadPaymentMethods() {
+      setLoadingPaymentMethods(true)
       try {
-        const [pmRes, prodRes] = await Promise.all([
-          api.get('/api/v1/payment-methods/', { params: { include_inactive: true } }),
-          api.get('/api/v1/products/'),
-        ])
-        if (cancelled) return
-        setPaymentMethods(Array.isArray(pmRes.data) ? pmRes.data : [])
-        setProducts(Array.isArray(prodRes.data) ? prodRes.data : [])
+        const { data } = await api.get('/api/v1/payment-methods/', { params: { include_inactive: true } })
+        if (!cancelled) setPaymentMethods(Array.isArray(data) ? data : [])
       } catch {
-        if (!cancelled) setErrorMsg('No se pudieron cargar métodos de pago o productos.')
+        if (!cancelled) setErrorMsg('No se pudieron cargar los métodos de pago.')
       } finally {
-        if (!cancelled) setLoadingCatalogs(false)
+        if (!cancelled) setLoadingPaymentMethods(false)
       }
     }
-    void loadCatalogs()
+    void loadPaymentMethods()
     return () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (pendingProductIdHydrate == null || salesProductLoading) return
+    const key = salesInventoryOptionKeyForProductId(pendingProductIdHydrate, inventorySalesOpts)
+    if (key) setProductOptionKey(key)
+    setPendingProductIdHydrate(null)
+  }, [pendingProductIdHydrate, salesProductLoading, inventorySalesOpts])
 
   const fetchTemplate = useCallback(async () => {
     if (!selectionReady) {
@@ -100,6 +108,9 @@ export default function PaymentLinksManager() {
       if (row) {
         setTemplateId(row.id)
         setLinkRows(hydrateHotmartLinkRows(row.links, { all: true }))
+        if (moduleType === 'VENTAS' && row.product_id && !productOptionKey) {
+          setPendingProductIdHydrate(Number(row.product_id))
+        }
         setStatusMsg('Plantilla existente cargada. Puedes editarla y guardar.')
       } else {
         setTemplateId(null)
@@ -113,7 +124,7 @@ export default function PaymentLinksManager() {
     } finally {
       setLoadingTemplate(false)
     }
-  }, [selectionReady, paymentMethodId, moduleType, productId])
+  }, [selectionReady, paymentMethodId, moduleType, productId, productOptionKey])
 
   useEffect(() => {
     void fetchTemplate()
@@ -121,7 +132,11 @@ export default function PaymentLinksManager() {
 
   async function handleSave() {
     if (!selectionReady) {
-      setErrorMsg('Selecciona método de pago y, para Ventas, un producto.')
+      setErrorMsg(
+        moduleType === 'VENTAS' && productOptionKey && !productId
+          ? 'El producto seleccionado no tiene ID de catálogo. Elige un crédito normal o paquete con producto vinculado.'
+          : 'Selecciona método de pago y, para Ventas, un producto del inventario.',
+      )
       return
     }
     let linksPayload
@@ -181,6 +196,8 @@ export default function PaymentLinksManager() {
     }
   }
 
+  const loadingCatalogs = loadingPaymentMethods || (moduleType === 'VENTAS' && salesProductLoading)
+
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-12 px-4">
       <Link
@@ -226,7 +243,10 @@ export default function PaymentLinksManager() {
                 onChange={(v) => {
                   const next = v != null ? String(v) : 'VENTAS'
                   setModuleType(next)
-                  if (next === 'BAAS') setProductId('')
+                  if (next === 'BAAS') {
+                    setProductOptionKey('')
+                    setPendingProductIdHydrate(null)
+                  }
                 }}
                 options={MODULE_OPTIONS}
                 hideClear
@@ -237,12 +257,20 @@ export default function PaymentLinksManager() {
           {moduleType === 'VENTAS' ? (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">Producto / servicio</label>
-              <SearchableSelect
-                value={productId}
-                onChange={(v) => setProductId(v != null ? String(v) : '')}
-                options={productOptions}
-                placeholder="Seleccionar producto del inventario…"
+              <SaleLineProductSelect
+                value={productOptionKey}
+                onChange={(v) => setProductOptionKey(v != null ? String(v) : '')}
+                options={salesProductOptions}
+                disabled={salesProductLoading}
+                placeholder="Selecciona producto o servicio…"
+                hideClear
               />
+              {productOptionKey && !productId ? (
+                <p className="mt-1.5 text-xs text-amber-700 leading-snug">
+                  Esta opción no tiene producto de catálogo vinculado. Para plantillas de Ventas elige un ítem de
+                  créditos normales o por pantalla con stock.
+                </p>
+              ) : null}
             </div>
           ) : null}
 

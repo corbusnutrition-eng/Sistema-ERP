@@ -24,6 +24,7 @@ import {
 import SaleQBTagsCreatable from './SaleQBTagsCreatable'
 import NuevaVentaInvoiceSection from './NuevaVentaInvoiceSection'
 import HotmartLinksEditor from './HotmartLinksEditor'
+import { buildInventorySalesProductOptions } from '../buildInventorySalesProductOptions'
 import {
   buildHotmartLinksPayload,
   emptyHotmartLinkRow,
@@ -1241,122 +1242,24 @@ export default function NuevaVentaModal({
   const invoiceProductOptions = useMemo(() => {
     if (!showInvoiceLayout) return []
 
-    const rows = []
-    const provs =
-      Array.isArray(combinedProvidersList) && combinedProvidersList.length
-        ? combinedProvidersList
-        : ['Flujo', 'Stella']
-
-    if (inventorySalesOptsLoading || inventorySalesOpts == null) {
-      rows.push({
-        value: '__loading_inv',
-        label: 'Cargando opciones de inventario…',
-        disabled: true,
-        sectionHeader: true,
-      })
-      return rows
-    }
-
-    const data = inventorySalesOpts
-
-    rows.push({
-      value: '__hdr_cn',
-      label: 'CRÉDITOS NORMALES',
-      disabled: true,
-      sectionHeader: true,
-    })
-    const normals = Array.isArray(data.normal_credit_options) ? data.normal_credit_options : []
-    for (const n of normals) {
-      if (!n || typeof n !== 'object') continue
-      rows.push({
-        value: n.option_key,
-        label: n.label || String(n.option_key),
-        disabled: Boolean(n.disabled),
-      })
-    }
-
-    rows.push({
-      value: '__hdr_cp',
-      label: 'CRÉDITOS POR PANTALLA (AL DETALLE)',
-      disabled: true,
-      sectionHeader: true,
-    })
-    const pkgs = Array.isArray(data.screen_package_options) ? data.screen_package_options : []
-    for (const p of pkgs) {
-      if (!p || typeof p !== 'object') continue
-      rows.push({
-        value: p.option_key,
-        label: p.label || String(p.option_key),
-        disabled: Boolean(p.disabled),
-      })
-    }
-
-    const picks = Array.isArray(data.screen_pick_options) ? data.screen_pick_options : []
-    if (picks.length) {
-      rows.push({
-        value: '__hdr_ss',
-        label: 'Pantalla vinculada (esta venta)',
-        disabled: true,
-        sectionHeader: true,
-      })
-      for (const s of picks) {
-        if (!s || typeof s !== 'object') continue
-        rows.push({
-          value: s.option_key,
-          label: s.label || String(s.option_key),
-          disabled: Boolean(s.disabled),
-        })
-      }
-    }
-
-    rows.push({
-      value: '__hdr_fc',
-      label: 'Saldo pooled por proveedor (sin catálogo)',
-      disabled: true,
-      sectionHeader: true,
-    })
-    for (const p of provs) {
-      const snap = snapshotFor(p)
-      const n = Number(snap.totalCredits)
-      const stockLabel = Number.isFinite(n)
-        ? n.toLocaleString('es-ES', { maximumFractionDigits: 4 })
-        : '—'
-      const zeroStock = catalogReady && Number.isFinite(n) && n <= 0
-      rows.push({
-        value: `fc:${p}`,
-        label: `Créditos completos — ${p} (Disponible: ${stockLabel})${zeroStock ? ' · sin saldo' : ''}`,
-        disabled: zeroStock,
-      })
-    }
-
-    if (
-      draftRecharge &&
-      !isEditing &&
-      (form.provider || '').trim() === String(draftRecharge.provider || '').trim()
-    ) {
-      rows.push({
-        value: '__hdr_dr',
-        label: 'Recarga al inventario',
-        disabled: true,
-        sectionHeader: true,
-      })
-      rows.push({
-        value: 'draft:pending',
-        label: `${draftRecharge.salePackage || 'Paquete'} (Recarga pendiente en borrador)`,
-        disabled: false,
-      })
-    }
-
     const pk0 = String(lineItems[0]?.productKey || '').trim()
-    if (pk0.startsWith('fc:') && !rows.some((r) => String(r.value) === pk0)) {
-      rows.push({
-        value: pk0,
-        label: `${pk0.slice(3)} — saldo pooled (valor de la venta)`,
-        disabled: false,
-      })
-    }
+    const extraFallbackOptions =
+      pk0.startsWith('fc:') ?
+        [{ value: pk0, label: `${pk0.slice(3)} — saldo pooled (valor de la venta)`, disabled: false }]
+      : []
 
-    return rows
+    return buildInventorySalesProductOptions({
+      inventorySalesOpts,
+      inventorySalesOptsLoading,
+      combinedProvidersList,
+      snapshotFor,
+      catalogReady,
+      includeDraftRecharge: Boolean(draftRecharge && !isEditing),
+      draftRecharge,
+      draftProvider: form.provider,
+      includeScreenPicks: true,
+      extraFallbackOptions,
+    })
   }, [
     showInvoiceLayout,
     inventorySalesOpts,
