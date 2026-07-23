@@ -1,5 +1,6 @@
 import { FileText, ImageIcon, Loader2, Plus, Trash2, Video } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import PaymentLinkImageCropModal from './PaymentLinkImageCropModal'
 import {
   emptyCustomHotmartLinkRow,
   emptyHotmartLinkRow,
@@ -59,21 +60,28 @@ function CustomLinkRow({ row, index, disabled, currencyCode, api, onUpdate, onAd
   const fileInputRef = useRef(null)
   const [uploading, setUploading] = useState(false)
   const [uploadErr, setUploadErr] = useState('')
+  const [cropSession, setCropSession] = useState(null)
 
   const mediaUrl = String(row.imagePreview || row.image_url || '').trim()
   const mediaType = inferPaymentLinkMediaType(row)
   const hasMedia = Boolean(mediaUrl)
 
-  async function handleMediaPick(file) {
+  useEffect(
+    () => () => {
+      if (cropSession?.src) URL.revokeObjectURL(cropSession.src)
+    },
+    [cropSession?.src],
+  )
+
+  function closeCropSession() {
+    setCropSession((prev) => {
+      if (prev?.src) URL.revokeObjectURL(prev.src)
+      return null
+    })
+  }
+
+  async function uploadMediaFile(file) {
     if (!file || disabled) return
-    const ok =
-      /^image\//i.test(file.type || '') ||
-      /^video\//i.test(file.type || '') ||
-      file.type === 'application/pdf'
-    if (!ok) {
-      setUploadErr('Solo imágenes, videos (MP4, WEBM, MOV) o PDF.')
-      return
-    }
     setUploadErr('')
     setUploading(true)
     try {
@@ -84,6 +92,35 @@ function CustomLinkRow({ row, index, disabled, currencyCode, api, onUpdate, onAd
     } finally {
       setUploading(false)
     }
+  }
+
+  function handleMediaPick(file) {
+    if (!file || disabled) return
+    const isImage = /^image\//i.test(file.type || '')
+    const isVideo = /^video\//i.test(file.type || '')
+    const isPdf = file.type === 'application/pdf'
+    if (!isImage && !isVideo && !isPdf) {
+      setUploadErr('Solo imágenes, videos (MP4, WEBM, MOV) o PDF.')
+      return
+    }
+    setUploadErr('')
+    if (isImage) {
+      setCropSession((prev) => {
+        if (prev?.src) URL.revokeObjectURL(prev.src)
+        return {
+          src: URL.createObjectURL(file),
+          fileName: file.name || 'imagen.jpg',
+          mimeType: file.type || 'image/jpeg',
+        }
+      })
+      return
+    }
+    void uploadMediaFile(file)
+  }
+
+  async function handleCropApply(croppedFile) {
+    closeCropSession()
+    await uploadMediaFile(croppedFile)
   }
 
   function requestRemoveMedia() {
@@ -186,6 +223,16 @@ function CustomLinkRow({ row, index, disabled, currencyCode, api, onUpdate, onAd
           </div>
         </div>
       </div>
+
+      {cropSession ? (
+        <PaymentLinkImageCropModal
+          imageSrc={cropSession.src}
+          fileName={cropSession.fileName}
+          mimeType={cropSession.mimeType}
+          onCancel={closeCropSession}
+          onApply={handleCropApply}
+        />
+      ) : null}
 
       <div className="grid gap-2 sm:grid-cols-[1fr_7rem]">
         <div>
