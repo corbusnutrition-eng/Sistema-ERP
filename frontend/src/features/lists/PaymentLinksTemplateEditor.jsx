@@ -1,5 +1,7 @@
-import { Minus, Plus } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { emptyHotmartLinkRow } from '../../utils/hotmartLinks'
+
+const DELETE_ROW_CONFIRM = '¿Estás seguro de que deseas eliminar este link de pago?'
 
 /**
  * Editor multi-fila de links (URL + monto) para plantillas en Listas.
@@ -11,7 +13,7 @@ export default function PaymentLinksTemplateEditor({
   currencyCode = 'USD',
   className = '',
 }) {
-  const list = Array.isArray(rows) && rows.length ? rows : [emptyHotmartLinkRow()]
+  const list = Array.isArray(rows) ? rows : []
 
   function updateRow(rowId, patch) {
     onChange?.(list.map((r) => (r.id === rowId ? { ...r, ...patch } : r)))
@@ -21,9 +23,29 @@ export default function PaymentLinksTemplateEditor({
     onChange?.([...list, emptyHotmartLinkRow()])
   }
 
-  function removeRow(rowId) {
+  function requestRemoveRow(rowId) {
+    if (!window.confirm(DELETE_ROW_CONFIRM)) return
     const next = list.filter((r) => r.id !== rowId)
-    onChange?.(next.length ? next : [emptyHotmartLinkRow()])
+    onChange?.(next)
+  }
+
+  if (!list.length) {
+    return (
+      <div className={`rounded-lg border border-dashed border-gray-200 bg-gray-50/80 p-4 ${className}`.trim()}>
+        <p className="text-sm text-gray-600 mb-3">
+          No hay links configurados. Al guardar se eliminará la plantilla de esta combinación.
+        </p>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={addRow}
+          className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-white px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+        >
+          <Plus size={16} aria-hidden />
+          Añadir link
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -75,13 +97,13 @@ export default function PaymentLinksTemplateEditor({
             </button>
             <button
               type="button"
-              disabled={disabled || list.length <= 1}
-              onClick={() => removeRow(row.id)}
-              title="Eliminar fila"
-              aria-label="Eliminar link"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              disabled={disabled}
+              onClick={() => requestRemoveRow(row.id)}
+              title="Eliminar este link"
+              aria-label="Eliminar este link"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-400 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 transition-colors"
             >
-              <Minus size={16} aria-hidden />
+              <Trash2 size={16} aria-hidden />
             </button>
           </div>
         </div>

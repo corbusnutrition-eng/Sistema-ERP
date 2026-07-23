@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Link2, Loader2, Trash2 } from 'lucide-react'
+import { ArrowLeft, Link2, Loader2 } from 'lucide-react'
 import api from '../../api/axios'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import SaleLineProductSelect from '../sales/components/SaleLineProductSelect'
@@ -39,7 +39,6 @@ export default function PaymentLinksManager() {
   const [linkRows, setLinkRows] = useState([emptyHotmartLinkRow()])
   const [loadingTemplate, setLoadingTemplate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
   const [statusMsg, setStatusMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [pendingProductIdHydrate, setPendingProductIdHydrate] = useState(null)
@@ -139,6 +138,15 @@ export default function PaymentLinksManager() {
       )
       return
     }
+
+    if (
+      !window.confirm(
+        '¿Confirmas que deseas guardar estas modificaciones? Los cambios se actualizarán para los clientes.',
+      )
+    ) {
+      return
+    }
+
     let linksPayload
     try {
       linksPayload = buildHotmartLinksPayload(linkRows, { all: true })
@@ -146,22 +154,31 @@ export default function PaymentLinksManager() {
       setErrorMsg(err?.message || 'Revisa los links ingresados.')
       return
     }
-    if (!linksPayload?.length) {
-      setErrorMsg('Agrega al menos un link con URL y valor.')
-      return
-    }
-
-    const body = {
-      payment_method_id: Number(paymentMethodId),
-      module_type: moduleType,
-      links: linksPayload,
-      ...(moduleType === 'VENTAS' ? { product_id: Number(productId) } : { product_id: null }),
-    }
 
     setSaving(true)
     setErrorMsg('')
     setStatusMsg('')
+
     try {
+      if (!linksPayload?.length) {
+        if (templateId) {
+          await api.delete(`/api/v1/payment-link-templates/${templateId}`)
+          setTemplateId(null)
+          setLinkRows([])
+          setStatusMsg('Plantilla eliminada. No quedan links para esta combinación.')
+        } else {
+          setErrorMsg('Agrega al menos un link con URL y valor, o cancela.')
+        }
+        return
+      }
+
+      const body = {
+        payment_method_id: Number(paymentMethodId),
+        module_type: moduleType,
+        links: linksPayload,
+        ...(moduleType === 'VENTAS' ? { product_id: Number(productId) } : { product_id: null }),
+      }
+
       if (templateId) {
         await api.put(`/api/v1/payment-link-templates/${templateId}`, body)
         setStatusMsg('Plantilla actualizada correctamente.')
@@ -176,23 +193,6 @@ export default function PaymentLinksManager() {
       setErrorMsg(typeof detail === 'string' ? detail : 'No se pudo guardar la plantilla.')
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function handleDelete() {
-    if (!templateId) return
-    if (!window.confirm('¿Eliminar esta plantilla de links de pago?')) return
-    setDeleting(true)
-    setErrorMsg('')
-    try {
-      await api.delete(`/api/v1/payment-link-templates/${templateId}`)
-      setTemplateId(null)
-      setLinkRows([emptyHotmartLinkRow()])
-      setStatusMsg('Plantilla eliminada.')
-    } catch {
-      setErrorMsg('No se pudo eliminar la plantilla.')
-    } finally {
-      setDeleting(false)
     }
   }
 
@@ -282,30 +282,19 @@ export default function PaymentLinksManager() {
                   Consultando plantilla…
                 </p>
               ) : (
-                <PaymentLinksTemplateEditor rows={linkRows} onChange={setLinkRows} disabled={saving || deleting} />
+                <PaymentLinksTemplateEditor rows={linkRows} onChange={setLinkRows} disabled={saving} />
               )}
 
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => void handleSave()}
-                  disabled={saving || deleting || loadingTemplate}
+                  disabled={saving || loadingTemplate}
                   className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                 >
                   {saving ? <Loader2 size={16} className="animate-spin" aria-hidden /> : null}
                   Guardar cambios
                 </button>
-                {templateId ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleDelete()}
-                    disabled={saving || deleting || loadingTemplate}
-                    className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
-                  >
-                    {deleting ? <Loader2 size={16} className="animate-spin" aria-hidden /> : <Trash2 size={16} aria-hidden />}
-                    Eliminar plantilla
-                  </button>
-                ) : null}
               </div>
             </>
           ) : (
