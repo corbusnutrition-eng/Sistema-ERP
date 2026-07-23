@@ -9,6 +9,7 @@ import {
   getDetallesForTipoCuenta,
   getFirstDetalleForTipoCuenta,
   inferTipoCuentaFromApi,
+  isCryptoWalletPaymentMethod,
   isEfectivoYEquivalentesTipoCuenta,
   normalizeDetailType,
   sortPaymentMethodNames,
@@ -51,6 +52,18 @@ const MONEDA_OPCIONES = [
   { code: 'EUR', label: 'EUR — Euro' },
 ]
 
+const CRYPTO_NETWORK_OPCIONES = [
+  { value: 'TRC20', label: 'TRC20 (Tron)' },
+  { value: 'ERC20', label: 'ERC20 (Ethereum)' },
+  { value: 'BEP20', label: 'BEP20 (BNB Smart Chain)' },
+  { value: 'Polygon', label: 'Polygon' },
+  { value: 'Solana', label: 'Solana' },
+  { value: 'Bitcoin', label: 'Bitcoin' },
+  { value: 'Lightning', label: 'Lightning Network' },
+  { value: 'Arbitrum', label: 'Arbitrum' },
+  { value: 'Optimism', label: 'Optimism' },
+]
+
 function ToastSuccess({ message, onDismiss }) {
   return (
     <div className="fixed bottom-6 right-6 z-[80] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ring-1 bg-green-50 text-green-800 ring-green-200">
@@ -69,6 +82,7 @@ function buildInitialFormState(tipoValue, paymentMethodsList = []) {
     name: '',
     account_number: '',
     detail_type: getFirstDetalleForTipoCuenta(tipoValue, pmNames),
+    crypto_network: '',
     description: '',
     is_subaccount: false,
     parent_id: '',
@@ -98,6 +112,9 @@ export default function NuevaCuentaModal({
 
   const usingPaymentMethodsAsDetail = isEfectivoYEquivalentesTipoCuenta(selectedTipoCuenta)
   const paymentMethodNames = useMemo(() => sortPaymentMethodNames(paymentMethods), [paymentMethods])
+  const isCryptoWallet = usingPaymentMethodsAsDetail && isCryptoWalletPaymentMethod(form.detail_type)
+  const cuentaNumeroLabel = isCryptoWallet ? 'Dirección de billetera' : 'Número de cuenta'
+  const cuentaNumeroPlaceholder = isCryptoWallet ? 'Ej. TXyz… o 0x…' : 'Opcional'
 
   const detallesDisponibles = useMemo(() => {
     if (usingPaymentMethodsAsDetail) return paymentMethodNames
@@ -127,6 +144,11 @@ export default function NuevaCuentaModal({
 
   const monedaSelectOptions = useMemo(
     () => MONEDA_OPCIONES.map((m) => ({ value: m.code, label: m.label })),
+    [],
+  )
+
+  const cryptoNetworkSelectOptions = useMemo(
+    () => CRYPTO_NETWORK_OPCIONES.map((n) => ({ value: n.value, label: n.label })),
     [],
   )
 
@@ -251,6 +273,7 @@ export default function NuevaCuentaModal({
         name: editAccount.name ?? '',
         account_number: editAccount.account_number ?? '',
         detail_type: safeDetail,
+        crypto_network: editAccount.crypto_network ?? '',
         description: editAccount.description ?? '',
         is_subaccount: Boolean(editAccount.parent_id),
         parent_id: editAccount.parent_id ? String(editAccount.parent_id) : '',
@@ -304,6 +327,9 @@ export default function NuevaCuentaModal({
       if (!isEfectivoYEquivalentesTipoCuenta(value)) {
         next.opening_balance = ''
         next.opening_balance_date = todayISO()
+        next.crypto_network = ''
+      } else if (!isCryptoWalletPaymentMethod(primero)) {
+        next.crypto_network = ''
       }
       return next
     })
@@ -343,7 +369,11 @@ export default function NuevaCuentaModal({
       return
     }
     if (name === 'detail_type') {
-      setForm((p) => ({ ...p, detail_type: value }))
+      setForm((p) => ({
+        ...p,
+        detail_type: value,
+        crypto_network: isCryptoWalletPaymentMethod(value) ? p.crypto_network : '',
+      }))
       return
     }
     setForm((p) => ({ ...p, [name]: value }))
@@ -362,6 +392,7 @@ export default function NuevaCuentaModal({
 
     const pmName = String(form.detail_type ?? '').trim()
     const efectivo = usingPaymentMethodsAsDetail
+    const isCrypto = efectivo && isCryptoWalletPaymentMethod(pmName)
 
     if (efectivo && !pmName) {
       setError(
@@ -400,6 +431,7 @@ export default function NuevaCuentaModal({
       account_type,
       detail_type,
       linked_payment_method: efectivo ? pmName : null,
+      crypto_network: isCrypto ? String(form.crypto_network ?? '').trim() || null : null,
       description: form.description.trim() || null,
       is_subaccount: form.is_subaccount,
       parent_id: form.is_subaccount ? Number(form.parent_id) : null,
@@ -473,8 +505,14 @@ export default function NuevaCuentaModal({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Número de cuenta</label>
-            <input name="account_number" value={form.account_number} onChange={handleChange} className={inputCls} placeholder="Opcional" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">{cuentaNumeroLabel}</label>
+            <input
+              name="account_number"
+              value={form.account_number}
+              onChange={handleChange}
+              className={inputCls}
+              placeholder={cuentaNumeroPlaceholder}
+            />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -515,6 +553,23 @@ export default function NuevaCuentaModal({
               ) : null}
             </div>
           </div>
+
+          {isCryptoWallet && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de red</label>
+              <SearchableSelect
+                value={form.crypto_network}
+                onChange={(v) => handleChange({ target: { name: 'crypto_network', value: v ?? '' } })}
+                options={cryptoNetworkSelectOptions}
+                placeholder="Selecciona red (TRC20, ERC20…)"
+                clearLabel="Sin red especificada"
+                disabled={saving}
+              />
+              <p className="text-[11px] text-gray-500 mt-1">
+                Red blockchain de la dirección de billetera (opcional).
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Moneda de la cuenta</label>

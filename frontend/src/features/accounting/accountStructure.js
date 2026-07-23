@@ -193,3 +193,11 @@ export function sortPaymentMethodNames(list) {
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
 }
+
+/** Método de pago «Billeteras Criptomonedas» o variantes con «Criptomonedas» en el nombre. */
+export function isCryptoWalletPaymentMethod(name) {
+  const n = String(name ?? '').trim()
+  if (!n) return false
+  if (n === 'Billeteras Criptomonedas') return true
+  return /criptomonedas/i.test(n)
+}
