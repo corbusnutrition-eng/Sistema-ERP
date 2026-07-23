@@ -57,6 +57,7 @@ from app.models.client import Client
 from app.models.client_debt_payment import ClientDebtPayment, DebtPaymentStatus
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
 from app.models.payment_method import PaymentMethod
+from app.models.payment_link_template import PaymentLinkTemplate
 from app.models.journal_entry import JournalEntry, JournalReferenceType
 from app.models.product import Product
 from app.models.sale import Sale, SaleStatus
@@ -153,7 +154,7 @@ from app.services.client_payment_service import (
     subtract_client_credit_balance,
 )
 from app.schemas.distributors import WalletRechargeRequestRead
-from app.schemas.hotmart_links import hotmart_links_from_model
+from app.schemas.hotmart_links import hotmart_links_from_model, normalize_hotmart_links_list
 from app.wallet_recharge_helpers import (
     OPEN_PORTAL_STATUSES,
     REQ_STATUS_APPROVED,
@@ -1317,6 +1318,29 @@ def _validate_wallet_recharge_declared_payment_method(
 # ── Wallet recharge (BaaS) ────────────────────────────────────────────────────
 
 
+def _portal_baas_hotmart_links_for_payment_method(db: Session, payment_method_id: int):
+    """Plantilla BAAS del Gestor de Links para el método elegido por el cliente."""
+    tpl = (
+        db.query(PaymentLinkTemplate)
+        .filter(
+            PaymentLinkTemplate.payment_method_id == int(payment_method_id),
+            PaymentLinkTemplate.module_type == "BAAS",
+            PaymentLinkTemplate.product_id.is_(None),
+        )
+        .first()
+    )
+    if tpl is None:
+        return None
+    try:
+        return normalize_hotmart_links_list(getattr(tpl, "links", None))
+    except ValueError:
+        logger.warning(
+            "portal BAAS hotmart template invalid for payment_method_id=%s",
+            payment_method_id,
+        )
+        return None
+
+
 def _portal_filter_recharge_payment_options_by_currency(
     options: list[PortalAssignedPaymentMethod],
     currency: str,
@@ -1671,6 +1695,8 @@ def _portal_create_wallet_recharge_for_client(
     if not all_dep_ids and dep_resolved is not None:
         all_dep_ids = [int(dep_resolved)]
 
+    hotmart_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+
     req = WalletRechargeRequest(
         client_id=int(client.id),
         amount_requested=aq,
@@ -1686,6 +1712,7 @@ def _portal_create_wallet_recharge_for_client(
         surplus_credited=0.0,
         is_client_initiated=True,
         admin_note="Solicitud creada por el cliente desde el portal.",
+        hotmart_links=hotmart_links,
         recharge_detail_lines=[
             {
                 "product_name": "Saldo BaaS",
