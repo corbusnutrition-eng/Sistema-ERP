@@ -1,5 +1,5 @@
 import { Minus, Plus } from 'lucide-react'
-import { emptyHotmartLinkRow } from '../../../utils/hotmartLinks'
+import { emptyHotmartLinkRow } from '../../utils/hotmartLinks'
 
 /**
  * Editor multi-fila de links (URL + monto) para plantillas en Listas.
