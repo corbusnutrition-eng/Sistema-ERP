@@ -2247,6 +2247,33 @@ function ClientPortalPageInner() {
     [loadPortal, loadWalletRecharges],
   )
 
+  const syncPortalRechargePaymentPrefs = useCallback(
+    async (rechargeRow, { paymentMethodId, depositAccountId } = {}) => {
+      const rid = Number(rechargeRow?.id)
+      const pm = Number(paymentMethodId)
+      if (!token || !Number.isFinite(rid) || rid < 1 || !Number.isFinite(pm) || pm < 1) return
+      try {
+        const body = { payment_method_id: pm }
+        const dep = Number(depositAccountId)
+        if (Number.isFinite(dep) && dep > 0) body.deposit_account_id = dep
+        const { data } = await api.patch(
+          `/api/v1/portal/${encodeURIComponent(token)}/recharges/${rid}`,
+          body,
+        )
+        setWalletRechargePatchById((prev) => ({ ...prev, [rid]: data }))
+      } catch (err) {
+        const detail = err?.response?.data?.detail
+        patchRechargePayForm(setRechargeFormById, rid, {
+          error:
+            typeof detail === 'string'
+              ? detail
+              : 'No se pudo actualizar el método de pago. Intenta de nuevo.',
+        })
+      }
+    },
+    [api, token],
+  )
+
   const handleCancelClientRecharge = useCallback(
     async (rechargeRow) => {
       const frId = Number(rechargeRow?.id)
@@ -3172,10 +3199,8 @@ function ClientPortalPageInner() {
     return base.map((r) => {
       const pid = Number(r?.id)
       const patch = Number.isFinite(pid) ? walletRechargePatchById[pid] : null
-      return {
-        ...r,
-        status: patch?.status ?? r.status,
-      }
+      if (!patch) return r
+      return { ...r, ...patch, status: patch.status ?? r.status }
     })
   }, [data?.outstanding_wallet_recharges, walletRecharges, walletRechargePatchById])
 
@@ -6420,9 +6445,10 @@ function ClientPortalPageInner() {
                         disabled={rechargePaymentMethods.length === 0}
                         value={rechargeForm.method || methodForDeps || ''}
                         onChange={(mid) => {
-                          setRechargeForm({ method: mid, account: '' })
+                          setRechargeForm({ method: mid, account: '', error: null })
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
                           setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
+                          void syncPortalRechargePaymentPrefs(fr, { paymentMethodId: mid })
                         }}
                         options={portalPaymentMethodOptions(rechargePaymentMethods)}
                         placeholder="Seleccionar…"
@@ -6483,8 +6509,12 @@ function ClientPortalPageInner() {
                               required
                               value={rechargeForm.account}
                               onChange={(depVal) => {
-                                setRechargeForm({ account: depVal })
+                                setRechargeForm({ account: depVal, error: null })
                                 setPayAccountByRecharge((p) => ({ ...p, [frId]: depVal }))
+                                void syncPortalRechargePaymentPrefs(fr, {
+                                  paymentMethodId: rechargeForm.method || methodForDeps,
+                                  depositAccountId: depVal,
+                                })
                                 const filesNow = receiptFilesByRecharge[frId] || []
                                 if (filesNow.length) {
                                   void analyzeRechargeReceiptWithAI(

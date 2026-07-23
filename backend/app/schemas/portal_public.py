@@ -631,9 +631,25 @@ class PortalCreateWalletRechargeResponse(BaseModel):
 
 
 class PortalUpdateWalletRechargeRequest(BaseModel):
-    """PATCH /portal/{token}/recharges/{id} — cambio de monto sin pagos asociados."""
+    """PATCH /portal/{token}/recharges/{id} — monto y/o preferencias de pago en checkout."""
 
-    amount: float = Field(..., gt=0, description="Nuevo monto solicitado.")
+    amount: Optional[float] = Field(default=None, gt=0, description="Nuevo monto solicitado.")
+    payment_method_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Método de pago elegido en el portal (recalcula links Hotmart).",
+    )
+    deposit_account_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Cuenta de depósito elegida en el portal.",
+    )
+
+    @model_validator(mode="after")
+    def _require_at_least_one_field(self) -> "PortalUpdateWalletRechargeRequest":
+        if self.amount is None and self.payment_method_id is None and self.deposit_account_id is None:
+            raise ValueError("Indica al menos un campo para actualizar.")
+        return self
 
 
 class PortalWalletRechargeDeleteResponse(BaseModel):

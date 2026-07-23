@@ -1557,6 +1557,22 @@ def _portal_assert_client_may_edit_or_cancel_recharge(db: Session, req: WalletRe
         )
 
 
+def _portal_assert_recharge_open_for_payment_selection(req: WalletRechargeRequest) -> None:
+    """Permite cambiar método/cuenta en checkout mientras haya saldo pendiente."""
+    st = str(getattr(req, "status", "") or "")
+    if st not in (REQ_STATUS_PENDING, REQ_STATUS_PARTIALLY_PAID):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo puedes cambiar el método de pago en solicitudes con saldo pendiente.",
+        )
+    bal = float(getattr(req, "balance_pending", 0) or 0)
+    if bal <= 1e-6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta solicitud ya no tiene saldo pendiente.",
+        )
+
+
 def _portal_recharge_payment_options_for_client(db: Session, client: Client) -> list[PortalAssignedPaymentMethod]:
     """Métodos y cuentas disponibles para que el cliente solicite una recarga BaaS."""
     from app.services.client_currency_service import get_client_currency
@@ -1789,7 +1805,7 @@ def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list
 @router.patch(
     "/{portal_token}/recharges/{request_id}",
     response_model=PortalWalletRechargeItem,
-    summary="Editar monto de recarga BaaS (solo pending sin pagos)",
+    summary="Editar recarga BaaS: monto y/o método de pago en checkout",
 )
 @limiter.limit(PORTAL_FINANCIAL_LIMIT)
 def portal_update_wallet_recharge(
@@ -1801,15 +1817,33 @@ def portal_update_wallet_recharge(
 ) -> PortalWalletRechargeItem:
     client = _portal_client_from_token(db, portal_token)
     req = _portal_get_client_owned_recharge(db, client, int(request_id))
-    _portal_assert_client_may_edit_or_cancel_recharge(db, req)
 
-    new_amt = round(float(payload.amount), 2)
-    if new_amt <= 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica un monto mayor a cero.")
+    if payload.amount is not None:
+        _portal_assert_client_may_edit_or_cancel_recharge(db, req)
+        new_amt = round(float(payload.amount), 2)
+        if new_amt <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica un monto mayor a cero.")
+        req.amount_requested = new_amt
+        req.balance_pending = new_amt
+        req.recharge_detail_lines = None
 
-    req.amount_requested = new_amt
-    req.balance_pending = new_amt
-    req.recharge_detail_lines = None
+    if payload.payment_method_id is not None or payload.deposit_account_id is not None:
+        _portal_assert_recharge_open_for_payment_selection(req)
+
+    if payload.payment_method_id is not None:
+        pm_id = int(payload.payment_method_id)
+        _validate_wallet_recharge_declared_payment_method(
+            db,
+            client,
+            req,
+            pm_id,
+            deposit_account_id=payload.deposit_account_id,
+        )
+        req.hotmart_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+
+    if payload.deposit_account_id is not None:
+        _validate_wallet_recharge_deposit_account(db, client, req, int(payload.deposit_account_id))
+
     db.commit()
     db.refresh(req)
     return _portal_wallet_recharge_item_from_request(db, client, req)
