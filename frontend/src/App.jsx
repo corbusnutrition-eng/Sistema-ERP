@@ -38,6 +38,7 @@ import ListClassificationReport from './features/reports/ListClassificationRepor
 import ClassList from './features/reports/ClassList'
 import ListsDashboard from './features/lists/ListsDashboard'
 import PaymentMethodsList from './features/lists/PaymentMethodsList'
+import PaymentLinksManager from './features/lists/PaymentLinksManager'
 import CurrenciesList from './features/lists/CurrenciesList'
 import TagsList from './features/lists/TagsList'
 function AuthLoadingScreen() {
@@ -150,6 +151,7 @@ function AppRoutes() {
                     <Route path="/informes/clases" element={<PermissionRoute permission={PERMS.REPORTS_CLASSES_VIEW}><ClassList /></PermissionRoute>} />
                     <Route path="/listas" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><ListsDashboard /></PermissionRoute>} />
                     <Route path="/listas/metodos-pago" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><PaymentMethodsList /></PermissionRoute>} />
+                    <Route path="/listas/links-pago" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><PaymentLinksManager /></PermissionRoute>} />
                     <Route path="/listas/monedas" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><CurrenciesList /></PermissionRoute>} />
                     <Route path="/listas/etiquetas" element={<PermissionRoute permission={PERMS.REPORTS_LISTS_VIEW}><TagsList /></PermissionRoute>} />
                     <Route path="/equipo" element={<PermissionRoute permission={PERMS.TEAM_USERS_VIEW}><UsersPage /></PermissionRoute>} />

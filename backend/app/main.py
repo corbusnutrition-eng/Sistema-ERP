@@ -92,6 +92,7 @@ from app.api.v1 import portal as portal_router
 from app.api.v1 import auth as auth_router
 from app.api.v1 import classes as classes_router
 from app.api.v1 import payment_methods as payment_methods_router
+from app.api.v1 import payment_link_templates as payment_link_templates_router
 from app.api.v1 import client_payments as client_payments_router
 from app.api.v1 import client_notes as client_notes_router
 from app.api.v1 import clients as clients_router
@@ -126,6 +127,7 @@ app.include_router(accounting_router.router, prefix=API_V1_PREFIX)
 app.include_router(chart_accounts_router.router, prefix=API_V1_PREFIX)
 app.include_router(classes_router.router, prefix=API_V1_PREFIX)
 app.include_router(payment_methods_router.router, prefix=API_V1_PREFIX)
+app.include_router(payment_link_templates_router.router, prefix=API_V1_PREFIX)
 app.include_router(client_payments_router.router, prefix=API_V1_PREFIX)
 app.include_router(auth_router.router, prefix=API_V1_PREFIX)
 app.include_router(checkout_router.router, prefix=API_V1_PREFIX)

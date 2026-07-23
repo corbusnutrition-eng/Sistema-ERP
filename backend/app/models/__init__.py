@@ -17,6 +17,7 @@ from app.models.iptv_account import IPTVAccount
 from app.models.iptv_screen import IPTVScreen
 from app.models.journal_entry import JournalEntry, JournalEntryLine
 from app.models.payment_method import PaymentMethod
+from app.models.payment_link_template import PaymentLinkTemplate
 from app.models.product import CatalogPackageType, Product, ProductPackageCatalog
 from app.models.sale import Sale
 from app.models.sale_transaction_tag import SaleTransactionTag, TagGroup, sale_tag_association

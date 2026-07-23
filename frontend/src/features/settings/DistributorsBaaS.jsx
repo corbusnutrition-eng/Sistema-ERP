@@ -43,6 +43,8 @@ import NewRechargeModal, { normalizeClienteDesdeWebhook, newRechargeLineRow } fr
 import {
   buildHotmartLinksPayload,
   emptyHotmartLinkRow,
+  fetchPaymentLinkTemplate,
+  firstSelectedHotmartMethodId,
   hydrateHotmartLinkRows,
   selectedMethodsIncludeHotmart,
 } from '../../utils/hotmartLinks'
@@ -347,6 +349,8 @@ export default function DistributorsBaaSPage() {
   const [selectedPaymentMethodIds, setSelectedPaymentMethodIds] = useState([])
   const [selectedDepositAccountIds, setSelectedDepositAccountIds] = useState([])
   const [hotmartLinkRows, setHotmartLinkRows] = useState([emptyHotmartLinkRow()])
+  const hotmartTemplateKeyRef = useRef('')
+  const hotmartUserEditedRef = useRef(false)
 
   const [editRechargeRow, setEditRechargeRow] = useState(null)
 
@@ -751,6 +755,39 @@ export default function DistributorsBaaSPage() {
     [selectedPaymentMethodIds, filteredSalePaymentMethodOptions],
   )
 
+  const handleHotmartLinkRowsChange = useCallback((rows) => {
+    hotmartUserEditedRef.current = true
+    setHotmartLinkRows(rows)
+  }, [])
+
+  useEffect(() => {
+    if (!linkModalOpen || !showHotmartLinksEditor) return undefined
+    const pmId = firstSelectedHotmartMethodId(selectedPaymentMethodIds, filteredSalePaymentMethodOptions)
+    if (!pmId) return undefined
+
+    const templateKey = `${pmId}|BAAS`
+    if (templateKey !== hotmartTemplateKeyRef.current) {
+      hotmartTemplateKeyRef.current = templateKey
+      hotmartUserEditedRef.current = false
+    }
+    if (hotmartUserEditedRef.current) return undefined
+
+    const ac = new AbortController()
+    fetchPaymentLinkTemplate(api, {
+      paymentMethodId: pmId,
+      moduleType: 'BAAS',
+      signal: ac.signal,
+    })
+      .then((tpl) => {
+        if (!tpl?.links?.length) return
+        setHotmartLinkRows(hydrateHotmartLinkRows(tpl.links, { all: true }))
+      })
+      .catch((err) => {
+        if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') return
+      })
+    return () => ac.abort()
+  }, [linkModalOpen, showHotmartLinksEditor, selectedPaymentMethodIds, filteredSalePaymentMethodOptions])
+
   const depositAccountCurrencyCode = useMemo(() => {
     const sel = Array.isArray(selectedDepositAccountIds) ? selectedDepositAccountIds : []
     const accs = Array.isArray(depositAccounts) ? depositAccounts : []
@@ -861,6 +898,8 @@ export default function DistributorsBaaSPage() {
     setSelectedDepositAccountIds([])
     setLinkReceiptFile(null)
     setHotmartLinkRows([emptyHotmartLinkRow()])
+    hotmartTemplateKeyRef.current = ''
+    hotmartUserEditedRef.current = false
   }
 
   function openLinkModal() {
@@ -1019,7 +1058,7 @@ export default function DistributorsBaaSPage() {
     let hotmartLinksPayload
     if (showHotmartLinksEditor) {
       try {
-        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows)
+        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows, { all: true })
       } catch (hmErr) {
         showToast(hmErr?.message || 'Revisa los links de pago Hotmart.')
         return
@@ -1337,7 +1376,10 @@ export default function DistributorsBaaSPage() {
       return depIds
     })
     setLinkReceiptFile(null)
-    setHotmartLinkRows(hydrateHotmartLinkRows(hydrated.hotmart_links))
+    setHotmartLinkRows(hydrateHotmartLinkRows(hydrated.hotmart_links, { all: true }))
+    hotmartUserEditedRef.current = Boolean(
+      Array.isArray(hydrated.hotmart_links) && hydrated.hotmart_links.length,
+    )
     setEditRechargeRow(hydrated)
     setLinkModalOpen(true)
   }
@@ -1369,7 +1411,7 @@ export default function DistributorsBaaSPage() {
     let hotmartLinksPayload
     if (showHotmartLinksEditor) {
       try {
-        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows)
+        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows, { all: true })
       } catch (hmErr) {
         showToast(hmErr?.message || 'Revisa los links de pago Hotmart.')
         return
@@ -2368,7 +2410,7 @@ export default function DistributorsBaaSPage() {
         depositAccountCurrencyCode={depositAccountCurrencyCode}
         showHotmartLinksEditor={showHotmartLinksEditor}
         hotmartLinkRows={hotmartLinkRows}
-        onHotmartLinksChange={setHotmartLinkRows}
+        onHotmartLinksChange={handleHotmartLinkRowsChange}
         linkReceiptFile={linkReceiptFile}
         onLinkReceiptFileChange={setLinkReceiptFile}
         generatingLink={generatingLink}

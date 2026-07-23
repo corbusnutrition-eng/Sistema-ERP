@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { ChevronLeft, LayoutList } from 'lucide-react'
+import { ChevronLeft, LayoutList, Link2 } from 'lucide-react'
 
 const LIST_ITEMS = [
   {
@@ -31,6 +31,13 @@ const LIST_ITEMS = [
     description:
       'Muestra la lista de todas las etiquetas creadas. Aquí puedes añadir, editar y eliminar tus etiquetas.',
     to: '/listas/etiquetas',
+  },
+  {
+    title: 'Links de pago',
+    description:
+      'Plantillas de URLs y montos por método de pago, módulo y producto. Se auto-completan en ventas y recargas BaaS.',
+    to: '/listas/links-pago',
+    icon: Link2,
   },
 ]
 
@@ -64,8 +71,9 @@ export default function ListsDashboard() {
           <li key={item.to} className="rounded-2xl border border-gray-200/90 bg-white p-6 shadow-sm">
             <Link
               to={item.to}
-              className="text-lg font-semibold text-blue-600 hover:text-blue-800 underline-offset-2 hover:underline"
+              className="text-lg font-semibold text-blue-600 hover:text-blue-800 underline-offset-2 hover:underline inline-flex items-center gap-2"
             >
+              {item.icon ? <item.icon size={18} className="text-blue-500 shrink-0" aria-hidden /> : null}
               {item.title}
             </Link>
             <p className="mt-2 text-sm text-gray-600 leading-relaxed">{item.description}</p>

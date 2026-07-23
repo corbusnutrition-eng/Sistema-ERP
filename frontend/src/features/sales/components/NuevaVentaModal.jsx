@@ -27,7 +27,10 @@ import HotmartLinksEditor from './HotmartLinksEditor'
 import {
   buildHotmartLinksPayload,
   emptyHotmartLinkRow,
+  fetchPaymentLinkTemplate,
+  firstSelectedHotmartMethodId,
   hydrateHotmartLinkRows,
+  resolveSaleProductIdForTemplate,
   selectedMethodsIncludeHotmart,
 } from '../../../utils/hotmartLinks'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
@@ -845,6 +848,8 @@ export default function NuevaVentaModal({
   const [selectedPaymentMethodIds, setSelectedPaymentMethodIds] = useState([])
   const [selectedDepositAccountIds, setSelectedDepositAccountIds] = useState([])
   const [hotmartLinkRows, setHotmartLinkRows] = useState([emptyHotmartLinkRow()])
+  const hotmartTemplateKeyRef = useRef('')
+  const hotmartUserEditedRef = useRef(false)
   /** Evita sobrescribir tasa al hidratar venta existente. */
   const skipCurrencyRateFetchRef = useRef(false)
 
@@ -2178,7 +2183,8 @@ export default function NuevaVentaModal({
     }
     setSelectedPaymentMethodIds(pmIds)
     setSelectedDepositAccountIds(depIds)
-    setHotmartLinkRows(hydrateHotmartLinkRows(cur.hotmart_links))
+    setHotmartLinkRows(hydrateHotmartLinkRows(cur.hotmart_links, { all: true }))
+    hotmartUserEditedRef.current = Boolean(Array.isArray(cur.hotmart_links) && cur.hotmart_links.length)
   }, [
     initialSale?.allowed_deposit_accounts,
     initialSale?.allowed_payment_methods,
@@ -2188,6 +2194,49 @@ export default function NuevaVentaModal({
     initialSale?.payment_method_id,
     paymentMethods,
   ])
+
+  useEffect(() => {
+    if (!showHotmartLinksEditor) return undefined
+    const pmId = firstSelectedHotmartMethodId(selectedPaymentMethodIds, salePaymentMethodOptions)
+    if (!pmId) return undefined
+    const productId = resolveSaleProductIdForTemplate(lineItems, form, salesInventoryMetaByKey)
+    if (!productId) return undefined
+
+    const templateKey = `${pmId}|${productId}|VENTAS`
+    if (templateKey !== hotmartTemplateKeyRef.current) {
+      hotmartTemplateKeyRef.current = templateKey
+      hotmartUserEditedRef.current = false
+    }
+    if (hotmartUserEditedRef.current) return undefined
+
+    const ac = new AbortController()
+    fetchPaymentLinkTemplate(api, {
+      paymentMethodId: pmId,
+      moduleType: 'VENTAS',
+      productId,
+      signal: ac.signal,
+    })
+      .then((tpl) => {
+        if (!tpl?.links?.length) return
+        setHotmartLinkRows(hydrateHotmartLinkRows(tpl.links, { all: true }))
+      })
+      .catch((err) => {
+        if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') return
+      })
+    return () => ac.abort()
+  }, [
+    showHotmartLinksEditor,
+    selectedPaymentMethodIds,
+    salePaymentMethodOptions,
+    lineItems,
+    form,
+    salesInventoryMetaByKey,
+  ])
+
+  const handleHotmartLinkRowsChange = useCallback((rows) => {
+    hotmartUserEditedRef.current = true
+    setHotmartLinkRows(rows)
+  }, [])
 
   useEffect(() => {
     if (saleIsViewOnly || isLegacyPending) return
@@ -2769,7 +2818,7 @@ export default function NuevaVentaModal({
     let hotmartLinksPayload
     if (showHotmartLinksEditor) {
       try {
-        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows)
+        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows, { all: true })
       } catch (hmErr) {
         setError(hmErr?.message || 'Revisa los links de pago Hotmart.')
         return
@@ -4148,7 +4197,7 @@ export default function NuevaVentaModal({
               depositAccountCurrencyCode={depositAccountCurrencyCode}
               showHotmartLinksEditor={showHotmartLinksEditor}
               hotmartLinkRows={hotmartLinkRows}
-              onHotmartLinksChange={setHotmartLinkRows}
+              onHotmartLinksChange={handleHotmartLinkRowsChange}
               fifoCpCredPeekByPk={fifoCpCredPeekByPk}
               linkedPayments={linkedPayments}
               onOpenLinkedPayment={handleOpenLinkedPayment}
@@ -4602,7 +4651,7 @@ export default function NuevaVentaModal({
           {showHotmartLinksEditor ? (
             <HotmartLinksEditor
               rows={hotmartLinkRows}
-              onChange={setHotmartLinkRows}
+              onChange={handleHotmartLinkRowsChange}
               disabled={submitting}
               currencyCode={saleCurrencyCode}
             />
