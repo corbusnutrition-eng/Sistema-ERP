@@ -8,6 +8,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 from app.schemas.client_product_prices import PortalAssignedPackagePrice
 from app.schemas.distributors import DistributorTreeNode
+from app.schemas.hotmart_links import HotmartLinkItem
 
 
 class PortalCheckoutLinePublic(BaseModel):
@@ -135,6 +136,7 @@ class PortalOutstandingSale(BaseModel):
         default_factory=list,
         description="Pagos del cliente ligados a esta venta, más recientes primero.",
     )
+    hotmart_links: list[HotmartLinkItem] = Field(default_factory=list)
 
     @field_validator("status", mode="before")
     @classmethod
@@ -291,6 +293,7 @@ class PortalWalletRechargeItem(BaseModel):
         default=False,
         description="True si el cliente creó la solicitud desde el portal (editable/cancelable por él).",
     )
+    hotmart_links: list[HotmartLinkItem] = Field(default_factory=list)
 
 
 class PortalNetworkLevelCount(BaseModel):

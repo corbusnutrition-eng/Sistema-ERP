@@ -124,6 +124,8 @@ class Sale(Base):
     allowed_payment_methods: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
     #: IDs de cuentas de depósito permitidas para abonos desde el portal.
     allowed_deposit_accounts: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
+    #: Enlaces de pago Hotmart: [{ "url": "https://pay.hotmart.com/...", "amount": 100.0 }]
+    hotmart_links: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
     #: Historial de abonos recibidos desde el portal: lista de {occurred_at, amount, currency, status, receipt_url}.
     payment_events: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
     #: Caducidad de la reserva temporal para ``pending`` (UTC).

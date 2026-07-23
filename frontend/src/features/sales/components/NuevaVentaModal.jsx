@@ -23,6 +23,13 @@ import {
 } from '../saleCatalog'
 import SaleQBTagsCreatable from './SaleQBTagsCreatable'
 import NuevaVentaInvoiceSection from './NuevaVentaInvoiceSection'
+import HotmartLinksEditor from './HotmartLinksEditor'
+import {
+  buildHotmartLinksPayload,
+  emptyHotmartLinkRow,
+  hydrateHotmartLinkRows,
+  selectedMethodsIncludeHotmart,
+} from '../../../utils/hotmartLinks'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
 import OcrSecurityBadges, {
   pickOcrSecurityFlags,
@@ -837,6 +844,7 @@ export default function NuevaVentaModal({
   const [depositAccounts, setDepositAccounts] = useState([])
   const [selectedPaymentMethodIds, setSelectedPaymentMethodIds] = useState([])
   const [selectedDepositAccountIds, setSelectedDepositAccountIds] = useState([])
+  const [hotmartLinkRows, setHotmartLinkRows] = useState([emptyHotmartLinkRow()])
   /** Evita sobrescribir tasa al hidratar venta existente. */
   const skipCurrencyRateFetchRef = useRef(false)
 
@@ -1745,6 +1753,11 @@ export default function NuevaVentaModal({
     [paymentMethods],
   )
 
+  const showHotmartLinksEditor = useMemo(
+    () => selectedMethodsIncludeHotmart(selectedPaymentMethodIds, salePaymentMethodOptions),
+    [selectedPaymentMethodIds, salePaymentMethodOptions],
+  )
+
   const depositAccountsById = useMemo(
     () => Object.fromEntries(depositAccounts.map((a) => [Number(a.id), a])),
     [depositAccounts],
@@ -2165,10 +2178,12 @@ export default function NuevaVentaModal({
     }
     setSelectedPaymentMethodIds(pmIds)
     setSelectedDepositAccountIds(depIds)
+    setHotmartLinkRows(hydrateHotmartLinkRows(cur.hotmart_links))
   }, [
     initialSale?.allowed_deposit_accounts,
     initialSale?.allowed_payment_methods,
     initialSale?.deposit_account_id,
+    initialSale?.hotmart_links,
     initialSale?.id,
     initialSale?.payment_method_id,
     paymentMethods,
@@ -2750,11 +2765,31 @@ export default function NuevaVentaModal({
     const allowedDepositIdsList = selectedDepositAccountIds
       .map((id) => Number(id))
       .filter((n) => Number.isFinite(n) && n >= 1)
+
+    let hotmartLinksPayload
+    if (showHotmartLinksEditor) {
+      try {
+        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows)
+      } catch (hmErr) {
+        setError(hmErr?.message || 'Revisa los links de pago Hotmart.')
+        return
+      }
+    } else if (
+      isEditing &&
+      Array.isArray(initialSale?.hotmart_links) &&
+      initialSale.hotmart_links.length
+    ) {
+      hotmartLinksPayload = null
+    }
+
     const paymentPortalFields =
-      allowedPaymentMethodNames.length || allowedDepositIdsList.length
+      allowedPaymentMethodNames.length ||
+      allowedDepositIdsList.length ||
+      hotmartLinksPayload !== undefined
         ? {
             ...(allowedPaymentMethodNames.length ? { allowed_payment_methods: allowedPaymentMethodNames } : {}),
             ...(allowedDepositIdsList.length ? { allowed_deposit_accounts: allowedDepositIdsList } : {}),
+            ...(hotmartLinksPayload !== undefined ? { hotmart_links: hotmartLinksPayload } : {}),
           }
         : {}
 
@@ -2770,7 +2805,7 @@ export default function NuevaVentaModal({
         const fd = new FormData()
         Object.entries(rest).forEach(([k, v]) => {
           if (v === undefined || v === null) return
-          if (k === 'allowed_payment_methods' || k === 'allowed_deposit_accounts') {
+          if (k === 'allowed_payment_methods' || k === 'allowed_deposit_accounts' || k === 'hotmart_links') {
             fd.append(k, JSON.stringify(v))
             return
           }
@@ -4111,6 +4146,9 @@ export default function NuevaVentaModal({
               toggleDepositAccountId={toggleDepositAccountId}
               depositCurrencyMismatch={depositCurrencyMismatch}
               depositAccountCurrencyCode={depositAccountCurrencyCode}
+              showHotmartLinksEditor={showHotmartLinksEditor}
+              hotmartLinkRows={hotmartLinkRows}
+              onHotmartLinksChange={setHotmartLinkRows}
               fifoCpCredPeekByPk={fifoCpCredPeekByPk}
               linkedPayments={linkedPayments}
               onOpenLinkedPayment={handleOpenLinkedPayment}
@@ -4560,6 +4598,15 @@ export default function NuevaVentaModal({
             )}
           </div>
           )}
+
+          {showHotmartLinksEditor ? (
+            <HotmartLinksEditor
+              rows={hotmartLinkRows}
+              onChange={setHotmartLinkRows}
+              disabled={submitting}
+              currencyCode={saleCurrencyCode}
+            />
+          ) : null}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Moneda de cobro</label>

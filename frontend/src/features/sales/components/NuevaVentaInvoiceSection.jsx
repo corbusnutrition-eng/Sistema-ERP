@@ -7,6 +7,12 @@ import { SALES_CURRENCIES } from '../salesCurrencies'
 import { invoiceLineCredentialKind } from '../invoiceLineCredentials'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
 import PaymentMethodsDepositCheckboxes from './PaymentMethodsDepositCheckboxes'
+import HotmartLinksEditor from './HotmartLinksEditor'
+import {
+  buildHotmartLinksPayload,
+  hydrateHotmartLinkRows,
+  selectedMethodsIncludeHotmart,
+} from '../../../utils/hotmartLinks'
 import { salesApiOrigin } from '../saleTableHelpers'
 
 function CurrencyFlag({ code }) {
@@ -86,6 +92,9 @@ export default function NuevaVentaInvoiceSection(props) {
     toggleDepositAccountId,
     depositCurrencyMismatch,
     depositAccountCurrencyCode,
+    showHotmartLinksEditor = false,
+    hotmartLinkRows = [],
+    onHotmartLinksChange,
     fifoCpCredPeekByPk = {},
     linkedPayments = [],
     onOpenLinkedPayment,
@@ -469,6 +478,15 @@ export default function NuevaVentaInvoiceSection(props) {
             saleCurrencyCode={saleCurrencyCode}
           />
         )}
+        {showHotmartLinksEditor ? (
+          <HotmartLinksEditor
+            rows={hotmartLinkRows}
+            onChange={onHotmartLinksChange}
+            disabled={submitting}
+            currencyCode={saleCurrencyCode}
+            className="mt-3"
+          />
+        ) : null}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">Moneda de cobro</label>
           <SearchableSelect

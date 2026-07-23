@@ -31,7 +31,9 @@ from app.schemas.checkout_public import (
     CheckoutLinePublic,
     CheckoutPayResponse,
     CheckoutPaymentMethodOption,
+    HotmartLinkPublic,
 )
+from app.schemas.hotmart_links import hotmart_links_from_model
 from app.schemas.sales import SaleInvoiceLineItem
 from app.services.sale_accounting_sync import commit_db_or_rollback, sync_sale_accounting_ledgers
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
@@ -397,6 +399,10 @@ def checkout_detail(request: Request, payment_token: uuid_pkg.UUID, db: DbDep) -
         deposit_accounts=deposit_rows,
         allowed_payment_methods=[str(x).strip() for x in pm_labels if str(x).strip()],
         allowed_deposit_accounts=dep_ids,
+        hotmart_links=[
+            HotmartLinkPublic(url=x.url, amount=x.amount)
+            for x in hotmart_links_from_model(getattr(sale, "hotmart_links", None))
+        ],
     )
 
 

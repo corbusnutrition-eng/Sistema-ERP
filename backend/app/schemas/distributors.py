@@ -11,6 +11,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, compu
 from app.currency_utils import normalize_currency_code
 from app.models.user import UserRole
 from app.schemas.client_product_prices import ClientProductPriceItem
+from app.schemas.hotmart_links import HotmartLinkItem
 
 
 def _coerce_optional_id_list(v: object) -> Optional[list[int]]:
@@ -458,6 +459,10 @@ class WalletRechargeRequestAdminRow(BaseModel):
         default_factory=list,
         description="Historial de abonos reconocidos y comprobante en revisión vinculados a esta recarga.",
     )
+    hotmart_links: list[HotmartLinkItem] = Field(
+        default_factory=list,
+        description="Enlaces de pago Hotmart asociados a esta solicitud.",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -626,6 +631,11 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
         ge=0,
         le=100,
         description="Solo admin: marcar 0 cuando el OCR no leyó monto (habilita depósito cero en portal).",
+    )
+    hotmart_links: Optional[list[HotmartLinkItem]] = Field(
+        default=None,
+        validation_alias=AliasChoices("hotmart_links", "payment_metadata"),
+        description="Enlaces de pago Hotmart asociados a la solicitud.",
     )
 
     @field_validator("admin_note", mode="before")
@@ -848,6 +858,11 @@ class GenerateRechargeLinkPayload(BaseModel):
             "sale_prices",
         ),
         description="Precios de venta personalizados (solo productos crédito por pantalla) para el distribuidor.",
+    )
+    hotmart_links: Optional[list[HotmartLinkItem]] = Field(
+        default=None,
+        validation_alias=AliasChoices("hotmart_links", "payment_metadata"),
+        description="Enlaces de pago Hotmart: [{ url, amount }].",
     )
 
     @field_validator("deposit_amount_usd", mode="before")

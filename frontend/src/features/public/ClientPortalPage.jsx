@@ -40,6 +40,8 @@ import {
 import PortalManualAmountField from './PortalManualAmountField'
 import ClientRechargeRequestModal from './ClientRechargeRequestModal'
 import PortalCustomSelect from './PortalCustomSelect'
+import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
+import { portalMethodLabelIsHotmart } from '../../utils/hotmartLinks'
 import WalletHistoryModal from './WalletHistoryModal'
 import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
@@ -6432,6 +6434,12 @@ function ClientPortalPageInner() {
                       : null}
                     </section>
 
+                    {portalMethodLabelIsHotmart(rechargeForm.method || methodForDeps, rechargePaymentMethods) &&
+                    Array.isArray(fr.hotmart_links) &&
+                    fr.hotmart_links.length > 0 ? (
+                      <PortalHotmartLinksPanel links={fr.hotmart_links} currency={cur} />
+                    ) : null}
+
                     {needsDepositPickFeat ? (
                       <section className={PORTAL_PAYMENT_SHELL_CLASS}>
                         <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
@@ -7024,6 +7032,12 @@ function ClientPortalPageInner() {
                             ) : null}
                           </section>
                         )}
+
+                        {portalMethodLabelIsHotmart(methodId, pmList) &&
+                        Array.isArray(sale.hotmart_links) &&
+                        sale.hotmart_links.length > 0 ? (
+                          <PortalHotmartLinksPanel links={sale.hotmart_links} currency={saleCurrency} />
+                        ) : null}
 
                         {!paysOnlyWithCredit && needsDepositPick ? (
                           <section className={PORTAL_PAYMENT_SHELL_CLASS}>

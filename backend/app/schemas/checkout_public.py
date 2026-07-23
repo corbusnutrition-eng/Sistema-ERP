@@ -9,6 +9,11 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class HotmartLinkPublic(BaseModel):
+    url: str
+    amount: float = Field(..., ge=0)
+
+
 class CheckoutPaymentMethodOption(BaseModel):
     id: int
     name: str
@@ -56,6 +61,7 @@ class CheckoutDetailResponse(BaseModel):
     #: Espejo ERP (solo informativo / cliente avanzado).
     allowed_payment_methods: list[str] = Field(default_factory=list)
     allowed_deposit_accounts: list[int] = Field(default_factory=list)
+    hotmart_links: list[HotmartLinkPublic] = Field(default_factory=list)
 
 class CheckoutPayResponse(BaseModel):
     status: str

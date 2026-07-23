@@ -78,5 +78,7 @@ class WalletRechargeRequest(Base):
     is_client_initiated: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
+    #: Enlaces de pago Hotmart: [{ "url": "https://pay.hotmart.com/...", "amount": 100.0 }]
+    hotmart_links: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
 
     client: Mapped["Client"] = relationship(back_populates="wallet_recharge_requests")

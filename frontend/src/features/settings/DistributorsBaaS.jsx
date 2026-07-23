@@ -40,6 +40,12 @@ import {
   TABLE_ACTIONS_COLUMN_MIN_WIDTH,
 } from '../../hooks/useTableResize'
 import NewRechargeModal, { normalizeClienteDesdeWebhook, newRechargeLineRow } from './NewRechargeModal'
+import {
+  buildHotmartLinksPayload,
+  emptyHotmartLinkRow,
+  hydrateHotmartLinkRows,
+  selectedMethodsIncludeHotmart,
+} from '../../utils/hotmartLinks'
 import UpdateClientPricesModal from './UpdateClientPricesModal'
 import { currencyFromLastSelectedDepositIds } from '../../lib/accountCurrencyCascade'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
@@ -340,6 +346,7 @@ export default function DistributorsBaaSPage() {
   const [depositAccounts, setDepositAccounts] = useState([])
   const [selectedPaymentMethodIds, setSelectedPaymentMethodIds] = useState([])
   const [selectedDepositAccountIds, setSelectedDepositAccountIds] = useState([])
+  const [hotmartLinkRows, setHotmartLinkRows] = useState([emptyHotmartLinkRow()])
 
   const [editRechargeRow, setEditRechargeRow] = useState(null)
 
@@ -739,6 +746,11 @@ export default function DistributorsBaaSPage() {
     })
   }, [salePaymentMethodOptions, filteredDepositAccountOptionsByMethodId])
 
+  const showHotmartLinksEditor = useMemo(
+    () => selectedMethodsIncludeHotmart(selectedPaymentMethodIds, filteredSalePaymentMethodOptions),
+    [selectedPaymentMethodIds, filteredSalePaymentMethodOptions],
+  )
+
   const depositAccountCurrencyCode = useMemo(() => {
     const sel = Array.isArray(selectedDepositAccountIds) ? selectedDepositAccountIds : []
     const accs = Array.isArray(depositAccounts) ? depositAccounts : []
@@ -848,6 +860,7 @@ export default function DistributorsBaaSPage() {
     setSelectedPaymentMethodIds([])
     setSelectedDepositAccountIds([])
     setLinkReceiptFile(null)
+    setHotmartLinkRows([emptyHotmartLinkRow()])
   }
 
   function openLinkModal() {
@@ -1003,6 +1016,16 @@ export default function DistributorsBaaSPage() {
     }
     const depSel = selectedDepositAccountIds.map(Number).filter(Number.isFinite)
 
+    let hotmartLinksPayload
+    if (showHotmartLinksEditor) {
+      try {
+        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows)
+      } catch (hmErr) {
+        showToast(hmErr?.message || 'Revisa los links de pago Hotmart.')
+        return
+      }
+    }
+
     const cur = normalizeCurrencyCode(builtCur ?? rechargeBillingCurrency, 'USD')
     const xrFromModal = Number(extra?.rechargeExchangeRate)
     const xrImplicit =
@@ -1063,6 +1086,7 @@ export default function DistributorsBaaSPage() {
         ...(Array.isArray(extra?.productPrices) && extra.productPrices.length ?
           { client_product_prices: extra.productPrices }
         : {}),
+        ...(hotmartLinksPayload ? { hotmart_links: hotmartLinksPayload } : {}),
       }
       const { data: linkData } = await api.post('/api/v1/distributors/generate-recharge-link', body)
       const portalPath = String(linkData?.portal_path ?? '').trim()
@@ -1313,6 +1337,7 @@ export default function DistributorsBaaSPage() {
       return depIds
     })
     setLinkReceiptFile(null)
+    setHotmartLinkRows(hydrateHotmartLinkRows(hydrated.hotmart_links))
     setEditRechargeRow(hydrated)
     setLinkModalOpen(true)
   }
@@ -1340,6 +1365,21 @@ export default function DistributorsBaaSPage() {
       return
     }
     const depSel = selectedDepositAccountIds.map(Number).filter(Number.isFinite)
+
+    let hotmartLinksPayload
+    if (showHotmartLinksEditor) {
+      try {
+        hotmartLinksPayload = buildHotmartLinksPayload(hotmartLinkRows)
+      } catch (hmErr) {
+        showToast(hmErr?.message || 'Revisa los links de pago Hotmart.')
+        return
+      }
+    } else if (
+      Array.isArray(editRechargeRow?.hotmart_links) &&
+      editRechargeRow.hotmart_links.length
+    ) {
+      hotmartLinksPayload = null
+    }
 
     const cur = normalizeCurrencyCode(builtCur ?? rechargeBillingCurrency, 'USD')
     const xrFromModal = Number(extra?.rechargeExchangeRate)
@@ -1412,6 +1452,7 @@ export default function DistributorsBaaSPage() {
         : wasOcrWithoutAmount ?
           { ai_confidence_score: 100 }
         : {}),
+        ...(hotmartLinksPayload !== undefined ? { hotmart_links: hotmartLinksPayload } : {}),
       }
       const { data } = await api.patch(`/api/v1/distributors/recharge-requests/${rid}`, body)
       closeLinkModal()
@@ -2325,6 +2366,9 @@ export default function DistributorsBaaSPage() {
         toggleDepositAccountId={toggleDepositAccountId}
         depositCurrencyMismatch={depositCurrencyMismatch}
         depositAccountCurrencyCode={depositAccountCurrencyCode}
+        showHotmartLinksEditor={showHotmartLinksEditor}
+        hotmartLinkRows={hotmartLinkRows}
+        onHotmartLinksChange={setHotmartLinkRows}
         linkReceiptFile={linkReceiptFile}
         onLinkReceiptFileChange={setLinkReceiptFile}
         generatingLink={generatingLink}

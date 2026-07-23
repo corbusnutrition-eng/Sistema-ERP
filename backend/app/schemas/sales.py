@@ -18,6 +18,7 @@ from pydantic import (
 )
 
 from app.currency_utils import normalize_currency_code
+from app.schemas.hotmart_links import HotmartLinkItem
 
 
 def _dedupe_int_ids(ids: list[int]) -> list[int]:
@@ -290,6 +291,10 @@ class SaleCreate(BaseModel):
     allowed_payment_methods: Optional[list[str]] = Field(default=None)
     #: Cuentas de depósito (IDs) habilitadas para pagos al portal para esta venta.
     allowed_deposit_accounts: Optional[list[int]] = Field(default=None)
+    hotmart_links: Optional[list[HotmartLinkItem]] = Field(
+        default=None,
+        description="Enlaces de pago Hotmart asociados a esta venta.",
+    )
     notes: Optional[str] = Field(default=None, max_length=4000)
     tag_ids: list[int] = Field(default_factory=list, description="Etiquetas de venta (tabla sale_tags).")
 
@@ -549,6 +554,7 @@ class SaleUpdate(BaseModel):
     deposit_account_id: Optional[int] = None
     allowed_payment_methods: Optional[list[str]] = None
     allowed_deposit_accounts: Optional[list[int]] = None
+    hotmart_links: Optional[list[HotmartLinkItem]] = None
     currency: Optional[str] = Field(default=None, min_length=3, max_length=10)
     exchange_rate: Optional[float] = Field(default=None, gt=0)
     local_amount: Optional[Decimal] = Field(default=None, gt=0, decimal_places=4)
@@ -839,6 +845,10 @@ class SaleResponse(BaseModel):
     allowed_deposit_accounts: list[int] = Field(
         default_factory=list,
         description="IDs de cuentas de depósito habilitadas para el cliente (portal).",
+    )
+    hotmart_links: list[HotmartLinkItem] = Field(
+        default_factory=list,
+        description="Enlaces de pago Hotmart asociados a esta venta.",
     )
 
     @field_validator("allowed_payment_methods", mode="before")

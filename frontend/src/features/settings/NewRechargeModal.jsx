@@ -13,6 +13,7 @@ import { financialSummaryFromRechargeLinkedPayments } from '../../lib/financialS
 import { salesApiOrigin } from '../sales/saleTableHelpers'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import PaymentMethodsDepositCheckboxes from '../sales/components/PaymentMethodsDepositCheckboxes'
+import HotmartLinksEditor from '../sales/components/HotmartLinksEditor'
 import { SALES_CURRENCIES, salesCurrencyDefaultRate } from '../sales/salesCurrencies'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
 /** Fila nueva para la tabla multilinea (recarga BaaS; moneda unificada). */
@@ -130,6 +131,9 @@ export default function NewRechargeModal({
   toggleDepositAccountId,
   depositCurrencyMismatch = false,
   depositAccountCurrencyCode = '',
+  showHotmartLinksEditor = false,
+  hotmartLinkRows = [],
+  onHotmartLinksChange,
   linkReceiptFile,
   onLinkReceiptFileChange,
   generatingLink,
@@ -1363,6 +1367,15 @@ export default function NewRechargeModal({
                         titleHint="(obligatorio · portal)"
                         footerNote={`Solo se muestran cuentas en ${billingCode}, alineadas con la moneda de la tabla.`}
                       />
+                      {showHotmartLinksEditor ? (
+                        <HotmartLinksEditor
+                          rows={hotmartLinkRows}
+                          onChange={onHotmartLinksChange}
+                          disabled={generatingLink}
+                          currencyCode={billingCode}
+                          className="mt-3"
+                        />
+                      ) : null}
                     </>
                   : null}
                 </aside>

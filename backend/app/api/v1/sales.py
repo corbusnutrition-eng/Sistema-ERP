@@ -47,6 +47,7 @@ from app.models.sale import Sale, SaleStatus
 from app.models.sale_transaction_tag import SaleTransactionTag
 from app.models.transaction_class import TransactionClass
 from app.schemas.client import ClientSalePickerRow
+from app.schemas.hotmart_links import hotmart_links_from_model
 from app.schemas.portal_public import PortalInstantActivationResponse
 from app.schemas.client_payments import VoidTransactionBody
 from app.schemas.sales import (
@@ -831,6 +832,15 @@ def _resolve_deposit_account_id(db: Session, deposit_account_id: Optional[int]) 
             detail="La cuenta de depósito debe ser de efectivo y equivalentes (p. ej. Banco).",
         )
     return deposit_account_id
+
+
+def _hotmart_links_storage(raw: Any) -> Optional[list]:
+    from app.schemas.hotmart_links import normalize_hotmart_links_list
+
+    try:
+        return normalize_hotmart_links_list(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 def _normalize_allowed_payment_method_labels(db: Session, labels: Optional[list[Any]]) -> list[str]:
@@ -2547,6 +2557,10 @@ def _parse_sale_create_form(db: Session, form_data: Any) -> SaleCreate:
     if da_allow is not None and da_allow != "":
         flat["allowed_deposit_accounts"] = json.loads(da_allow) if isinstance(da_allow, str) else da_allow
 
+    hm_links = form_data.get("hotmart_links")
+    if hm_links is not None and hm_links != "":
+        flat["hotmart_links"] = json.loads(hm_links) if isinstance(hm_links, str) else hm_links
+
     return SaleCreate.model_validate(_prepare_sale_create_payload(db, flat))
 
 
@@ -2938,6 +2952,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
             invoice_lines=inv_for_sale,
             allowed_payment_methods=apm or None,
             allowed_deposit_accounts=ada or None,
+            hotmart_links=_hotmart_links_storage(getattr(payload, "hotmart_links", None)),
         )
         db.add(sale_mx)
         db.flush()  # obtener sale_mx.id antes de vincular bodega
@@ -3092,6 +3107,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
             invoice_lines=inv_for_sale_ss,
             allowed_payment_methods=apm or None,
             allowed_deposit_accounts=ada or None,
+            hotmart_links=_hotmart_links_storage(getattr(payload, "hotmart_links", None)),
         )
         db.add(sale)
         db.flush()  # obtener sale.id antes de vincular bodega
@@ -3178,6 +3194,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
         invoice_lines=inv_json,
         allowed_payment_methods=apm or None,
         allowed_deposit_accounts=ada or None,
+        hotmart_links=_hotmart_links_storage(getattr(payload, "hotmart_links", None)),
     )
     db.add(sale)
     db.flush()
@@ -4097,6 +4114,8 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
         sale.allowed_deposit_accounts = (
             (_normalize_allowed_deposit_account_ids(db, list(vals_da)) if vals_da else []) or None
         )
+    if "hotmart_links" in explicit_keys:
+        sale.hotmart_links = _hotmart_links_storage(raw.get("hotmart_links"))
 
     if explicit_keys & {
         "payment_method_id",
@@ -5405,6 +5424,7 @@ def _build_response(
         deposit_account_id=sale.deposit_account_id,
         allowed_payment_methods=apm_r,
         allowed_deposit_accounts=ada_r,
+        hotmart_links=hotmart_links_from_model(getattr(sale, "hotmart_links", None)),
         inventory_channel=sale.inventory_channel,
         inventory_provider=sale.inventory_provider,
         inventory_package=sale.inventory_package,

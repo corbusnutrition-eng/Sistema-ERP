@@ -2,6 +2,8 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import PortalCustomSelect from './PortalCustomSelect'
+import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
+import { portalMethodLabelIsHotmart } from '../../utils/hotmartLinks'
 
 function publicApi() {
   return axios.create({
@@ -199,6 +201,11 @@ export default function CheckoutPage() {
         label: String(m.name || `Método #${m.id}`),
       })),
     [detail?.payment_methods],
+  )
+
+  const selectedMethodIsHotmart = useMemo(
+    () => portalMethodLabelIsHotmart(methodId, detail?.payment_methods),
+    [detail?.payment_methods, methodId],
   )
 
   const depositAccountOptions = useMemo(
@@ -508,6 +515,10 @@ export default function CheckoutPage() {
                 </p>
               ) : null}
             </section>
+
+            {selectedMethodIsHotmart && (detail?.hotmart_links || []).length > 0 ? (
+              <PortalHotmartLinksPanel links={detail.hotmart_links} currency={detail?.currency || 'USD'} />
+            ) : null}
 
             {(detail?.allowed_deposit_accounts || []).length > 0 ? (
               <section

@@ -153,6 +153,7 @@ from app.services.client_payment_service import (
     subtract_client_credit_balance,
 )
 from app.schemas.distributors import WalletRechargeRequestRead
+from app.schemas.hotmart_links import hotmart_links_from_model
 from app.wallet_recharge_helpers import (
     OPEN_PORTAL_STATUSES,
     REQ_STATUS_APPROVED,
@@ -425,6 +426,7 @@ def _portal_sanitize_outstanding_sale(row: PortalOutstandingSale) -> PortalOutst
             payment_methods_tree=list(row.payment_methods_tree or []),
             payment_events=_portal_sanitize_payment_events(list(row.payment_events or [])),
             client_payments=_portal_sanitize_client_payments(list(row.client_payments or [])),
+            hotmart_links=list(getattr(row, "hotmart_links", None) or []),
         )
     except Exception as exc:
         logger.warning("portal sale sanitize fallback sale_id=%s: %s", getattr(row, "sale_id", "?"), exc)
@@ -891,6 +893,7 @@ def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple
         payment_methods_tree=list(pm_tree or []),
         payment_events=list(payment_events or []),
         client_payments=list(client_payments or []),
+        hotmart_links=hotmart_links_from_model(getattr(s, "hotmart_links", None)),
     )
     return _portal_sanitize_outstanding_sale(row), balance_due_out
 
@@ -1444,6 +1447,7 @@ def _portal_wallet_recharge_item_from_request(
         payment_methods_tree=pm_tree,
         payment_methods_display=pm_disp,
         is_client_initiated=bool(getattr(req, "is_client_initiated", False)),
+        hotmart_links=hotmart_links_from_model(getattr(req, "hotmart_links", None)),
     )
 
 

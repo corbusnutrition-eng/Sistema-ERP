@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.account_constants import is_liquid_deposit_account
 from app.currency_utils import normalize_currency_code
+from app.schemas.hotmart_links import hotmart_links_from_model, normalize_hotmart_links_list
 from app.api.v1.dependencies import require_any_permission, require_permission
 from app.permissions import (
     BAAS_DISTRIBUTORS_EDIT,
@@ -945,6 +946,7 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
         is_manually_edited=bool(getattr(r, "is_manually_edited", False)),
         ai_confidence_score=getattr(r, "ai_confidence_score", None),
         linked_payments=_linked_wallet_payments_admin(db, r),
+        hotmart_links=hotmart_links_from_model(getattr(r, "hotmart_links", None)),
     )
 
 
@@ -1199,6 +1201,12 @@ def patch_wallet_recharge_request_fields(
 
     if payload.ai_confidence_score is not None:
         req.ai_confidence_score = int(payload.ai_confidence_score)
+
+    if payload.hotmart_links is not None:
+        try:
+            req.hotmart_links = normalize_hotmart_links_list(payload.hotmart_links)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     declared_updated = False
     if payload.portal_declared_payment_amount is not None:
@@ -1663,6 +1671,7 @@ def generate_wallet_recharge_link(
             recharge_detail_lines=lines_json,
             declared_deposit_usd=dep_usd,
             portal_declared_payment_amount=portal_declared,
+            hotmart_links=normalize_hotmart_links_list(payload.hotmart_links),
         )
         db.add(req)
         db.flush()
