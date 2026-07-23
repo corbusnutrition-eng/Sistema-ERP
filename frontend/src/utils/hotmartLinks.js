@@ -14,17 +14,21 @@ export function emptyHotmartLinkRow() {
 
 export function hydrateHotmartLinkRows(raw) {
   if (!Array.isArray(raw) || !raw.length) return [emptyHotmartLinkRow()]
-  return raw.map((item, index) => ({
-    id: `hm-${index}-${Date.now()}`,
-    url: String(item?.url ?? ''),
-    amount: item?.amount != null && item?.amount !== '' ? String(item.amount) : '',
-  }))
+  const item = raw[0]
+  return [
+    {
+      id: `hm-0-${Date.now()}`,
+      url: String(item?.url ?? ''),
+      amount: item?.amount != null && item?.amount !== '' ? String(item.amount) : '',
+    },
+  ]
 }
 
-/** Valida filas del editor y devuelve payload API o `undefined` si no hay links. */
+/** Valida la fila del editor y devuelve payload API `[{ url, amount }]` o `undefined`. */
 export function buildHotmartLinksPayload(rows) {
   const out = []
-  for (const row of rows || []) {
+  const list = Array.isArray(rows) && rows.length ? [rows[0]] : []
+  for (const row of list) {
     const url = String(row?.url ?? '').trim()
     const amtRaw = String(row?.amount ?? '').trim().replace(',', '.')
     const hasUrl = url.length > 0
