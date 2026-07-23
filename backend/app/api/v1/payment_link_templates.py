@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,10 +19,12 @@ from app.schemas.payment_link_templates import (
     PaymentLinkTemplateUpdate,
     links_storage_from_payload,
 )
+from app.services.payment_link_template_propagation import propagate_payment_link_template
 
 router = APIRouter(prefix="/payment-link-templates", tags=["payment-link-templates"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+logger = logging.getLogger(__name__)
 
 
 def _row_to_read(row: PaymentLinkTemplate) -> PaymentLinkTemplateRead:
@@ -150,6 +153,13 @@ def create_payment_link_template(payload: PaymentLinkTemplateCreate, db: DbDep, 
             detail="Ya existe una plantilla para esta combinación.",
         ) from exc
     db.refresh(row)
+    try:
+        propagate_payment_link_template(db, row)
+    except Exception:
+        logger.exception(
+            "payment_link_template propagate failed after create id=%s",
+            getattr(row, "id", "?"),
+        )
     row = (
         db.query(PaymentLinkTemplate)
         .options(joinedload(PaymentLinkTemplate.payment_method), joinedload(PaymentLinkTemplate.product))
@@ -211,6 +221,13 @@ def update_payment_link_template(
             detail="Conflicto al guardar la plantilla.",
         ) from exc
     db.refresh(row)
+    try:
+        propagate_payment_link_template(db, row)
+    except Exception:
+        logger.exception(
+            "payment_link_template propagate failed after update id=%s",
+            getattr(row, "id", "?"),
+        )
     row = (
         db.query(PaymentLinkTemplate)
         .options(joinedload(PaymentLinkTemplate.payment_method), joinedload(PaymentLinkTemplate.product))
