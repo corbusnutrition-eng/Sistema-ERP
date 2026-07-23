@@ -46,33 +46,49 @@ def configure_cloudinary() -> None:
 
 def _receipt_suffix(content_type: str, filename: str | None) -> str:
     suffix = Path(filename or "receipt").suffix.lower()
-    if suffix not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf"):
-        suffix = ".pdf" if content_type == "application/pdf" else ".jpg"
+    allowed = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf", ".mp4", ".webm", ".mov", ".mpeg", ".mpg")
+    if suffix not in allowed:
+        if content_type == "application/pdf":
+            suffix = ".pdf"
+        elif content_type.startswith("video/"):
+            suffix = ".mp4"
+        else:
+            suffix = ".jpg"
     return suffix
 
 
-def upload_comprobante(content: bytes, *, content_type: str, filename: str | None = None) -> str:
+def _media_type_from_upload(content_type: str, cloudinary_resource_type: str | None) -> str:
+    ct = (content_type or "").split(";")[0].strip().lower()
+    rt = (cloudinary_resource_type or "").strip().lower()
+    if ct == "application/pdf" or rt == "raw":
+        return "pdf"
+    if ct.startswith("video/") or rt == "video":
+        return "video"
+    return "image"
+
+
+def upload_comprobante_meta(content: bytes, *, content_type: str, filename: str | None = None) -> tuple[str, str]:
     """
-    Sube el comprobante a Cloudinary y devuelve la URL HTTPS pública (``secure_url``).
-    Si Cloudinary falla, lanza HTTP 500 (sin respaldo en disco local).
+    Sube el archivo a Cloudinary con ``resource_type="auto"`` (imagen, video o PDF).
+    Devuelve ``(secure_url, media_type)`` con media_type en ``image`` | ``video`` | ``pdf``.
     """
     suffix = _receipt_suffix(content_type, filename)
 
     try:
         configure_cloudinary()
 
-        resource_type = "raw" if content_type == "application/pdf" else "image"
         public_id = f"{uuid.uuid4().hex}{suffix}"
 
         result = cloudinary.uploader.upload(
             io.BytesIO(content),
             folder="comprobantes_erp",
             public_id=public_id,
-            resource_type=resource_type,
+            resource_type="auto",
         )
         file_url = result.get("secure_url")
         if file_url:
-            return str(file_url)
+            media_type = _media_type_from_upload(content_type, result.get("resource_type"))
+            return str(file_url), media_type
 
         logger.error("Cloudinary no devolvió secure_url para comprobante.")
     except HTTPException:
@@ -84,3 +100,9 @@ def upload_comprobante(content: bytes, *, content_type: str, filename: str | Non
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail=_CLOUDINARY_UPLOAD_ERROR,
     )
+
+
+def upload_comprobante(content: bytes, *, content_type: str, filename: str | None = None) -> str:
+    """Sube el comprobante y devuelve solo la URL HTTPS pública."""
+    url, _ = upload_comprobante_meta(content, content_type=content_type, filename=filename)
+    return url

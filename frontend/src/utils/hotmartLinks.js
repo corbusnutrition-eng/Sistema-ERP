@@ -9,7 +9,7 @@ export function emptyHotmartLinkRow() {
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  return { id, type: 'standard', url: '', amount: '', text: '', image_url: '', imagePreview: null }
+  return { id, type: 'standard', url: '', amount: '', text: '', image_url: '', media_type: '', imagePreview: null }
 }
 
 export function emptyCustomHotmartLinkRow() {
@@ -17,7 +17,7 @@ export function emptyCustomHotmartLinkRow() {
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  return { id, type: 'custom', url: '', amount: '', text: '', image_url: '', imagePreview: null }
+  return { id, type: 'custom', url: '', amount: '', text: '', image_url: '', media_type: '', imagePreview: null }
 }
 
 export function isCustomPaymentLinkBlock(item) {
@@ -34,8 +34,32 @@ export function hydrateHotmartLinkRows(raw, { all = false } = {}) {
     amount: item?.amount != null && item?.amount !== '' ? String(item.amount) : '',
     text: String(item?.text ?? ''),
     image_url: String(item?.image_url ?? ''),
+    media_type: String(item?.media_type ?? '').trim().toLowerCase(),
     imagePreview: String(item?.image_url ?? '').trim() || null,
   }))
+}
+
+export function inferMediaTypeFromFile(file) {
+  const type = String(file?.type ?? '').split(';')[0].trim().toLowerCase()
+  if (type === 'application/pdf') return 'pdf'
+  if (type.startsWith('video/')) return 'video'
+  return 'image'
+}
+
+/** Resuelve image | video | pdf para renderizado (respeta media_type guardado o infiere por URL). */
+export function inferPaymentLinkMediaType(item) {
+  const explicit = String(item?.media_type ?? '').trim().toLowerCase()
+  if (explicit === 'image' || explicit === 'video' || explicit === 'pdf') return explicit
+  const url = String(item?.image_url ?? '').trim().toLowerCase()
+  if (!url) return 'image'
+  if (/\.pdf(\?|#|$)/i.test(url) || url.includes('/raw/upload/')) return 'pdf'
+  if (
+    /\.(mp4|webm|mov|mpeg|mpg|avi)(\?|#|$)/i.test(url) ||
+    url.includes('/video/upload/')
+  ) {
+    return 'video'
+  }
+  return 'image'
 }
 
 function buildStandardPayloadRow(row) {
@@ -71,7 +95,14 @@ function buildCustomPayloadRow(row) {
   if (!text && !imageUrl && !url && amount == null) return null
   const out = { type: 'custom' }
   if (text) out.text = text
-  if (imageUrl) out.image_url = imageUrl
+  if (imageUrl) {
+    out.image_url = imageUrl
+    const mt = String(row?.media_type ?? '').trim().toLowerCase()
+    out.media_type =
+      mt === 'image' || mt === 'video' || mt === 'pdf'
+        ? mt
+        : inferPaymentLinkMediaType({ image_url: imageUrl })
+  }
   if (url) out.url = url
   if (amount != null) out.amount = amount
   return out
@@ -91,15 +122,27 @@ export function buildHotmartLinksPayload(rows, { all = false } = {}) {
 }
 
 export async function uploadPaymentLinkImage(api, file) {
-  if (!api || !file) throw new Error('Archivo de imagen requerido.')
+  const result = await uploadPaymentLinkMedia(api, file)
+  return result.url
+}
+
+export async function uploadPaymentLinkMedia(api, file) {
+  if (!api || !file) throw new Error('Archivo requerido.')
   const fd = new FormData()
   fd.append('file', file)
   const { data } = await api.post('/api/v1/uploads/receipt', fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
   const url = data?.receipt_url || data?.file_url || data?.url
-  if (!url) throw new Error('No se recibió la URL pública de la imagen.')
-  return String(url)
+  if (!url) throw new Error('No se recibió la URL pública del archivo.')
+  const mediaType = String(data?.media_type ?? '').trim().toLowerCase()
+  return {
+    url: String(url),
+    media_type:
+      mediaType === 'image' || mediaType === 'video' || mediaType === 'pdf'
+        ? mediaType
+        : inferMediaTypeFromFile(file),
+  }
 }
 
 export function formatPaymentLinkAmount(amount, currency = 'USD') {

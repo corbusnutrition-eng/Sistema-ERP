@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 LinkTypeLiteral = Literal["standard", "custom"]
+MediaTypeLiteral = Literal["image", "video", "pdf"]
 
 
 def _strip_optional_url(v: object) -> Optional[str]:
@@ -38,6 +39,10 @@ class HotmartLinkItem(BaseModel):
     amount: Optional[float] = Field(default=None, gt=0)
     text: Optional[str] = Field(default=None, max_length=2000)
     image_url: Optional[str] = Field(default=None, max_length=2048)
+    media_type: Optional[MediaTypeLiteral] = Field(
+        default=None,
+        description="Tipo de archivo en image_url: image, video o pdf (bloques personalizados).",
+    )
 
     @field_validator("type", mode="before")
     @classmethod
@@ -61,6 +66,16 @@ class HotmartLinkItem(BaseModel):
     @classmethod
     def _strip_image_url(cls, v: object) -> Optional[str]:
         return _strip_optional_url(v)
+
+    @field_validator("media_type", mode="before")
+    @classmethod
+    def _norm_media_type(cls, v: object) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        s = str(v).strip().lower()
+        if s in ("image", "video", "pdf"):
+            return s
+        return None
 
     @field_validator("url", mode="before")
     @classmethod

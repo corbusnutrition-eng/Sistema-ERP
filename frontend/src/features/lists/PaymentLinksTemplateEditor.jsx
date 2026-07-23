@@ -1,13 +1,19 @@
-import { ImageIcon, Loader2, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { FileText, ImageIcon, Loader2, Plus, Trash2, Video } from 'lucide-react'
+import { useRef, useState } from 'react'
 import {
   emptyCustomHotmartLinkRow,
   emptyHotmartLinkRow,
+  inferPaymentLinkMediaType,
   isCustomPaymentLinkBlock,
-  uploadPaymentLinkImage,
+  uploadPaymentLinkMedia,
 } from '../../utils/hotmartLinks'
 
-const DELETE_ROW_CONFIRM = '¿Estás seguro de que deseas eliminar este link de pago?'
+const DELETE_ROW_CONFIRM = '¿Estás seguro de que deseas eliminar este bloque de cobro?'
+const DELETE_FILE_CONFIRM_1 = '¿Eliminar el archivo adjunto de este bloque?'
+const DELETE_FILE_CONFIRM_2 =
+  'El archivo se quitará del bloque. Debes guardar la plantilla para aplicar el cambio. ¿Continuar?'
+
+const ACCEPTED_MEDIA = 'image/*,video/*,application/pdf'
 
 function StandardLinkRow({ row, index, listLength, disabled, currencyCode, onUpdate, onAdd, onRemove }) {
   return (
@@ -50,26 +56,47 @@ function StandardLinkRow({ row, index, listLength, disabled, currencyCode, onUpd
 }
 
 function CustomLinkRow({ row, index, disabled, currencyCode, api, onUpdate, onAdd, onRemove }) {
+  const fileInputRef = useRef(null)
   const [uploading, setUploading] = useState(false)
   const [uploadErr, setUploadErr] = useState('')
 
-  async function handleImagePick(file) {
+  const mediaUrl = String(row.imagePreview || row.image_url || '').trim()
+  const mediaType = inferPaymentLinkMediaType(row)
+  const hasMedia = Boolean(mediaUrl)
+
+  async function handleMediaPick(file) {
     if (!file || disabled) return
-    const ok = /^image\/(jpeg|png|gif|webp)$/i.test(file.type || '')
+    const ok =
+      /^image\//i.test(file.type || '') ||
+      /^video\//i.test(file.type || '') ||
+      file.type === 'application/pdf'
     if (!ok) {
-      setUploadErr('Solo JPG, PNG, GIF o WEBP.')
+      setUploadErr('Solo imágenes, videos (MP4, WEBM, MOV) o PDF.')
       return
     }
     setUploadErr('')
     setUploading(true)
     try {
-      const url = await uploadPaymentLinkImage(api, file)
-      onUpdate(row.id, { image_url: url, imagePreview: url })
+      const { url, media_type } = await uploadPaymentLinkMedia(api, file)
+      onUpdate(row.id, { image_url: url, imagePreview: url, media_type })
     } catch (err) {
-      setUploadErr(err?.response?.data?.detail || err?.message || 'No se pudo subir la imagen.')
+      setUploadErr(err?.response?.data?.detail || err?.message || 'No se pudo subir el archivo.')
     } finally {
       setUploading(false)
     }
+  }
+
+  function requestRemoveMedia() {
+    if (!hasMedia || disabled) return
+    if (!window.confirm(DELETE_FILE_CONFIRM_1)) return
+    if (!window.confirm(DELETE_FILE_CONFIRM_2)) return
+    onUpdate(row.id, { image_url: '', imagePreview: null, media_type: '' })
+    setUploadErr('')
+  }
+
+  function triggerChangeMedia() {
+    if (disabled || uploading) return
+    fileInputRef.current?.click()
   }
 
   return (
@@ -97,41 +124,65 @@ function CustomLinkRow({ row, index, disabled, currencyCode, api, onUpdate, onAd
       </div>
 
       <div>
-        <label className="block text-[11px] font-medium text-gray-600 mb-1" htmlFor={`tpl-img-${row.id}`}>
-          Imagen
-        </label>
-        <div className="flex flex-wrap items-center gap-3">
-          {row.imagePreview || row.image_url ? (
-            <img
-              src={row.imagePreview || row.image_url}
-              alt=""
-              className="h-16 w-16 rounded-md border border-gray-200 object-cover bg-white"
-            />
+        <label className="block text-[11px] font-medium text-gray-600 mb-1">Archivo multimedia</label>
+        <div className="flex flex-wrap items-start gap-3">
+          {hasMedia ? (
+            <MediaPreview url={mediaUrl} mediaType={mediaType} />
           ) : (
             <div className="flex h-16 w-16 items-center justify-center rounded-md border border-dashed border-gray-300 bg-white text-gray-400">
               <ImageIcon size={20} aria-hidden />
             </div>
           )}
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 space-y-2">
             <input
-              id={`tpl-img-${row.id}`}
+              ref={fileInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp"
+              accept={ACCEPTED_MEDIA}
               disabled={disabled || uploading}
+              className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0]
-                void handleImagePick(f)
+                void handleMediaPick(f)
                 e.target.value = ''
               }}
-              className="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-violet-100 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-violet-800"
             />
+            {hasMedia ? (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={disabled || uploading}
+                  onClick={triggerChangeMedia}
+                  className="rounded-md border border-violet-300 bg-white px-3 py-1.5 text-xs font-medium text-violet-800 hover:bg-violet-50 disabled:opacity-50"
+                >
+                  Cambiar archivo
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled || uploading}
+                  onClick={requestRemoveMedia}
+                  className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  Eliminar archivo
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={disabled || uploading}
+                onClick={triggerChangeMedia}
+                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Subir imagen, video o PDF
+              </button>
+            )}
             {uploading ? (
-              <p className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+              <p className="flex items-center gap-1 text-xs text-gray-500">
                 <Loader2 size={12} className="animate-spin" aria-hidden />
-                Subiendo imagen…
+                Subiendo archivo…
               </p>
             ) : null}
-            {uploadErr ? <p className="mt-1 text-xs text-red-600">{uploadErr}</p> : null}
+            {uploadErr ? <p className="text-xs text-red-600">{uploadErr}</p> : null}
+            <p className="text-[10px] text-gray-500">Formatos: JPG, PNG, GIF, WEBP, MP4, WEBM, MOV, PDF (máx. 10 MB).</p>
           </div>
         </div>
       </div>
@@ -171,6 +222,31 @@ function CustomLinkRow({ row, index, disabled, currencyCode, api, onUpdate, onAd
         </div>
       </div>
     </div>
+  )
+}
+
+function MediaPreview({ url, mediaType }) {
+  if (mediaType === 'video') {
+    return (
+      <div className="flex h-20 w-28 items-center justify-center rounded-md border border-gray-200 bg-black/90">
+        <Video size={22} className="text-violet-200" aria-hidden />
+      </div>
+    )
+  }
+  if (mediaType === 'pdf') {
+    return (
+      <div className="flex h-20 w-28 flex-col items-center justify-center gap-1 rounded-md border border-gray-200 bg-white px-2">
+        <FileText size={22} className="text-red-600" aria-hidden />
+        <span className="text-[10px] font-medium text-gray-600">PDF</span>
+      </div>
+    )
+  }
+  return (
+    <img
+      src={url}
+      alt=""
+      className="h-20 w-20 rounded-md border border-gray-200 object-cover bg-white"
+    />
   )
 }
 

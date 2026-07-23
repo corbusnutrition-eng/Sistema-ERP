@@ -1,5 +1,6 @@
 import {
   formatPaymentLinkAmount,
+  inferPaymentLinkMediaType,
   isCustomPaymentLinkBlock,
   paymentLinkBlockHasPortalContent,
 } from '../../utils/hotmartLinks'
@@ -24,7 +25,7 @@ export default function PortalHotmartLinksPanel({ links = [], currency = 'USD', 
         <div className="flex flex-col gap-3">
           {rows.map((item, index) => {
             if (isCustomPaymentLinkBlock(item)) {
-              return <CustomPaymentCard key={`custom-${index}`} item={item} currency={currency} index={index} />
+              return <CustomPaymentCard key={`custom-${index}`} item={item} currency={currency} />
             }
             return <StandardPaymentButton key={`std-${index}`} item={item} currency={currency} />
           })}
@@ -50,24 +51,18 @@ function StandardPaymentButton({ item, currency }) {
   )
 }
 
-function CustomPaymentCard({ item, currency, index }) {
+function CustomPaymentCard({ item, currency }) {
   const text = String(item?.text ?? '').trim()
-  const imageUrl = String(item?.image_url ?? '').trim()
+  const mediaUrl = String(item?.image_url ?? '').trim()
+  const mediaType = inferPaymentLinkMediaType(item)
   const url = String(item?.url ?? '').trim()
   const hasPay = url && Number(item?.amount) > 0
 
   return (
     <article className="overflow-hidden rounded-xl border border-cyan-400/35 bg-slate-950/35 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-      <p className="m-0 mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-200/80">
-        Bloque personalizado {index + 1}
-      </p>
-      {imageUrl ? (
+      {mediaUrl ? (
         <div className="mb-3 flex justify-center">
-          <img
-            src={imageUrl}
-            alt=""
-            className="max-h-40 w-auto max-w-full rounded-lg border border-white/10 object-contain"
-          />
+          <CustomBlockMedia url={mediaUrl} mediaType={mediaType} />
         </div>
       ) : null}
       {text ? (
@@ -89,5 +84,41 @@ function CustomPaymentCard({ item, currency, index }) {
         </p>
       ) : null}
     </article>
+  )
+}
+
+function CustomBlockMedia({ url, mediaType }) {
+  if (mediaType === 'video') {
+    return (
+      <video
+        src={url}
+        controls
+        playsInline
+        preload="metadata"
+        className="w-full max-w-full rounded-md border border-white/10 bg-black/40"
+      >
+        Tu navegador no puede reproducir este video.
+      </video>
+    )
+  }
+  if (mediaType === 'pdf') {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-2 rounded-xl border border-cyan-400/40 bg-cyan-950/40 px-4 py-3 text-sm font-semibold text-cyan-100 no-underline hover:bg-cyan-950/60"
+      >
+        <span aria-hidden>📄</span>
+        Ver documento PDF
+      </a>
+    )
+  }
+  return (
+    <img
+      src={url}
+      alt=""
+      className="max-h-40 w-auto max-w-full rounded-lg border border-white/10 object-contain"
+    />
   )
 }

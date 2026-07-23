@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 
-from app.cloudinary_storage import upload_comprobante
+from app.cloudinary_storage import upload_comprobante_meta
 from app.rate_limit import RECEIPT_UPLOAD_LIMIT, limiter
 
 ALLOWED_CONTENT_TYPES = {
@@ -12,6 +12,11 @@ ALLOWED_CONTENT_TYPES = {
     "image/gif",
     "image/webp",
     "application/pdf",
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+    "video/mpeg",
+    "video/x-msvideo",
 }
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
@@ -26,14 +31,15 @@ router = APIRouter(prefix="/uploads", tags=["uploads"])
 @limiter.limit(RECEIPT_UPLOAD_LIMIT)
 async def upload_receipt(request: Request, file: UploadFile) -> JSONResponse:
     """
-    Recibe una imagen de comprobante de pago, la sube a Cloudinary
-    y devuelve la URL HTTPS pública (``secure_url``).
+    Recibe imagen, video o PDF, lo sube a Cloudinary (resource_type=auto)
+    y devuelve la URL HTTPS pública y el tipo de medio detectado.
     Endpoint público – no requiere autenticación.
     """
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Solo se aceptan JPEG, PNG, GIF, WEBP o PDF.",
+            detail="Solo se aceptan imágenes (JPEG, PNG, GIF, WEBP), videos (MP4, WEBM, MOV) o PDF.",
         )
 
     content = await file.read()
@@ -43,10 +49,10 @@ async def upload_receipt(request: Request, file: UploadFile) -> JSONResponse:
             detail="El archivo supera el límite de 10 MB.",
         )
 
-    file_url = upload_comprobante(
+    file_url, media_type = upload_comprobante_meta(
         content,
-        content_type=file.content_type or "",
+        content_type=content_type,
         filename=file.filename,
     )
 
-    return JSONResponse({"receipt_url": file_url})
+    return JSONResponse({"receipt_url": file_url, "media_type": media_type})
