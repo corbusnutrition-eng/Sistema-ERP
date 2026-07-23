@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import PortalCustomSelect from './PortalCustomSelect'
 import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
-import { portalMethodLabelIsHotmart } from '../../utils/hotmartLinks'
+import { paymentLinkBlockHasPortalContent } from '../../utils/hotmartLinks'
 
 const CHECKOUT_PAYMENT_GLOW_WRAP_CLASS = 'portal-order-summary-glow-wrap portal-public-section w-full min-w-0'
 const CHECKOUT_PAYMENT_CARD_CLASS =
@@ -205,11 +205,6 @@ export default function CheckoutPage() {
         label: String(m.name || `Método #${m.id}`),
       })),
     [detail?.payment_methods],
-  )
-
-  const selectedMethodIsHotmart = useMemo(
-    () => portalMethodLabelIsHotmart(methodId, detail?.payment_methods),
-    [detail?.payment_methods, methodId],
   )
 
   const depositAccountOptions = useMemo(
@@ -514,7 +509,7 @@ export default function CheckoutPage() {
               </section>
             </div>
 
-            {selectedMethodIsHotmart && (detail?.hotmart_links || []).length > 0 ? (
+            {(detail?.hotmart_links || []).some(paymentLinkBlockHasPortalContent) ? (
               <PortalHotmartLinksPanel links={detail.hotmart_links} currency={detail?.currency || 'USD'} />
             ) : null}
 

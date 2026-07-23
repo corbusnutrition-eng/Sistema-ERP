@@ -41,7 +41,7 @@ import PortalManualAmountField from './PortalManualAmountField'
 import ClientRechargeRequestModal from './ClientRechargeRequestModal'
 import PortalCustomSelect from './PortalCustomSelect'
 import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
-import { portalMethodLabelIsHotmart } from '../../utils/hotmartLinks'
+import { paymentLinkBlockHasPortalContent } from '../../utils/hotmartLinks'
 import WalletHistoryModal from './WalletHistoryModal'
 import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
@@ -6474,9 +6474,7 @@ function ClientPortalPageInner() {
                       : null}
                     </PortalPaymentSectionShell>
 
-                    {portalMethodLabelIsHotmart(rechargeForm.method || methodForDeps, rechargePaymentMethods) &&
-                    Array.isArray(fr.hotmart_links) &&
-                    fr.hotmart_links.length > 0 ? (
+                    {(Array.isArray(fr.hotmart_links) ? fr.hotmart_links : []).some(paymentLinkBlockHasPortalContent) ? (
                       <PortalHotmartLinksPanel links={fr.hotmart_links} currency={cur} />
                     ) : null}
 
@@ -7077,9 +7075,9 @@ function ClientPortalPageInner() {
                           </PortalPaymentSectionShell>
                         )}
 
-                        {portalMethodLabelIsHotmart(methodId, pmList) &&
-                        Array.isArray(sale.hotmart_links) &&
-                        sale.hotmart_links.length > 0 ? (
+                        {(Array.isArray(sale.hotmart_links) ? sale.hotmart_links : []).some(
+                          paymentLinkBlockHasPortalContent,
+                        ) ? (
                           <PortalHotmartLinksPanel links={sale.hotmart_links} currency={saleCurrency} />
                         ) : null}
 

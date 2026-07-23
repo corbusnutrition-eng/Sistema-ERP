@@ -282,7 +282,7 @@ export default function PaymentLinksManager() {
                   Consultando plantilla…
                 </p>
               ) : (
-                <PaymentLinksTemplateEditor rows={linkRows} onChange={setLinkRows} disabled={saving} />
+                <PaymentLinksTemplateEditor rows={linkRows} onChange={setLinkRows} disabled={saving} api={api} />
               )}
 
               <div className="flex flex-wrap items-center gap-2 pt-1">

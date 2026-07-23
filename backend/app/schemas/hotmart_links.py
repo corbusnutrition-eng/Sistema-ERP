@@ -1,34 +1,98 @@
-"""Enlaces de pago Hotmart adjuntos a ventas y recargas BaaS."""
+"""Enlaces y bloques de cobro adjuntos a ventas, recargas BaaS y plantillas."""
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+LinkTypeLiteral = Literal["standard", "custom"]
+
+
+def _strip_optional_url(v: object) -> Optional[str]:
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    if not s.lower().startswith(("http://", "https://")):
+        raise ValueError("La URL debe comenzar con http:// o https://.")
+    return s
+
+
+def _coerce_optional_amount(v: object) -> Optional[float]:
+    if v is None or v == "":
+        return None
+    try:
+        n = round(float(v), 2)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Monto de cobro inválido.") from exc
+    if n <= 0:
+        raise ValueError("El monto debe ser mayor a cero.")
+    return n
 
 
 class HotmartLinkItem(BaseModel):
-    url: str = Field(..., min_length=8, max_length=2048)
-    amount: float = Field(..., gt=0)
+    type: LinkTypeLiteral = Field(default="standard")
+    url: Optional[str] = Field(default=None, max_length=2048)
+    amount: Optional[float] = Field(default=None, gt=0)
+    text: Optional[str] = Field(default=None, max_length=2000)
+    image_url: Optional[str] = Field(default=None, max_length=2048)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _norm_type(cls, v: object) -> str:
+        if v is None or str(v).strip() == "":
+            return "standard"
+        s = str(v).strip().lower()
+        if s in ("standard", "custom"):
+            return s
+        return "standard"
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _strip_text(cls, v: object) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def _strip_image_url(cls, v: object) -> Optional[str]:
+        return _strip_optional_url(v)
 
     @field_validator("url", mode="before")
     @classmethod
-    def _strip_url(cls, v: object) -> str:
-        s = str(v or "").strip()
-        if not s.lower().startswith(("http://", "https://")):
-            raise ValueError("La URL de Hotmart debe comenzar con http:// o https://.")
-        return s
+    def _strip_link_url(cls, v: object) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        return _strip_optional_url(v)
 
     @field_validator("amount", mode="before")
     @classmethod
-    def _coerce_amount(cls, v: object) -> float:
-        try:
-            n = round(float(v), 2)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Monto de link Hotmart inválido.") from exc
-        if n <= 0:
-            raise ValueError("El monto del link Hotmart debe ser mayor a cero.")
-        return n
+    def _coerce_amount(cls, v: object) -> Optional[float]:
+        return _coerce_optional_amount(v)
+
+    @model_validator(mode="after")
+    def _validate_block(self) -> "HotmartLinkItem":
+        block_type = self.type or "standard"
+        if block_type == "standard":
+            if not self.url:
+                raise ValueError("Los links estándar requieren una URL de pago.")
+            if self.amount is None:
+                raise ValueError("Los links estándar requieren un monto mayor a cero.")
+            return self
+
+        has_text = bool(self.text)
+        has_image = bool(self.image_url)
+        has_url = bool(self.url)
+        has_amount = self.amount is not None
+        if not (has_text or has_image or has_url or has_amount):
+            raise ValueError(
+                "El bloque personalizado debe incluir al menos texto, imagen, URL o valor.",
+            )
+        return self
 
 
 def normalize_hotmart_links_list(raw: Any) -> Optional[list[dict[str, Any]]]:
@@ -42,11 +106,11 @@ def normalize_hotmart_links_list(raw: Any) -> Optional[list[dict[str, Any]]]:
     out: list[dict[str, Any]] = []
     for item in raw:
         if isinstance(item, HotmartLinkItem):
-            out.append(item.model_dump(mode="json"))
+            out.append(item.model_dump(mode="json", exclude_none=False))
         elif isinstance(item, dict):
-            out.append(HotmartLinkItem.model_validate(item).model_dump(mode="json"))
+            out.append(HotmartLinkItem.model_validate(item).model_dump(mode="json", exclude_none=False))
         else:
-            raise ValueError("Cada link Hotmart debe ser un objeto con url y amount.")
+            raise ValueError("Cada bloque de cobro debe ser un objeto JSON.")
     return out or None
 
 

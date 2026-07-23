@@ -10,8 +10,11 @@ from pydantic import BaseModel, Field
 
 
 class HotmartLinkPublic(BaseModel):
-    url: str
-    amount: float = Field(..., ge=0)
+    type: str = Field(default="standard")
+    url: Optional[str] = None
+    amount: Optional[float] = Field(default=None, ge=0)
+    text: Optional[str] = None
+    image_url: Optional[str] = None
 
 
 class CheckoutPaymentMethodOption(BaseModel):

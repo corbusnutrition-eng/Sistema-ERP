@@ -400,7 +400,13 @@ def checkout_detail(request: Request, payment_token: uuid_pkg.UUID, db: DbDep) -
         allowed_payment_methods=[str(x).strip() for x in pm_labels if str(x).strip()],
         allowed_deposit_accounts=dep_ids,
         hotmart_links=[
-            HotmartLinkPublic(url=x.url, amount=x.amount)
+            HotmartLinkPublic(
+                type=x.type,
+                url=x.url,
+                amount=x.amount,
+                text=x.text,
+                image_url=x.image_url,
+            )
             for x in hotmart_links_from_model(getattr(sale, "hotmart_links", None))
         ],
     )
