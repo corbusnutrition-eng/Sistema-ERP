@@ -938,6 +938,8 @@ def _short_public_account_note(text: object | None, max_len: int = 220) -> Optio
 
 
 def _portal_build_deposit_picks(db: Session, account_ids: list[int]) -> list[PortalDepositPick]:
+    from app.services.client_payment_method_service import _account_to_portal_pick
+
     out: list[PortalDepositPick] = []
     seen: set[int] = set()
     for aid in account_ids:
@@ -947,17 +949,7 @@ def _portal_build_deposit_picks(db: Session, account_ids: list[int]) -> list[Por
         a = db.get(Account, aid)
         if a is None or not a.is_active or not is_liquid_deposit_account(a):
             continue
-        cur = normalize_currency_code(str(a.currency or "USD"))
-        holder = _short_public_account_note(getattr(a, "description", None))
-        out.append(
-            PortalDepositPick(
-                id=a.id,
-                bank_name=(a.name or "").strip() or f"Cuenta {a.id}",
-                account_number=(str(a.account_number).strip() if a.account_number else None),
-                currency=cur,
-                holder_note=holder,
-            )
-        )
+        out.append(_account_to_portal_pick(a))
     return out
 
 
@@ -1577,6 +1569,7 @@ def _portal_recharge_payment_options_for_client(db: Session, client: Client) -> 
     """Métodos y cuentas disponibles para que el cliente solicite una recarga BaaS."""
     from app.services.client_currency_service import get_client_currency
     from app.services.client_payment_method_service import (
+        _account_to_portal_pick,
         client_has_custom_payment_account_prefs,
         get_client_assigned_payment_methods_with_accounts,
         list_payment_methods_with_accounts_for_currency,
@@ -1593,14 +1586,12 @@ def _portal_recharge_payment_options_for_client(db: Session, client: Client) -> 
     for o in opts:
         dep_accounts: list[PortalDepositPick] = []
         for acc in o.accounts or []:
+            row = db.get(Account, int(acc.id))
+            if row is None or not row.is_active or not is_liquid_deposit_account(row):
+                continue
             dep_accounts.append(
-                PortalDepositPick(
-                    id=int(acc.id),
-                    bank_name=(acc.name or "").strip() or f"Cuenta {acc.id}",
-                    account_number=(acc.account_number or "").strip() or None,
-                    currency=normalize_currency_code(str(acc.currency or cur), "USD"),
-                    holder_note=None,
-                    payment_method_id=int(o.id),
+                _account_to_portal_pick(row, currency=cur).model_copy(
+                    update={"payment_method_id": int(o.id)},
                 )
             )
         if dep_accounts:

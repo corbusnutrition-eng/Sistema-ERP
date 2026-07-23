@@ -201,3 +201,30 @@ export function isCryptoWalletPaymentMethod(name) {
   if (n === 'Billeteras Criptomonedas') return true
   return /criptomonedas/i.test(n)
 }
+
+const CRYPTO_NETWORK_DISPLAY = {
+  TRC20: 'TRC20 (Tron)',
+  ERC20: 'ERC20 (Ethereum)',
+  BEP20: 'BEP20 (BNB Smart Chain)',
+  Polygon: 'Polygon',
+  Solana: 'Solana',
+  Bitcoin: 'Bitcoin',
+  Lightning: 'Lightning Network',
+  Arbitrum: 'Arbitrum',
+  Optimism: 'Optimism',
+}
+
+export function formatCryptoNetworkLabel(network) {
+  const key = String(network ?? '').trim()
+  if (!key) return ''
+  return CRYPTO_NETWORK_DISPLAY[key] || key
+}
+
+/** Cuenta de depósito cripto en portal (por red guardada o método vinculado). */
+export function isPortalCryptoDepositAccount(account, paymentMethodName) {
+  if (!account) return false
+  if (String(account.crypto_network ?? '').trim()) return true
+  if (isCryptoWalletPaymentMethod(account.linked_payment_method)) return true
+  if (paymentMethodName && isCryptoWalletPaymentMethod(paymentMethodName)) return true
+  return false
+}

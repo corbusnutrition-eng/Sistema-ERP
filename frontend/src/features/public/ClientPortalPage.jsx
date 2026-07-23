@@ -42,6 +42,10 @@ import ClientRechargeRequestModal from './ClientRechargeRequestModal'
 import PortalCustomSelect from './PortalCustomSelect'
 import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
 import { paymentLinkBlockHasPortalContent } from '../../utils/hotmartLinks'
+import {
+  formatCryptoNetworkLabel,
+  isPortalCryptoDepositAccount,
+} from '../accounting/accountStructure'
 import WalletHistoryModal from './WalletHistoryModal'
 import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
@@ -476,10 +480,11 @@ function PortalScreenCredentialRow({ label, value, flashKey, copyFlashKey, onCop
   )
 }
 
-function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / referencia' }) {
+function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / referencia', isCrypto = false }) {
   const [isCopied, setIsCopied] = useState(false)
   const copyTimeoutRef = useRef(null)
   const val = String(accountNumber ?? '').trim()
+  const resolvedLabel = isCrypto ? 'Dirección de billetera' : label
 
   useEffect(
     () => () => {
@@ -508,14 +513,14 @@ function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / re
       style={{ margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', opacity: 0.92 }}
     >
       <span style={{ margin: 0, fontSize: 14, lineHeight: 1.55 }}>
-        {label}: <strong>{val}</strong>
+        {resolvedLabel}: <strong>{val}</strong>
       </span>
       <button
         type="button"
         onClick={() => void handleCopyAccount()}
         className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-white/40 transition hover:bg-white/10 hover:text-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-        title={isCopied ? '¡Copiado!' : 'Copiar número de cuenta'}
-        aria-label={isCopied ? 'Copiado' : 'Copiar número de cuenta'}
+        title={isCopied ? '¡Copiado!' : isCrypto ? 'Copiar dirección de billetera' : 'Copiar número de cuenta'}
+        aria-label={isCopied ? 'Copiado' : isCrypto ? 'Copiar dirección de billetera' : 'Copiar número de cuenta'}
       >
         {isCopied ? (
           <Check size={16} className="text-green-400" strokeWidth={2.25} aria-hidden />
@@ -524,6 +529,23 @@ function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / re
         )}
       </button>
     </div>
+  )
+}
+
+function PortalDepositAccountDetails({ account, paymentMethodName }) {
+  if (!account) return null
+  const isCrypto = isPortalCryptoDepositAccount(account, paymentMethodName)
+  const networkLabel = formatCryptoNetworkLabel(account.crypto_network)
+
+  return (
+    <>
+      <PortalDepositAccountNumberRow accountNumber={account.account_number} isCrypto={isCrypto} />
+      {isCrypto && networkLabel ? (
+        <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
+          Red: <strong>{networkLabel}</strong>
+        </p>
+      ) : null}
+    </>
   )
 }
 
@@ -5766,9 +5788,9 @@ function ClientPortalPageInner() {
       {debtPaymentAccounts.length === 1 && (
         <div style={{ padding: '12px 14px', borderRadius: 12, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 12, fontSize: 13 }}>
           <p style={{ margin: 0, fontWeight: 700 }}>{debtPaymentAccounts[0].bank_name}</p>
-          <PortalDepositAccountNumberRow
-            accountNumber={debtPaymentAccounts[0].account_number}
-            label="Nº cuenta / referencia"
+          <PortalDepositAccountDetails
+            account={debtPaymentAccounts[0]}
+            paymentMethodName={debtPaymentMethods.find((m) => String(m.id) === String(debtForm.method))?.name}
           />
         </div>
       )}
@@ -6504,7 +6526,14 @@ function ClientPortalPageInner() {
                               }}
                             >
                               <p style={{ margin: 0, fontWeight: 700 }}>{d.bank_name}</p>
-                              <PortalDepositAccountNumberRow accountNumber={d.account_number} />
+                              <PortalDepositAccountDetails
+                                account={d}
+                                paymentMethodName={
+                                  rechargePaymentMethods.find(
+                                    (m) => String(m.id) === String(rechargeForm.method || methodForDeps),
+                                  )?.name
+                                }
+                              />
                               <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {d.currency}</p>
                             </div>
                           ))
@@ -7107,7 +7136,10 @@ function ClientPortalPageInner() {
                                   }}
                                 >
                                   <p style={{ margin: 0, fontWeight: 700 }}>{d.bank_name}</p>
-                                  <PortalDepositAccountNumberRow accountNumber={d.account_number} />
+                                  <PortalDepositAccountDetails
+                                    account={d}
+                                    paymentMethodName={pmList.find((m) => String(m.id) === String(methodId))?.name}
+                                  />
                                   <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {d.currency}</p>
                                 </div>
                               ))

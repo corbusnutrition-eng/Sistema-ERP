@@ -32,6 +32,10 @@ class CheckoutDepositAccountPublic(BaseModel):
     )
     account_number: Optional[str] = None
     currency: str
+    crypto_network: Optional[str] = Field(
+        default=None,
+        description="Red blockchain (TRC20, ERC20, …) para cuentas cripto.",
+    )
     linked_payment_method: str = Field(
         default="",
         description="Nombre del método de cobro enlazado (minúsculas), para filtrar en el cliente.",

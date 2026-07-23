@@ -74,6 +74,14 @@ class PortalDepositPick(BaseModel):
     currency: str
     #: Notas / titular desde descripción de cuenta (si existe en ERP).
     holder_note: Optional[str] = Field(default=None, description="Texto breve de referencia (titular, detalle).")
+    linked_payment_method: Optional[str] = Field(
+        default=None,
+        description="Método de pago vinculado en plan de cuentas (p. ej. Billeteras Criptomonedas).",
+    )
+    crypto_network: Optional[str] = Field(
+        default=None,
+        description="Red blockchain (TRC20, ERC20, …) para cuentas cripto.",
+    )
     payment_method_id: Optional[int] = Field(
         default=None,
         description="Método de pago padre al que pertenece la cuenta (filtrado en cascada portal).",

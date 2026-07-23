@@ -4,6 +4,10 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import PortalCustomSelect from './PortalCustomSelect'
 import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
 import { paymentLinkBlockHasPortalContent } from '../../utils/hotmartLinks'
+import {
+  formatCryptoNetworkLabel,
+  isPortalCryptoDepositAccount,
+} from '../accounting/accountStructure'
 
 const CHECKOUT_PAYMENT_GLOW_WRAP_CLASS = 'portal-order-summary-glow-wrap portal-public-section w-full min-w-0'
 const CHECKOUT_PAYMENT_CARD_CLASS =
@@ -529,7 +533,11 @@ export default function CheckoutPage() {
                     Streaming.
                   </p>
                 ) : depositsForSelectedMethod.length === 1 ? (
-                  depositsForSelectedMethod.map((d) => (
+                  depositsForSelectedMethod.map((d) => {
+                    const methodName = (detail.payment_methods || []).find((m) => String(m.id) === String(methodId))?.name
+                    const isCrypto = isPortalCryptoDepositAccount(d, methodName)
+                    const networkLabel = formatCryptoNetworkLabel(d.crypto_network)
+                    return (
                     <div
                       key={d.id}
                       style={{
@@ -547,12 +555,19 @@ export default function CheckoutPage() {
                       ) : null}
                       {d.account_number ? (
                         <p style={{ margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', opacity: 0.92 }}>
-                          Nº cuenta / referencia: <strong>{d.account_number}</strong>
+                          {isCrypto ? 'Dirección de billetera' : 'Nº cuenta / referencia'}:{' '}
+                          <strong>{d.account_number}</strong>
+                        </p>
+                      ) : null}
+                      {isCrypto && networkLabel ? (
+                        <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
+                          Red: <strong>{networkLabel}</strong>
                         </p>
                       ) : null}
                       <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {d.currency}</p>
                     </div>
-                  ))
+                    )
+                  })
                 ) : (
                   <>
                     <label htmlFor="depacc" style={{ display: 'block', fontSize: 12, opacity: 0.55, marginBottom: 8 }}>

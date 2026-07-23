@@ -100,6 +100,8 @@ def _account_to_portal_pick(acc: Account, *, currency: Optional[str] = None) -> 
         account_number=(acc.account_number or "").strip() or None,
         currency=cur,
         holder_note=_short_public_account_note(getattr(acc, "description", None)),
+        linked_payment_method=(getattr(acc, "linked_payment_method", None) or "").strip() or None,
+        crypto_network=(getattr(acc, "crypto_network", None) or "").strip() or None,
     )
 
 
