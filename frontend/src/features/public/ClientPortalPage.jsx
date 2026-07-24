@@ -6242,9 +6242,16 @@ function ClientPortalPageInner() {
               fr?.payment_methods_tree,
             )
             const rechargePaymentMethods = portalParentMethods(payTree)
-            const methodForDeps = rechargeForm.method || payMethodByRecharge[frId] || ''
-            const rechargeDepositAccounts = portalAccountsForMethod(payTree, methodForDeps)
-            const isRechargeRetiroMethod = isCodigosRetiroMethodId(rechargePaymentMethods, methodForDeps)
+            const selectedRechargePaymentMethodId = String(
+              rechargeForm.method || payMethodByRecharge[frId] || '',
+            ).trim()
+            const rechargeDepositAccounts = portalAccountsForMethod(payTree, selectedRechargePaymentMethodId)
+            const isRechargeRetiroMethod = isCodigosRetiroMethodId(
+              rechargePaymentMethods,
+              selectedRechargePaymentMethodId,
+            )
+            const showRechargeDepositSection =
+              Boolean(selectedRechargePaymentMethodId) && !isRechargeRetiroMethod
             const retiroScope = `recharge:${frId}`
             const amountReq = parseMoneyNum(fr.amount_requested)
             const pend = parseMoneyNum(fr.balance_pending)
@@ -6280,7 +6287,7 @@ function ClientPortalPageInner() {
               !showPayForm ||
               rechargePaymentMethods.length === 0 ||
               rechargeDepositAccounts.length === 0 ||
-              !String(rechargeForm.method || methodForDeps || '').trim() ||
+              !String(selectedRechargePaymentMethodId).trim() ||
               (needsDepositPickFeat && rechargeDepositAccounts.length > 1 && !String(rechargeDepResolved || '').trim()) ||
               !(pend > 1e-9) ||
               (isRechargeRetiroMethod
@@ -6304,7 +6311,7 @@ function ClientPortalPageInner() {
               reservationExpired: false,
               paysOnlyWithCreditBalance: false,
               pmListLen: rechargePaymentMethods.length,
-              hasMethodId: Boolean(String(rechargeForm.method || methodForDeps || '').trim()),
+              hasMethodId: Boolean(selectedRechargePaymentMethodId),
               needsDepositPick: needsDepositPickFeat,
               depListLen: rechargeDepositAccounts.length,
               resolvedDepId: rechargeDepResolved,
@@ -6479,7 +6486,7 @@ function ClientPortalPageInner() {
                       <PortalCustomSelect
                         id={`recharge-baas-pm-${frId}`}
                         disabled={rechargePaymentMethods.length === 0}
-                        value={rechargeForm.method || methodForDeps || ''}
+                        value={selectedRechargePaymentMethodId}
                         onChange={(mid) => {
                           setRechargeForm({ method: mid, account: '', error: null })
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
@@ -6500,7 +6507,8 @@ function ClientPortalPageInner() {
                       <PortalHotmartLinksPanel links={fr.hotmart_links} currency={cur} />
                     ) : null}
 
-                    {needsDepositPickFeat ? (
+                    {showRechargeDepositSection ? (
+                      <div key={`recharge-deposit-${frId}-${selectedRechargePaymentMethodId}`}>
                       <PortalPaymentSectionShell layer="deposit">
                         <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
                           Cuenta donde depositar
@@ -6530,7 +6538,7 @@ function ClientPortalPageInner() {
                                 account={d}
                                 paymentMethodName={
                                   rechargePaymentMethods.find(
-                                    (m) => String(m.id) === String(rechargeForm.method || methodForDeps),
+                                    (m) => String(m.id) === String(selectedRechargePaymentMethodId),
                                   )?.name
                                 }
                               />
@@ -6553,7 +6561,7 @@ function ClientPortalPageInner() {
                                 setRechargeForm({ account: depVal, error: null })
                                 setPayAccountByRecharge((p) => ({ ...p, [frId]: depVal }))
                                 void syncPortalRechargePaymentPrefs(fr, {
-                                  paymentMethodId: rechargeForm.method || methodForDeps,
+                                  paymentMethodId: selectedRechargePaymentMethodId,
                                   depositAccountId: depVal,
                                 })
                                 const filesNow = receiptFilesByRecharge[frId] || []
@@ -6572,6 +6580,7 @@ function ClientPortalPageInner() {
                           </>
                         )}
                       </PortalPaymentSectionShell>
+                      </div>
                     ) : null}
 
                     {isRechargeRetiroMethod ? (
@@ -6846,6 +6855,7 @@ function ClientPortalPageInner() {
 
                 const linesRaw = lineRowsForSale(sale)
                 const methodId = payMethodBySale[sid] ?? ''
+                const selectedSalePaymentMethodId = String(methodId || '').trim()
                 const depositAccountId = payAccountBySale[sid] ?? ''
                 const salePayTree = buildPortalPaymentTree(
                   data,
@@ -6855,9 +6865,11 @@ function ClientPortalPageInner() {
                   sale?.payment_methods_tree,
                 )
                 const pmList = portalParentMethods(salePayTree)
-                const isSaleRetiro = isCodigosRetiroMethodId(pmList, methodId)
-                const depList = portalAccountsForMethod(salePayTree, methodId)
+                const isSaleRetiro = isCodigosRetiroMethodId(pmList, selectedSalePaymentMethodId)
+                const depList = portalAccountsForMethod(salePayTree, selectedSalePaymentMethodId)
                 const needsDepositPick = depList.length > 0
+                const showSaleDepositSection =
+                  Boolean(selectedSalePaymentMethodId) && !isSaleRetiro && !paysOnlyWithCredit
                 const canShowPayForm = portalCanShowPayFormForSale(sale)
                 const lastPaymentRejected = portalSaleLastPaymentRejected(sale)
                 void portalClock
@@ -6922,11 +6934,11 @@ function ClientPortalPageInner() {
                   : isSaleRetiro ?
                     submittingSaleId === sid
                     || pmList.length === 0
-                    || !String(methodId || '').trim()
+                    || !String(selectedSalePaymentMethodId).trim()
                     || (needsDepositPick && depList.length > 0 && !resolvedDepId)
                   : submittingSaleId === sid
                     || pmList.length === 0
-                    || !String(methodId || '').trim()
+                    || !String(selectedSalePaymentMethodId).trim()
                     || (needsDepositPick && depList.length > 0 && !resolvedDepId)
                     || fileArr.length === 0
                     || (!saleIllegible && !paidOkMixed)
@@ -6937,7 +6949,7 @@ function ClientPortalPageInner() {
                   reservationExpired,
                   paysOnlyWithCreditBalance: paysOnlyWithCredit,
                   pmListLen: pmList.length,
-                  hasMethodId: Boolean(String(methodId || '').trim()),
+                  hasMethodId: Boolean(selectedSalePaymentMethodId),
                   needsDepositPick,
                   depListLen: depList.length,
                   resolvedDepId,
@@ -7081,7 +7093,7 @@ function ClientPortalPageInner() {
                             <PortalCustomSelect
                               id={`pm-${sid}`}
                               disabled={pmList.length === 0}
-                              value={methodId || ''}
+                              value={selectedSalePaymentMethodId}
                               onChange={(nextMethod) => {
                                 setPayMethodBySale((p) => ({ ...p, [sid]: nextMethod }))
                                 setPayAccountBySale((p) => {
@@ -7110,7 +7122,8 @@ function ClientPortalPageInner() {
                           <PortalHotmartLinksPanel links={sale.hotmart_links} currency={saleCurrency} />
                         ) : null}
 
-                        {!paysOnlyWithCredit && needsDepositPick ? (
+                        {showSaleDepositSection ? (
+                          <div key={`sale-deposit-${sid}-${selectedSalePaymentMethodId}`}>
                           <PortalPaymentSectionShell layer="deposit">
                             <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
                               Cuenta donde depositar
@@ -7138,7 +7151,9 @@ function ClientPortalPageInner() {
                                   <p style={{ margin: 0, fontWeight: 700 }}>{d.bank_name}</p>
                                   <PortalDepositAccountDetails
                                     account={d}
-                                    paymentMethodName={pmList.find((m) => String(m.id) === String(methodId))?.name}
+                                    paymentMethodName={
+                                      pmList.find((m) => String(m.id) === String(selectedSalePaymentMethodId))?.name
+                                    }
                                   />
                                   <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {d.currency}</p>
                                 </div>
@@ -7171,6 +7186,7 @@ function ClientPortalPageInner() {
                               </>
                             )}
                           </PortalPaymentSectionShell>
+                          </div>
                         ) : null}
 
                         {!paysOnlyWithCredit ? (
