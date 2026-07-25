@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 
 import api from '../../api/axios'
+import { fetchClientPaymentPrefs } from '../../lib/clientPaymentPrefs'
 import usePermissions from '../../hooks/usePermissions'
 import {
   BAAS_TAB_PERMISSIONS,
@@ -351,6 +352,7 @@ export default function DistributorsBaaSPage() {
   const [hotmartLinkRows, setHotmartLinkRows] = useState([emptyHotmartLinkRow()])
   const hotmartTemplateKeyRef = useRef('')
   const hotmartUserEditedRef = useRef(false)
+  const linkClientPrefHydratedRef = useRef(null)
 
   const [editRechargeRow, setEditRechargeRow] = useState(null)
 
@@ -900,7 +902,43 @@ export default function DistributorsBaaSPage() {
     setHotmartLinkRows([emptyHotmartLinkRow()])
     hotmartTemplateKeyRef.current = ''
     hotmartUserEditedRef.current = false
+    linkClientPrefHydratedRef.current = null
   }
+
+  const hydrateRechargePaymentFromClient = useCallback(async (clientId) => {
+    const cid = Number(clientId)
+    if (!Number.isFinite(cid) || cid < 1) return
+    try {
+      const { paymentMethodIds, depositAccountIds } = await fetchClientPaymentPrefs(cid)
+      if (paymentMethodIds.length) {
+        setSelectedPaymentMethodIds(paymentMethodIds.map(String))
+      }
+      if (depositAccountIds.length) {
+        setSelectedDepositAccountIds(depositAccountIds.map(String))
+      }
+      linkClientPrefHydratedRef.current = String(cid)
+    } catch {
+      /* preferencias CRM opcionales */
+    }
+  }, [])
+
+  const handleLinkClientIdChange = useCallback(
+    (nextId) => {
+      const normalized = nextId === undefined || nextId === null ? '' : String(nextId)
+      setLinkClientId(normalized)
+      if (editRechargeRow) return
+      const cid = Number(normalized)
+      if (!Number.isFinite(cid) || cid < 1) {
+        setSelectedPaymentMethodIds([])
+        setSelectedDepositAccountIds([])
+        linkClientPrefHydratedRef.current = null
+        return
+      }
+      if (linkClientPrefHydratedRef.current === String(cid)) return
+      void hydrateRechargePaymentFromClient(cid)
+    },
+    [editRechargeRow, hydrateRechargePaymentFromClient],
+  )
 
   function openLinkModal() {
     setEditRechargeRow(null)
@@ -940,6 +978,7 @@ export default function DistributorsBaaSPage() {
     resetLinkModalForm()
     setLinkClientId(String(row.id))
     setLinkModalOpen(true)
+    void hydrateRechargePaymentFromClient(row.id)
   }
 
   function closeLinkModal() {
@@ -2398,7 +2437,7 @@ export default function DistributorsBaaSPage() {
         clientesError={clientesError}
         onReloadClientes={cargarClientesModalRecarga}
         linkClientId={linkClientId}
-        onLinkClientIdChange={setLinkClientId}
+        onLinkClientIdChange={handleLinkClientIdChange}
         rechargeLineItems={linkLineItems}
         onRechargeLineItemsChange={setLinkLineItems}
         depositUsd={linkDepositUsd}

@@ -2982,6 +2982,9 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
         _assert_sale_deposit_currency(db, sale_mx)
         sync_sale_accounting_ledgers(db, sale_mx, strict=True)
         _sync_client_last_iptv_from_full_credit_sale(db, client, sale_mx)
+        from app.services.client_payment_method_service import sync_client_payment_prefs_from_sale
+
+        sync_client_payment_prefs_from_sale(db, sale_mx)
         db.commit()
         notify_catalog_vip_sale_pending_payment(db, sale_mx)
         print(f"[MIXED PENDING] db.commit() completado para sale_id={sale_mx.id}")
@@ -3132,6 +3135,9 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
         _sync_sale_tags(db, sale, list(payload.tag_ids))
         _assert_sale_deposit_currency(db, sale)
         sync_sale_accounting_ledgers(db, sale, strict=True)
+        from app.services.client_payment_method_service import sync_client_payment_prefs_from_sale
+
+        sync_client_payment_prefs_from_sale(db, sale)
         db.commit()
         notify_catalog_vip_sale_pending_payment(db, sale)
         print(f"[SCREEN_STOCK PENDING] db.commit() completado para sale_id={sale.id}")
@@ -3203,6 +3209,9 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
     _assert_sale_deposit_currency(db, sale)
     sync_sale_accounting_ledgers(db, sale, strict=True)
     _sync_client_last_iptv_from_full_credit_sale(db, client, sale)
+    from app.services.client_payment_method_service import sync_client_payment_prefs_from_sale
+
+    sync_client_payment_prefs_from_sale(db, sale)
     db.commit()
     notify_catalog_vip_sale_pending_payment(db, sale)
     db.refresh(sale)
@@ -4208,6 +4217,9 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
     if cli_fc is not None and _effective_inventory_channel(sale) in ("full_credits", "mixed"):
         _sync_client_last_iptv_from_full_credit_sale(db, cli_fc, sale)
 
+    from app.services.client_payment_method_service import sync_client_payment_prefs_from_sale
+
+    sync_client_payment_prefs_from_sale(db, sale)
     db.commit()
     db.refresh(sale)
 

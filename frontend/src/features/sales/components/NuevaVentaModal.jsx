@@ -13,6 +13,7 @@ import {
   Copy,
 } from 'lucide-react'
 import api from '../../../api/axios'
+import { fetchClientPaymentPrefs } from '../../../lib/clientPaymentPrefs'
 import { useModal } from '../../../context/ModalContext'
 import { useInventoryData } from '../../../context/InventoryDataContext'
 import SearchableSelect from '../../../components/ui/SearchableSelect'
@@ -1982,6 +1983,23 @@ export default function NuevaVentaModal({
     setSelectedPaymentMethodIds([])
     setSelectedDepositAccountIds([])
   }, [initialSale?.id])
+
+  useEffect(() => {
+    if (initialSale?.id) return
+    const cid = Number(form.client_id)
+    if (!Number.isFinite(cid) || cid < 1) return
+    let cancelled = false
+    void fetchClientPaymentPrefs(cid)
+      .then(({ paymentMethodIds, depositAccountIds }) => {
+        if (cancelled) return
+        if (paymentMethodIds.length) setSelectedPaymentMethodIds(paymentMethodIds)
+        if (depositAccountIds.length) setSelectedDepositAccountIds(depositAccountIds)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [form.client_id, initialSale?.id])
 
   useEffect(() => {
     if (isSyntheticLedgerRecharge) {

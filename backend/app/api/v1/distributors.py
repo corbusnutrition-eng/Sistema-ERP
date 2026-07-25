@@ -1282,6 +1282,9 @@ def patch_wallet_recharge_request_fields(
         cur_lock = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
         lock_client_base_currency_on_recharge_create(db, cli, cur_lock)
 
+    from app.services.client_payment_method_service import sync_client_payment_prefs_from_recharge
+
+    sync_client_payment_prefs_from_recharge(db, req)
     db.commit()
     db.refresh(req)
 
@@ -1756,6 +1759,9 @@ def generate_wallet_recharge_link(
                 base_note = _trim_wallet_creation_note(getattr(payload, "creation_note", None))
                 req.admin_note = f"{base_note}\n{intent_line}".strip() if base_note else intent_line
 
+        from app.services.client_payment_method_service import sync_client_payment_prefs_from_recharge
+
+        sync_client_payment_prefs_from_recharge(db, req)
         db.commit()
         db.refresh(req)
         db.refresh(client)

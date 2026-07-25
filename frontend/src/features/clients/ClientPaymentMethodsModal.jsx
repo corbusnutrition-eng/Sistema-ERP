@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, CreditCard, Loader2, X } from 'lucide-react'
 import api from '../../api/axios'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
@@ -40,6 +40,7 @@ export default function ClientPaymentMethodsModal({ open, client, onClose, onSav
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const loadGenerationRef = useRef(0)
 
   const clientId = client?.id != null ? Number(client.id) : null
   const clientCurrency = useMemo(
@@ -65,6 +66,8 @@ export default function ClientPaymentMethodsModal({ open, client, onClose, onSav
 
   const loadData = useCallback(async () => {
     if (!clientId || clientId < 1) return
+    const generation = loadGenerationRef.current + 1
+    loadGenerationRef.current = generation
     setLoading(true)
     setError('')
     try {
@@ -72,6 +75,7 @@ export default function ClientPaymentMethodsModal({ open, client, onClose, onSav
         api.get(`/api/v1/admin/clients/${clientId}/payment-methods`),
         api.get(`/api/v1/admin/clients/${clientId}/payment-accounts`),
       ])
+      if (generation !== loadGenerationRef.current) return
       const list = Array.isArray(methodsRes.data?.available_payment_methods)
         ? methodsRes.data.available_payment_methods
         : []
@@ -87,18 +91,28 @@ export default function ClientPaymentMethodsModal({ open, client, onClose, onSav
       setSelectedByMethod(draft)
       setExpandedMethods(expanded)
     } catch (err) {
+      if (generation !== loadGenerationRef.current) return
       setAvailable([])
       setSelectedByMethod({})
       setExpandedMethods({})
       const d = err?.response?.data?.detail
       setError(typeof d === 'string' ? d : 'No se pudieron cargar los métodos de pago.')
     } finally {
-      setLoading(false)
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
   }, [clientId])
 
   useEffect(() => {
-    if (!open || !clientId) return
+    if (!open) {
+      loadGenerationRef.current += 1
+      setAvailable([])
+      setSelectedByMethod({})
+      setExpandedMethods({})
+      setError('')
+      setLoading(false)
+      return
+    }
+    if (!clientId) return
     void loadData()
   }, [open, clientId, loadData])
 

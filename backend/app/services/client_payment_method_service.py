@@ -451,6 +451,176 @@ def set_client_payment_accounts_from_ids(
     return set_client_payment_methods(db, client_id=int(client_id), selections=selections)
 
 
+def _normalize_positive_int_ids(raw: Optional[list[object]]) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    for item in raw or []:
+        try:
+            iv = int(item)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        if iv < 1 or iv in seen:
+            continue
+        seen.add(iv)
+        out.append(iv)
+    return out
+
+
+def resolve_account_ids_from_payment_method_names(
+    db: Session,
+    *,
+    client_id: int,
+    payment_method_names: Optional[list[str]] = None,
+) -> list[int]:
+    """Resuelve cuentas de depósito a partir de etiquetas de método (ventas ERP)."""
+    names = [(n or "").strip().lower() for n in (payment_method_names or []) if (n or "").strip()]
+    if not names:
+        return []
+    name_set = set(names)
+    from app.services.client_currency_service import get_client_currency
+
+    client = db.get(Client, int(client_id))
+    if client is None:
+        return []
+    cur = get_client_currency(client)
+    out: set[int] = set()
+    for pm_node in list_payment_methods_with_accounts_for_currency(db, cur):
+        if (pm_node.name or "").strip().lower() not in name_set:
+            continue
+        for acc in pm_node.accounts:
+            out.add(int(acc.id))
+    return sorted(out)
+
+
+def resolve_account_ids_from_payment_method_ids(
+    db: Session,
+    *,
+    client_id: int,
+    payment_method_ids: Optional[list[int]] = None,
+) -> list[int]:
+    """Resuelve cuentas de depósito a partir de IDs de método (recargas BaaS)."""
+    pm_ids = _normalize_positive_int_ids(payment_method_ids)
+    if not pm_ids:
+        return []
+    pm_set = set(pm_ids)
+    from app.services.client_currency_service import get_client_currency
+
+    client = db.get(Client, int(client_id))
+    if client is None:
+        return []
+    cur = get_client_currency(client)
+    out: set[int] = set()
+    for pm_node in list_payment_methods_with_accounts_for_currency(db, cur):
+        if int(pm_node.id) not in pm_set:
+            continue
+        for acc in pm_node.accounts:
+            out.add(int(acc.id))
+    return sorted(out)
+
+
+def merge_client_payment_accounts_from_transaction(
+    db: Session,
+    *,
+    client_id: int,
+    deposit_account_ids: Optional[list[int]] = None,
+    payment_method_ids: Optional[list[int]] = None,
+    payment_method_names: Optional[list[str]] = None,
+    single_deposit_account_id: Optional[int] = None,
+    single_payment_method_id: Optional[int] = None,
+) -> int:
+    """
+    Une métodos/cuentas de una transacción al perfil CRM del cliente (sin borrar los existentes).
+    Devuelve el número de asignaciones granulares tras la operación.
+    """
+    cid = int(client_id)
+    if cid < 1:
+        return 0
+
+    new_ids: set[int] = set(_normalize_positive_int_ids(deposit_account_ids))
+    if single_deposit_account_id is not None:
+        new_ids.update(_normalize_positive_int_ids([single_deposit_account_id]))
+
+    pm_from_ids = resolve_account_ids_from_payment_method_ids(
+        db,
+        client_id=cid,
+        payment_method_ids=payment_method_ids,
+    )
+    new_ids.update(pm_from_ids)
+
+    if single_payment_method_id is not None:
+        new_ids.update(
+            resolve_account_ids_from_payment_method_ids(
+                db,
+                client_id=cid,
+                payment_method_ids=[int(single_payment_method_id)],
+            )
+        )
+
+    if payment_method_names:
+        new_ids.update(
+            resolve_account_ids_from_payment_method_names(
+                db,
+                client_id=cid,
+                payment_method_names=payment_method_names,
+            )
+        )
+
+    if not new_ids:
+        return 0
+
+    from app.services.client_currency_service import get_client_currency
+
+    client = db.get(Client, cid)
+    if client is None:
+        return 0
+    cur = get_client_currency(client)
+    existing = set(get_client_assigned_account_ids(db, cid, currency=cur))
+    merged = sorted(existing | new_ids)
+    if merged == sorted(existing):
+        return len(existing)
+
+    return set_client_payment_accounts_from_ids(db, client_id=cid, account_ids=merged)
+
+
+def sync_client_payment_prefs_from_sale(db: Session, sale) -> None:
+    """Sincroniza allowlists de una venta al perfil de pago del cliente."""
+    cid = getattr(sale, "client_id", None)
+    if cid is None:
+        return
+    try:
+        merge_client_payment_accounts_from_transaction(
+            db,
+            client_id=int(cid),
+            deposit_account_ids=list(getattr(sale, "allowed_deposit_accounts", None) or []),
+            payment_method_names=list(getattr(sale, "allowed_payment_methods", None) or []),
+            single_deposit_account_id=getattr(sale, "deposit_account_id", None),
+            single_payment_method_id=getattr(sale, "payment_method_id", None),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+
+def sync_client_payment_prefs_from_recharge(db: Session, req) -> None:
+    """Sincroniza allowlists de una recarga al perfil de pago del cliente."""
+    cid = getattr(req, "client_id", None)
+    if cid is None:
+        return
+    try:
+        merge_client_payment_accounts_from_transaction(
+            db,
+            client_id=int(cid),
+            deposit_account_ids=list(getattr(req, "allowed_deposit_account_ids", None) or []),
+            payment_method_ids=[int(x) for x in (getattr(req, "allowed_payment_methods", None) or [])],
+            single_payment_method_id=getattr(req, "payment_method_id", None),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+
 def client_has_custom_payment_account_prefs(db: Session, client_id: int) -> bool:
     """True si el admin guardó cuentas granulares en CRM (client_payment_method_accounts)."""
     return _client_has_granular_account_assignments(db, int(client_id))
