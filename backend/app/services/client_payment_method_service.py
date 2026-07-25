@@ -589,27 +589,81 @@ def sync_client_payment_prefs_from_recharge(db: Session, req) -> None:
         pass
 
 
-def prune_pending_transaction_deposit_accounts_for_client(
+def get_crm_account_ids_for_client_payment_methods(
+    db: Session,
+    client_id: int,
+    *,
+    currency: str,
+    payment_method_ids: Optional[list[int]] = None,
+    payment_method_names: Optional[list[str]] = None,
+) -> list[int]:
+    """Cuentas CRM del cliente limitadas a métodos de pago concretos (granular)."""
+    cid = int(client_id)
+    if cid < 1 or not client_has_custom_payment_account_prefs(db, cid):
+        return []
+
+    selections = get_client_assigned_selections(db, cid)
+    if not selections:
+        return []
+
+    pm_id_set: Optional[set[int]] = None
+    if payment_method_ids:
+        pm_id_set = set(_normalize_positive_int_ids(payment_method_ids))
+    elif payment_method_names:
+        name_set = {(n or "").strip().lower() for n in payment_method_names if (n or "").strip()}
+        if name_set:
+            pm_id_set = set()
+            for sel in selections:
+                pm = db.get(PaymentMethod, int(sel.payment_method_id))
+                if pm is None:
+                    continue
+                if (pm.name or "").strip().lower() in name_set:
+                    pm_id_set.add(int(sel.payment_method_id))
+
+    cur = normalize_currency_code(currency, "USD")
+    out: list[int] = []
+    seen: set[int] = set()
+    for sel in selections:
+        if pm_id_set is not None and int(sel.payment_method_id) not in pm_id_set:
+            continue
+        for aid in sel.account_ids:
+            if aid in seen:
+                continue
+            acc = db.get(Account, aid)
+            if acc is None or not acc.is_active or not is_liquid_deposit_account(acc):
+                continue
+            if normalize_currency_code(str(acc.currency or "USD"), "USD") != cur:
+                continue
+            seen.add(aid)
+            out.append(int(aid))
+    return sorted(out)
+
+
+def sync_pending_transaction_deposit_accounts_from_crm(
     db: Session,
     *,
     client_id: int,
     allowed_account_ids: list[int],
 ) -> tuple[int, int]:
     """
-    Recorta ``allowed_deposit_*`` de ventas/recargas abiertas según el CRM maestro recién guardado.
-    Devuelve (ventas_actualizadas, recargas_actualizadas).
+    Reemplaza allowlists de ventas/recargas abiertas con cuentas CRM vigentes,
+    acotadas al método de pago de cada transacción.
     """
     cid = int(client_id)
     if cid < 1 or not client_has_custom_payment_account_prefs(db, cid):
         return 0, 0
 
-    allowed = set(_normalize_positive_int_ids(allowed_account_ids))
-    sales_updated = 0
-    recharges_updated = 0
-
+    from app.services.client_currency_service import get_client_currency
     from app.models.sale import Sale, SaleStatus
     from app.models.wallet_recharge_request import WalletRechargeRequest
     from app.wallet_recharge_helpers import OPEN_PORTAL_STATUSES
+
+    client = db.get(Client, cid)
+    default_cur = get_client_currency(client) if client is not None else "USD"
+    all_crm_ids = _normalize_positive_int_ids(allowed_account_ids)
+
+    sales_updated = 0
+    recharges_updated = 0
 
     open_sale_statuses = (
         SaleStatus.pending,
@@ -622,22 +676,32 @@ def prune_pending_transaction_deposit_accounts_for_client(
         .all()
     )
     for sale in sales:
-        raw = sale.allowed_deposit_accounts
-        if not isinstance(raw, list) or not raw:
+        sale_cur = normalize_currency_code(str(getattr(sale, "currency", None) or default_cur), default_cur)
+        raw_pm = sale.allowed_payment_methods if isinstance(sale.allowed_payment_methods, list) else None
+        pm_names = [str(x).strip() for x in (raw_pm or []) if str(x).strip()]
+        new_ids = get_crm_account_ids_for_client_payment_methods(
+            db,
+            cid,
+            currency=sale_cur,
+            payment_method_names=pm_names if pm_names else None,
+        )
+        if not new_ids:
+            new_ids = all_crm_ids
+        current = _normalize_positive_int_ids(
+            sale.allowed_deposit_accounts if isinstance(sale.allowed_deposit_accounts, list) else []
+        )
+        if sorted(new_ids) == sorted(current):
             continue
-        current = _normalize_positive_int_ids(raw)
-        pruned = sorted(aid for aid in current if aid in allowed)
-        if pruned == current:
-            continue
-        sale.allowed_deposit_accounts = pruned if pruned else None
+        sale.allowed_deposit_accounts = new_ids if new_ids else None
         dep_fk = getattr(sale, "deposit_account_id", None)
         if dep_fk is not None:
             try:
                 dep_iv = int(dep_fk)
             except (TypeError, ValueError):
                 dep_iv = None
-            if dep_iv is not None and dep_iv not in allowed:
-                sale.deposit_account_id = pruned[0] if pruned else None
+            allowed_set = set(new_ids)
+            if dep_iv is not None and dep_iv not in allowed_set:
+                sale.deposit_account_id = new_ids[0] if new_ids else None
         sales_updated += 1
 
     recharges = (
@@ -649,14 +713,26 @@ def prune_pending_transaction_deposit_accounts_for_client(
         .all()
     )
     for req in recharges:
-        raw = req.allowed_deposit_account_ids
-        if not isinstance(raw, list) or not raw:
+        req_cur = normalize_currency_code(
+            getattr(req, "recharge_currency", None),
+            default_cur,
+        )
+        raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else None
+        pm_ids = _normalize_positive_int_ids(raw_pm if isinstance(raw_pm, list) else [])
+        new_ids = get_crm_account_ids_for_client_payment_methods(
+            db,
+            cid,
+            currency=req_cur,
+            payment_method_ids=pm_ids if pm_ids else None,
+        )
+        if not new_ids:
+            new_ids = all_crm_ids
+        current = _normalize_positive_int_ids(
+            req.allowed_deposit_account_ids if isinstance(req.allowed_deposit_account_ids, list) else []
+        )
+        if sorted(new_ids) == sorted(current):
             continue
-        current = _normalize_positive_int_ids(raw)
-        pruned = sorted(aid for aid in current if aid in allowed)
-        if pruned == current:
-            continue
-        req.allowed_deposit_account_ids = pruned if pruned else None
+        req.allowed_deposit_account_ids = new_ids if new_ids else None
         recharges_updated += 1
 
     return sales_updated, recharges_updated

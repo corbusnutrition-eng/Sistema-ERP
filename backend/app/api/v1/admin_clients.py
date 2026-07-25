@@ -31,7 +31,7 @@ from app.schemas.client_product_prices import (
 from app.services.client_payment_method_service import (
     get_client_payment_accounts_config,
     get_client_payment_methods_config,
-    prune_pending_transaction_deposit_accounts_for_client,
+    sync_pending_transaction_deposit_accounts_from_crm,
     set_client_payment_accounts_from_ids,
     set_client_payment_methods,
 )
@@ -312,7 +312,7 @@ def admin_set_client_payment_accounts(
         client_id=int(client_id),
         account_ids=payload.account_ids,
     )
-    sales_pruned, recharges_pruned = prune_pending_transaction_deposit_accounts_for_client(
+    sales_pruned, recharges_pruned = sync_pending_transaction_deposit_accounts_from_crm(
         db,
         client_id=int(client_id),
         allowed_account_ids=payload.account_ids,
@@ -329,5 +329,5 @@ def admin_set_client_payment_accounts(
             parts.append(f"{sales_pruned} venta(s) pendiente(s)")
         if recharges_pruned:
             parts.append(f"{recharges_pruned} recarga(s) abierta(s)")
-        msg = f"{msg} · Allowlists recortados en {', '.join(parts)}."
+        msg = f"{msg} · Allowlists sincronizados en {', '.join(parts)}."
     return ClientPaymentAccountsUpsertResponse(updated=touched, message=msg)

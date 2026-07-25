@@ -778,7 +778,7 @@ def _portal_resolve_payment_picks_for_client(
     sale: Optional[Sale] = None,
     recharge_raw_pm: Optional[list] = None,
 ) -> tuple[list[PortalPaymentMethodPick], list[PortalDepositPick], list[PortalAssignedPaymentMethod]]:
-    """Métodos/cuentas del portal: prioriza allowlist granular de la venta; luego CRM."""
+    """Métodos/cuentas del portal: CRM maestro reemplaza snapshot de venta cuando aplica."""
     from app.services.client_payment_method_service import (
         client_has_custom_payment_account_prefs,
         get_client_assigned_payment_methods_with_accounts,
@@ -787,29 +787,34 @@ def _portal_resolve_payment_picks_for_client(
     cur = normalize_currency_code(currency, "USD")
 
     if sale is not None:
+        raw_pm = (
+            list(sale.allowed_payment_methods or [])
+            if isinstance(sale.allowed_payment_methods, list)
+            else []
+        )
+        labels = [str(x).strip() for x in raw_pm if str(x).strip()]
+        pm_picks_from_labels = _portal_build_method_picks(db, labels) if labels else []
+        pm_ids = [int(p.id) for p in pm_picks_from_labels]
+
+        crm_override = _portal_crm_override_payment_picks_for_transaction(
+            db,
+            client,
+            currency=cur,
+            transaction_payment_method_ids=pm_ids if pm_ids else None,
+            transaction_payment_method_names=labels if labels else None,
+        )
+        if crm_override is not None:
+            return crm_override
+
         dep_ids = _portal_positive_int_ids_from_list(
             sale.allowed_deposit_accounts if isinstance(sale.allowed_deposit_accounts, list) else None
         )
         if dep_ids:
-            raw_pm = (
-                list(sale.allowed_payment_methods or [])
-                if isinstance(sale.allowed_payment_methods, list)
-                else []
+            methods = pm_picks_from_labels if pm_picks_from_labels else _portal_build_method_picks(
+                db, _portal_default_method_labels(db)
             )
-            labels = [str(x).strip() for x in raw_pm if str(x).strip()]
-            methods = _portal_build_method_picks(db, labels) if labels else []
-            if not methods:
-                methods = _portal_build_method_picks(db, _portal_default_method_labels(db))
             deps = _portal_build_deposit_picks(db, dep_ids)
             tree = _portal_build_payment_methods_tree(db, methods, deps)
-            methods, deps, tree = _portal_intersect_payment_options_with_crm_master(
-                db,
-                client,
-                currency=cur,
-                methods=methods,
-                dep_picks=deps,
-                tree=tree,
-            )
             return methods, deps, tree
 
     if client_has_custom_payment_account_prefs(db, int(client.id)):
@@ -852,14 +857,6 @@ def _portal_resolve_payment_picks_for_client(
             dep_ids = _portal_default_deposit_ids(db)
         deps = _portal_build_deposit_picks(db, dep_ids)
         tree = _portal_build_payment_methods_tree(db, methods, deps)
-        methods, deps, tree = _portal_intersect_payment_options_with_crm_master(
-            db,
-            client,
-            currency=cur,
-            methods=methods,
-            dep_picks=deps,
-            tree=tree,
-        )
         return methods, deps, tree
 
     return [], [], []
@@ -999,55 +996,71 @@ def _portal_positive_int_ids_from_list(raw: Optional[list]) -> list[int]:
     return out
 
 
-def _portal_intersect_payment_options_with_crm_master(
+def _portal_crm_override_payment_picks_for_transaction(
     db: Session,
     client: Client,
     *,
     currency: str,
-    methods: list[PortalPaymentMethodPick],
-    dep_picks: list[PortalDepositPick],
-    tree: list[PortalAssignedPaymentMethod],
-) -> tuple[list[PortalPaymentMethodPick], list[PortalDepositPick], list[PortalAssignedPaymentMethod]]:
+    transaction_payment_method_ids: Optional[list[int]] = None,
+    transaction_payment_method_names: Optional[list[str]] = None,
+) -> Optional[tuple[list[PortalPaymentMethodPick], list[PortalDepositPick], list[PortalAssignedPaymentMethod]]]:
     """
-    Filtro maestro CRM en tiempo real: intersección de la transacción con
-    ``client_payment_method_accounts`` actuales del cliente.
+    Override maestro CRM: reemplaza el snapshot de la transacción con cuentas CRM vigentes,
+    acotadas a los métodos de pago de la transacción.
     """
     from app.services.client_payment_method_service import (
         client_has_custom_payment_account_prefs,
-        get_client_assigned_account_ids,
+        get_client_assigned_payment_methods_with_accounts,
     )
 
     if not client_has_custom_payment_account_prefs(db, int(client.id)):
-        return methods, dep_picks, tree
+        return None
 
     cur = normalize_currency_code(currency, "USD")
-    master_ids = set(get_client_assigned_account_ids(db, int(client.id), currency=cur))
+    nested = get_client_assigned_payment_methods_with_accounts(
+        db,
+        int(client.id),
+        currency=cur,
+    )
+    if not nested:
+        return None
 
-    filtered_tree: list[PortalAssignedPaymentMethod] = []
-    for method in tree:
-        dep_filtered = [
-            dep for dep in (method.deposit_accounts or []) if int(dep.id) in master_ids
-        ]
-        if dep_filtered:
-            filtered_tree.append(method.model_copy(update={"deposit_accounts": dep_filtered}))
+    pm_id_filter: Optional[set[int]] = None
+    if transaction_payment_method_ids:
+        pm_id_filter = set(_portal_positive_int_ids_from_list(transaction_payment_method_ids))
+    elif transaction_payment_method_names:
+        labels = [str(x).strip() for x in transaction_payment_method_names if str(x).strip()]
+        if labels:
+            pm_picks = _portal_build_method_picks(db, labels)
+            if pm_picks:
+                pm_id_filter = {int(p.id) for p in pm_picks}
 
-    filtered_deps: list[PortalDepositPick] = []
+    filtered_nested = nested
+    if pm_id_filter:
+        filtered_nested = [m for m in nested if int(m.id) in pm_id_filter]
+
+    if not filtered_nested:
+        return None
+
+    methods = [
+        PortalPaymentMethodPick(id=int(m.id), name=m.name)
+        for m in filtered_nested
+        if m.deposit_accounts
+    ]
+    deps: list[PortalDepositPick] = []
     seen_dep: set[int] = set()
-    for dep in dep_picks:
-        did = int(dep.id)
-        if did not in master_ids or did in seen_dep:
-            continue
-        seen_dep.add(did)
-        filtered_deps.append(dep)
+    for method in filtered_nested:
+        for dep in method.deposit_accounts or []:
+            did = int(dep.id)
+            if did in seen_dep:
+                continue
+            seen_dep.add(did)
+            deps.append(dep.model_copy(update={"payment_method_id": int(method.id)}))
 
-    method_ids_ok = {int(m.id) for m in filtered_tree}
-    filtered_methods = [m for m in methods if int(m.id) in method_ids_ok]
-    if not filtered_methods and filtered_tree:
-        filtered_methods = [
-            PortalPaymentMethodPick(id=int(m.id), name=m.name) for m in filtered_tree
-        ]
+    if not deps:
+        return None
 
-    return filtered_methods, filtered_deps, filtered_tree
+    return methods, deps, filtered_nested
 
 
 def _portal_wallet_recharge_deposit_pick_ids_ordered(db: Session, req: WalletRechargeRequest) -> list[int]:
@@ -1440,7 +1453,7 @@ def _portal_resolve_payment_picks_for_recharge(
     """
     Métodos/cuentas visibles en el portal para una recarga BaaS.
 
-    Intersección en tiempo real con el CRM maestro del cliente cuando aplica.
+    CRM maestro reemplaza el snapshot cuando el cliente tiene cuentas granulares configuradas.
     """
     from app.services.client_currency_service import get_client_currency
 
@@ -1448,6 +1461,20 @@ def _portal_resolve_payment_picks_for_recharge(
         getattr(req, "recharge_currency", None),
         get_client_currency(client),
     )
+
+    raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else []
+    pm_ids = _portal_positive_int_ids_from_list(raw_pm)
+
+    crm_override = _portal_crm_override_payment_picks_for_transaction(
+        db,
+        client,
+        currency=recharge_cur,
+        transaction_payment_method_ids=pm_ids if pm_ids else None,
+    )
+    if crm_override is not None:
+        pm_picks, dep_picks, pm_tree = crm_override
+        pm_disp = payment_methods_display(db, raw_pm) if raw_pm else ", ".join(p.name for p in pm_picks)
+        return pm_picks, dep_picks, pm_tree, pm_disp
 
     pm_picks: list[PortalPaymentMethodPick] = []
     dep_picks: list[PortalDepositPick] = []
@@ -1458,7 +1485,6 @@ def _portal_resolve_payment_picks_for_recharge(
         req.allowed_deposit_account_ids if isinstance(req.allowed_deposit_account_ids, list) else None
     )
     if sel_dep_ids:
-        raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else []
         pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm)
         dep_picks = _portal_build_deposit_picks(db, sel_dep_ids)
         if not pm_picks and dep_picks:
@@ -1494,22 +1520,13 @@ def _portal_resolve_payment_picks_for_recharge(
                 pm_tree = full_options
                 pm_disp = ", ".join(p.name for p in pm_picks) if pm_picks else ""
             else:
-                raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else None
-                pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm)
+                pm_picks = _portal_wallet_recharge_method_picks(db, raw_pm if raw_pm else None)
                 if pm_picks:
                     dep_id_list = _portal_wallet_recharge_deposit_pick_ids_ordered(db, req)
                     dep_picks = _portal_build_deposit_picks(db, dep_id_list)
                     pm_tree = _portal_build_payment_methods_tree(db, pm_picks, dep_picks)
                     pm_disp = payment_methods_display(db, raw_pm)
 
-    pm_picks, dep_picks, pm_tree = _portal_intersect_payment_options_with_crm_master(
-        db,
-        client,
-        currency=recharge_cur,
-        methods=pm_picks,
-        dep_picks=dep_picks,
-        tree=pm_tree,
-    )
     if pm_picks and not pm_disp:
         pm_disp = ", ".join(p.name for p in pm_picks)
     return pm_picks, dep_picks, pm_tree, pm_disp
