@@ -82,5 +82,7 @@ class WalletRechargeRequest(Base):
     )
     #: Enlaces de pago Hotmart: [{ "url": "https://pay.hotmart.com/...", "amount": 100.0 }]
     hotmart_links: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
+    #: Snapshot de precios Flujo asignados al crear/editar la solicitud (portal BaaS).
+    assigned_package_prices: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
 
     client: Mapped["Client"] = relationship(back_populates="wallet_recharge_requests")

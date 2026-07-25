@@ -40,7 +40,7 @@ from app.models.product import Product
 from app.models.user import User
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.models.wallet_transaction import WalletTransaction
-from app.schemas.client_product_prices import FlujoPackageForPricing
+from app.schemas.client_product_prices import ClientProductPriceItem, FlujoPackageForPricing
 from app.schemas.distributors import (
     ApproveWalletRechargePayload,
     ApproveWalletRechargeResponse,
@@ -149,6 +149,27 @@ def _trim_wallet_creation_note(note: Optional[str]) -> Optional[str]:
         return None
     s = " ".join(str(note).split()).strip()
     return s[:2048] if s else None
+
+
+def _assigned_package_prices_snapshot(raw_items: Optional[list[Any]]) -> Optional[list[dict[str, Any]]]:
+    """Normaliza precios Flujo para persistir en la solicitud (incluye exchange_rate opcional)."""
+    if not raw_items:
+        return None
+    out: list[dict[str, Any]] = []
+    for raw in raw_items:
+        parsed = ClientProductPriceItem.model_validate(raw)
+        row = parsed.model_dump(mode="json")
+        if isinstance(raw, dict):
+            xr = raw.get("exchange_rate")
+            if xr is not None:
+                try:
+                    xf = float(xr)
+                    if xf > 0:
+                        row["exchange_rate"] = xf
+                except (TypeError, ValueError):
+                    pass
+        out.append(row)
+    return out or None
 
 
 TX_RECHARGE = "recharge"
@@ -947,6 +968,11 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
         ai_confidence_score=getattr(r, "ai_confidence_score", None),
         linked_payments=_linked_wallet_payments_admin(db, r),
         hotmart_links=hotmart_links_from_model(getattr(r, "hotmart_links", None)),
+        assigned_package_prices=(
+            list(raw_prices)
+            if isinstance(raw_prices := getattr(r, "assigned_package_prices", None), list)
+            else None
+        ),
     )
 
 
@@ -1207,6 +1233,19 @@ def patch_wallet_recharge_request_fields(
             req.hotmart_links = normalize_hotmart_links_list(payload.hotmart_links)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if payload.client_product_prices is not None:
+        snapshot = _assigned_package_prices_snapshot(payload.client_product_prices)
+        req.assigned_package_prices = snapshot
+        cli = req.client or db.get(Client, req.client_id)
+        if cli is not None and snapshot:
+            cur_lock = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+            upsert_client_product_prices(
+                db,
+                client_id=int(cli.id),
+                items=payload.client_product_prices,
+                default_price_currency=cur_lock,
+            )
 
     declared_updated = False
     if payload.portal_declared_payment_amount is not None:
@@ -1662,6 +1701,8 @@ def generate_wallet_recharge_link(
             allowed_payment_method_ids=pm_ids_list,
         )
 
+        price_snapshot = _assigned_package_prices_snapshot(getattr(payload, "client_product_prices", None))
+
         req = WalletRechargeRequest(
             client_id=client.id,
             amount_requested=aq,
@@ -1683,6 +1724,7 @@ def generate_wallet_recharge_link(
             portal_declared_payment_amount=portal_declared,
             payment_method_id=resolved_payment_method_id,
             hotmart_links=hotmart_links,
+            assigned_package_prices=price_snapshot,
         )
         db.add(req)
         db.flush()

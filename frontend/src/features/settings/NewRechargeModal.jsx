@@ -155,6 +155,7 @@ export default function NewRechargeModal({
   ocrIsManuallyEdited = false,
   ocrAiConfidenceScore = null,
   ocrPortalDeclaredAmount = null,
+  assignedPackagePricesPrefill = null,
 }) {
   const { openNewClient } = useModal()
   const [clientSearchMode, setClientSearchMode] = useState('nombre')
@@ -357,6 +358,27 @@ export default function NewRechargeModal({
 
   useEffect(() => {
     if (!open || isReadOnly) return undefined
+
+    const prefill = Array.isArray(assignedPackagePricesPrefill) ? assignedPackagePricesPrefill : []
+    if (prefill.length > 0) {
+      const draft = {}
+      const xrDraft = {}
+      for (const row of prefill) {
+        const pid = String(row?.package_catalog_id ?? row?.package_id ?? '')
+        const local = row?.local_price ?? row?.sale_price_local ?? row?.precio_venta_local
+        if (pid && local != null && Number(local) > 0) {
+          draft[pid] = String(local)
+        }
+        const xr = row?.exchange_rate
+        if (pid && xr != null && Number(xr) > 0) {
+          xrDraft[pid] = String(xr)
+        }
+      }
+      setFlujoPriceByPackageId(draft)
+      setExchangeRates(xrDraft)
+      return undefined
+    }
+
     const cid = pricingClientId
     if (!Number.isFinite(cid) || cid < 1) {
       setFlujoPriceByPackageId({})
@@ -381,7 +403,7 @@ export default function NewRechargeModal({
         setFlujoPriceByPackageId({})
       })
     return () => ac.abort()
-  }, [open, isReadOnly, pricingClientId])
+  }, [open, isReadOnly, pricingClientId, assignedPackagePricesPrefill])
 
   useEffect(() => {
     if (!open || !editMode || editTargetRequestId == null) {
@@ -793,6 +815,7 @@ export default function NewRechargeModal({
       custom_price: Number(r.custom_price),
       local_price: Number(r.local_price),
       price_currency: billingCode,
+      exchange_rate: Number(r.exchange_rate),
     }))
     const extra = {
       distributorEmail: displayCliente?.email,

@@ -1495,6 +1495,9 @@ export default function DistributorsBaaSPage() {
           { ai_confidence_score: 100 }
         : {}),
         ...(hotmartLinksPayload !== undefined ? { hotmart_links: hotmartLinksPayload } : {}),
+        ...(Array.isArray(extra?.productPrices) && extra.productPrices.length ?
+          { client_product_prices: extra.productPrices }
+        : {}),
       }
       const { data } = await api.patch(`/api/v1/distributors/recharge-requests/${rid}`, body)
       closeLinkModal()
@@ -2417,6 +2420,7 @@ export default function DistributorsBaaSPage() {
         onSubmitGenerateLink={submitGenerateLink}
         editMode={Boolean(editRechargeRow)}
         editTargetRequestId={editRechargeRow?.id ?? null}
+        assignedPackagePricesPrefill={editRechargeRow?.assigned_package_prices ?? null}
         clientSnapshotForEdit={clientSnapshotForEdit}
         prefillClientSnapshot={linkModalPrefillClient}
         existingReceiptUrl={

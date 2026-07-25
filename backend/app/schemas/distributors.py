@@ -463,6 +463,10 @@ class WalletRechargeRequestAdminRow(BaseModel):
         default_factory=list,
         description="Enlaces de pago Hotmart asociados a esta solicitud.",
     )
+    assigned_package_prices: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        description="Snapshot de precios Flujo asignados en esta solicitud.",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -636,6 +640,16 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
         default=None,
         validation_alias=AliasChoices("hotmart_links", "payment_metadata"),
         description="Enlaces de pago Hotmart asociados a la solicitud.",
+    )
+    client_product_prices: Optional[list[ClientProductPriceItem]] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "client_product_prices",
+            "product_prices",
+            "assigned_package_prices",
+            "precios_personalizados",
+        ),
+        description="Precios Flujo asignados (snapshot en la solicitud + CRM del cliente).",
     )
 
     @field_validator("admin_note", mode="before")
