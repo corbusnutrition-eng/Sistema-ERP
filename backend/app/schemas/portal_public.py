@@ -305,6 +305,11 @@ class PortalWalletRechargeItem(BaseModel):
         default=False,
         description="True si el cliente creó la solicitud desde el portal (editable/cancelable por él).",
     )
+    payment_method_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Método de pago elegido en checkout (sincroniza bloques personalizados).",
+    )
     hotmart_links: list[HotmartLinkItem] = Field(default_factory=list)
 
 

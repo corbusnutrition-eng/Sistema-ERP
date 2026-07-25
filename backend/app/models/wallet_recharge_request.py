@@ -36,6 +36,8 @@ class WalletRechargeRequest(Base):
 
     #: IDs de métodos de pago (catálogo) habilitados para esta solicitud / enlace público.
     allowed_payment_methods: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
+    #: Método elegido en el portal (sincroniza links Hotmart / bloques personalizados).
+    payment_method_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     #: Si no es null y no está vacío, solo estas cuentas de depósito se muestran en el portal.
     allowed_deposit_account_ids: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
     #: Identificador público único para `/portal/recharge/{link_hash}` (enlaces legados).

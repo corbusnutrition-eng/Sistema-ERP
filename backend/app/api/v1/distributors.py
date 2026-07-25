@@ -1652,6 +1652,16 @@ def generate_wallet_recharge_link(
 
         creation_note_trim = _trim_wallet_creation_note(payload.creation_note)
 
+        pm_ids_list = [int(pm.id) for pm in pm_sorted]
+        resolved_payment_method_id: Optional[int] = pm_ids_list[0] if len(pm_ids_list) == 1 else None
+        from app.services.payment_link_template_propagation import resolve_baas_hotmart_links_for_recharge_create
+
+        hotmart_links = resolve_baas_hotmart_links_for_recharge_create(
+            db,
+            payment_method_id=resolved_payment_method_id,
+            allowed_payment_method_ids=pm_ids_list,
+        )
+
         req = WalletRechargeRequest(
             client_id=client.id,
             amount_requested=aq,
@@ -1671,7 +1681,8 @@ def generate_wallet_recharge_link(
             recharge_detail_lines=lines_json,
             declared_deposit_usd=dep_usd,
             portal_declared_payment_amount=portal_declared,
-            hotmart_links=normalize_hotmart_links_list(payload.hotmart_links),
+            payment_method_id=resolved_payment_method_id,
+            hotmart_links=hotmart_links,
         )
         db.add(req)
         db.flush()

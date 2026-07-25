@@ -28,6 +28,79 @@ def _invoice_line_dicts(sale: Sale) -> list[dict[str, Any]]:
     return [x for x in raw if isinstance(x, dict)]
 
 
+def resolve_baas_hotmart_links_for_payment_method(db: Session, payment_method_id: int) -> Optional[list[Any]]:
+    """Plantilla BAAS del Gestor de Links para el método indicado (sin fallback genérico)."""
+    from app.schemas.hotmart_links import normalize_hotmart_links_list
+
+    tpl = (
+        db.query(PaymentLinkTemplate)
+        .filter(
+            PaymentLinkTemplate.payment_method_id == int(payment_method_id),
+            PaymentLinkTemplate.module_type == "BAAS",
+            PaymentLinkTemplate.product_id.is_(None),
+        )
+        .first()
+    )
+    if tpl is None:
+        return None
+    try:
+        return normalize_hotmart_links_list(getattr(tpl, "links", None))
+    except ValueError:
+        logger.warning(
+            "payment_link_template BAAS links invalid for payment_method_id=%s",
+            payment_method_id,
+        )
+        return None
+
+
+def resolve_baas_hotmart_links_for_recharge_create(
+    db: Session,
+    *,
+    payment_method_id: Optional[int],
+    allowed_payment_method_ids: list[int],
+) -> Optional[list[Any]]:
+    """
+    Links iniciales al crear una recarga BaaS.
+
+    Solo se resuelven desde la plantilla del método asignado; si no hay método único
+    explícito, devuelve ``None`` (sin links fantasma).
+    """
+    if payment_method_id is not None:
+        return resolve_baas_hotmart_links_for_payment_method(db, int(payment_method_id))
+    if len(allowed_payment_method_ids) == 1:
+        return resolve_baas_hotmart_links_for_payment_method(db, int(allowed_payment_method_ids[0]))
+    return None
+
+
+def _recharge_allowed_payment_method_ids(req: WalletRechargeRequest) -> list[int]:
+    raw = getattr(req, "allowed_payment_methods", None)
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for item in raw:
+        if item is None:
+            continue
+        try:
+            iv = int(item)
+            if iv > 0:
+                out.append(iv)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _recharge_should_receive_propagated_links(req: WalletRechargeRequest, payment_method_id: int) -> bool:
+    """Evita sobrescribir links en recargas multi-método sin selección explícita."""
+    stored_pm = getattr(req, "payment_method_id", None)
+    if stored_pm is not None:
+        try:
+            return int(stored_pm) == int(payment_method_id)
+        except (TypeError, ValueError):
+            return False
+    allowed = _recharge_allowed_payment_method_ids(req)
+    return len(allowed) == 1 and allowed[0] == int(payment_method_id)
+
+
 def _recharge_has_payment_method(req: WalletRechargeRequest, payment_method_id: int) -> bool:
     raw = getattr(req, "allowed_payment_methods", None)
     if not isinstance(raw, list):
@@ -134,7 +207,7 @@ def propagate_baas_pending_recharges(
     updated = 0
     pm_id = int(payment_method_id)
     for req in candidates:
-        if not _recharge_has_payment_method(req, pm_id):
+        if not _recharge_should_receive_propagated_links(req, pm_id):
             continue
         req.hotmart_links = links_out
         updated += 1

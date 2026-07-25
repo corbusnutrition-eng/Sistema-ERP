@@ -1312,25 +1312,9 @@ def _validate_wallet_recharge_declared_payment_method(
 
 def _portal_baas_hotmart_links_for_payment_method(db: Session, payment_method_id: int):
     """Plantilla BAAS del Gestor de Links para el método elegido por el cliente."""
-    tpl = (
-        db.query(PaymentLinkTemplate)
-        .filter(
-            PaymentLinkTemplate.payment_method_id == int(payment_method_id),
-            PaymentLinkTemplate.module_type == "BAAS",
-            PaymentLinkTemplate.product_id.is_(None),
-        )
-        .first()
-    )
-    if tpl is None:
-        return None
-    try:
-        return normalize_hotmart_links_list(getattr(tpl, "links", None))
-    except ValueError:
-        logger.warning(
-            "portal BAAS hotmart template invalid for payment_method_id=%s",
-            payment_method_id,
-        )
-        return None
+    from app.services.payment_link_template_propagation import resolve_baas_hotmart_links_for_payment_method
+
+    return resolve_baas_hotmart_links_for_payment_method(db, payment_method_id)
 
 
 def _portal_filter_recharge_payment_options_by_currency(
@@ -1463,6 +1447,11 @@ def _portal_wallet_recharge_item_from_request(
         payment_methods_tree=pm_tree,
         payment_methods_display=pm_disp,
         is_client_initiated=bool(getattr(req, "is_client_initiated", False)),
+        payment_method_id=(
+            int(req.payment_method_id)
+            if getattr(req, "payment_method_id", None) is not None
+            else None
+        ),
         hotmart_links=hotmart_links_from_model(getattr(req, "hotmart_links", None)),
     )
 
@@ -1644,9 +1633,11 @@ def _portal_create_wallet_recharge_for_client(
 
     hotmart_links = None
     allowed_dep_norm: Optional[list[int]] = None
+    resolved_payment_method_id: Optional[int] = None
 
     if payment_method_id is not None:
         pm_id = int(payment_method_id)
+        resolved_payment_method_id = pm_id
         validate_client_portal_payment_method_id(db, client, pm_id)
 
         pm = db.get(PaymentMethod, pm_id)
@@ -1708,6 +1699,9 @@ def _portal_create_wallet_recharge_for_client(
         if not all_dep_ids and dep_resolved is not None:
             all_dep_ids = [int(dep_resolved)]
         hotmart_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+    elif len(all_pm_ids) == 1:
+        resolved_payment_method_id = int(all_pm_ids[0])
+        hotmart_links = _portal_baas_hotmart_links_for_payment_method(db, resolved_payment_method_id)
     elif not all_pm_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1729,6 +1723,7 @@ def _portal_create_wallet_recharge_for_client(
         surplus_credited=0.0,
         is_client_initiated=True,
         admin_note="Solicitud creada por el cliente desde el portal.",
+        payment_method_id=resolved_payment_method_id,
         hotmart_links=hotmart_links,
         recharge_detail_lines=[
             {
@@ -1840,6 +1835,7 @@ def portal_update_wallet_recharge(
             pm_id,
             deposit_account_id=payload.deposit_account_id,
         )
+        req.payment_method_id = pm_id
         req.hotmart_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
 
     if payload.deposit_account_id is not None:

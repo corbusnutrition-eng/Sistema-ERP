@@ -1202,6 +1202,14 @@ function portalAccountsForMethod(tree, methodId) {
   return Array.isArray(node?.deposit_accounts) ? node.deposit_accounts : []
 }
 
+/** Método de pago persistido en la recarga (backend ``payment_method_id``). */
+function portalRechargeStoredPaymentMethodId(rechargeRow) {
+  const raw = rechargeRow?.payment_method_id
+  if (raw == null || raw === '') return ''
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? String(n) : ''
+}
+
 /** Resuelve IDs numéricos de método/cuenta para el POST del portal (misma lógica que la UI). */
 function resolvePortalPaymentSelection({
   tree,
@@ -4140,6 +4148,11 @@ function ClientPortalPageInner() {
           if (next[rid] !== userPick) next[rid] = userPick
           continue
         }
+        const storedPmId = portalRechargeStoredPaymentMethodId(r)
+        if (storedPmId) {
+          if (next[rid] !== storedPmId) next[rid] = storedPmId
+          continue
+        }
         const cur =
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
@@ -4160,7 +4173,6 @@ function ClientPortalPageInner() {
           continue
         }
         if (next[rid] != null && next[rid] !== '') continue
-        if (methods[0]?.id != null) next[rid] = String(methods[0].id)
       }
       return next
     })
@@ -4170,6 +4182,7 @@ function ClientPortalPageInner() {
         const rid = Number(r?.id)
         if (!Number.isFinite(rid)) continue
         const userPick = String(rechargePaymentMethodUserPickRef.current[rid] || '').trim()
+        const storedPmId = portalRechargeStoredPaymentMethodId(r)
         const cur =
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
@@ -4181,22 +4194,29 @@ function ClientPortalPageInner() {
           cur,
           r?.payment_methods_tree,
         )
-        const methods = portalParentMethods(tree)
-        const featPaid = Math.max(0, parseMoneyNum(r?.amount_paid) || 0)
-        const pend = portalRechargeOpenBalance(r)
-        const isPartialFollowUp = featPaid > 1e-9 && pend > 1e-9
-        const methodId = userPick || next[rid] || prev[rid] || methods[0]?.id
+        const methodId = userPick || storedPmId || next[rid] || prev[rid] || ''
         if (userPick) {
           if (next[rid] != null && next[rid] !== '') continue
           const accs = portalAccountsForMethod(tree, userPick)
           if (accs.length === 1) next[rid] = String(accs[0].id)
           continue
         }
+        if (storedPmId) {
+          if (next[rid] != null && next[rid] !== '') continue
+          const accs = portalAccountsForMethod(tree, storedPmId)
+          if (accs.length === 1) next[rid] = String(accs[0].id)
+          continue
+        }
+        const methods = portalParentMethods(tree)
+        const featPaid = Math.max(0, parseMoneyNum(r?.amount_paid) || 0)
+        const pend = portalRechargeOpenBalance(r)
+        const isPartialFollowUp = featPaid > 1e-9 && pend > 1e-9
         if (isPartialFollowUp && methods.length > 1) {
           delete next[rid]
           continue
         }
         if (next[rid] != null && next[rid] !== '') continue
+        if (!methodId) continue
         const accs = portalAccountsForMethod(tree, methodId)
         if (accs.length === 1) next[rid] = String(accs[0].id)
       }
@@ -4214,6 +4234,31 @@ function ClientPortalPageInner() {
         if (userPick) {
           const patch = {}
           if (curForm.method !== userPick) patch.method = userPick
+          if (Object.keys(patch).length) {
+            next[k] = { ...curForm, ...patch }
+            changed = true
+          }
+          continue
+        }
+        const storedPmId = portalRechargeStoredPaymentMethodId(r)
+        if (storedPmId) {
+          const patch = {}
+          if (curForm.method !== storedPmId) patch.method = storedPmId
+          const cur =
+            r.recharge_currency && String(r.recharge_currency).trim().length >= 3
+              ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
+              : 'USD'
+          const tree = buildPortalPaymentTree(
+            data,
+            r?.allowed_payment_methods,
+            r?.allowed_deposit_accounts,
+            cur,
+            r?.payment_methods_tree,
+          )
+          const accs = portalAccountsForMethod(tree, storedPmId)
+          if (!curForm.account && accs.length === 1 && accs[0]?.id != null) {
+            patch.account = String(accs[0].id)
+          }
           if (Object.keys(patch).length) {
             next[k] = { ...curForm, ...patch }
             changed = true
@@ -4241,12 +4286,13 @@ function ClientPortalPageInner() {
             patch.method = ''
             patch.account = ''
           }
-        } else {
-          const methodId = curForm.method || methods[0]?.id
-          const accs = portalAccountsForMethod(tree, methodId)
-          if (!curForm.method && methodId != null) patch.method = String(methodId)
-          if (!curForm.account && accs.length === 1 && accs[0]?.id != null) {
-            patch.account = String(accs[0].id)
+        } else if (!curForm.account) {
+          const methodId = String(curForm.method || '').trim()
+          if (methodId) {
+            const accs = portalAccountsForMethod(tree, methodId)
+            if (accs.length === 1 && accs[0]?.id != null) {
+              patch.account = String(accs[0].id)
+            }
           }
         }
         if (Object.keys(patch).length) {
@@ -6320,8 +6366,15 @@ function ClientPortalPageInner() {
             )
             const rechargePaymentMethods = portalParentMethods(payTree)
             const selectedRechargePaymentMethodId = String(
-              payMethodByRecharge[frId] ?? rechargeForm.method ?? '',
+              payMethodByRecharge[frId]
+                ?? rechargeForm.method
+                ?? portalRechargeStoredPaymentMethodId(fr)
+                ?? '',
             ).trim()
+            const rechargeHotmartLinks = Array.isArray(fr.hotmart_links) ? fr.hotmart_links : []
+            const showRechargeHotmartLinks =
+              Boolean(selectedRechargePaymentMethodId)
+              && rechargeHotmartLinks.some(paymentLinkBlockHasPortalContent)
             const rechargeDepositAccounts = portalAccountsForMethod(payTree, selectedRechargePaymentMethodId)
             const isRechargeRetiroMethod = isCodigosRetiroMethodId(
               rechargePaymentMethods,
@@ -6592,8 +6645,8 @@ function ClientPortalPageInner() {
                       : null}
                     </PortalPaymentSectionShell>
 
-                    {(Array.isArray(fr.hotmart_links) ? fr.hotmart_links : []).some(paymentLinkBlockHasPortalContent) ? (
-                      <PortalHotmartLinksPanel links={fr.hotmart_links} currency={cur} />
+                    {showRechargeHotmartLinks ? (
+                      <PortalHotmartLinksPanel links={rechargeHotmartLinks} currency={cur} />
                     ) : null}
 
                     {showRechargeDepositSection ? (
