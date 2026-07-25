@@ -589,6 +589,79 @@ def sync_client_payment_prefs_from_recharge(db: Session, req) -> None:
         pass
 
 
+def prune_pending_transaction_deposit_accounts_for_client(
+    db: Session,
+    *,
+    client_id: int,
+    allowed_account_ids: list[int],
+) -> tuple[int, int]:
+    """
+    Recorta ``allowed_deposit_*`` de ventas/recargas abiertas según el CRM maestro recién guardado.
+    Devuelve (ventas_actualizadas, recargas_actualizadas).
+    """
+    cid = int(client_id)
+    if cid < 1 or not client_has_custom_payment_account_prefs(db, cid):
+        return 0, 0
+
+    allowed = set(_normalize_positive_int_ids(allowed_account_ids))
+    sales_updated = 0
+    recharges_updated = 0
+
+    from app.models.sale import Sale, SaleStatus
+    from app.models.wallet_recharge_request import WalletRechargeRequest
+    from app.wallet_recharge_helpers import OPEN_PORTAL_STATUSES
+
+    open_sale_statuses = (
+        SaleStatus.pending,
+        SaleStatus.payment_submitted,
+        SaleStatus.partially_paid,
+    )
+    sales = (
+        db.query(Sale)
+        .filter(Sale.client_id == cid, Sale.status.in_(open_sale_statuses))
+        .all()
+    )
+    for sale in sales:
+        raw = sale.allowed_deposit_accounts
+        if not isinstance(raw, list) or not raw:
+            continue
+        current = _normalize_positive_int_ids(raw)
+        pruned = sorted(aid for aid in current if aid in allowed)
+        if pruned == current:
+            continue
+        sale.allowed_deposit_accounts = pruned if pruned else None
+        dep_fk = getattr(sale, "deposit_account_id", None)
+        if dep_fk is not None:
+            try:
+                dep_iv = int(dep_fk)
+            except (TypeError, ValueError):
+                dep_iv = None
+            if dep_iv is not None and dep_iv not in allowed:
+                sale.deposit_account_id = pruned[0] if pruned else None
+        sales_updated += 1
+
+    recharges = (
+        db.query(WalletRechargeRequest)
+        .filter(
+            WalletRechargeRequest.client_id == cid,
+            WalletRechargeRequest.status.in_(OPEN_PORTAL_STATUSES),
+        )
+        .all()
+    )
+    for req in recharges:
+        raw = req.allowed_deposit_account_ids
+        if not isinstance(raw, list) or not raw:
+            continue
+        current = _normalize_positive_int_ids(raw)
+        pruned = sorted(aid for aid in current if aid in allowed)
+        if pruned == current:
+            continue
+        req.allowed_deposit_account_ids = pruned if pruned else None
+        recharges_updated += 1
+
+    return sales_updated, recharges_updated
+
+
 def client_has_custom_payment_account_prefs(db: Session, client_id: int) -> bool:
     """True si el admin guardó cuentas granulares en CRM (client_payment_method_accounts)."""
     return _client_has_granular_account_assignments(db, int(client_id))

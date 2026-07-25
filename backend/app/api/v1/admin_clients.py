@@ -31,6 +31,7 @@ from app.schemas.client_product_prices import (
 from app.services.client_payment_method_service import (
     get_client_payment_accounts_config,
     get_client_payment_methods_config,
+    prune_pending_transaction_deposit_accounts_for_client,
     set_client_payment_accounts_from_ids,
     set_client_payment_methods,
 )
@@ -311,10 +312,22 @@ def admin_set_client_payment_accounts(
         client_id=int(client_id),
         account_ids=payload.account_ids,
     )
+    sales_pruned, recharges_pruned = prune_pending_transaction_deposit_accounts_for_client(
+        db,
+        client_id=int(client_id),
+        allowed_account_ids=payload.account_ids,
+    )
     db.commit()
     label = client.display_name()
     if touched == 0:
         msg = f"Preferencias de cuentas eliminadas para {label}. El portal usará la configuración global."
     else:
         msg = f"Cuentas de pago actualizadas para {label} ({touched} cuenta(s))."
+    if sales_pruned or recharges_pruned:
+        parts: list[str] = []
+        if sales_pruned:
+            parts.append(f"{sales_pruned} venta(s) pendiente(s)")
+        if recharges_pruned:
+            parts.append(f"{recharges_pruned} recarga(s) abierta(s)")
+        msg = f"{msg} · Allowlists recortados en {', '.join(parts)}."
     return ClientPaymentAccountsUpsertResponse(updated=touched, message=msg)
