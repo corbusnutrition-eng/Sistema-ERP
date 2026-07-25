@@ -1951,6 +1951,9 @@ function ClientPortalPageInner() {
   const [retiroWidgetRemountKeyByScope, setRetiroWidgetRemountKeyByScope] = useState({})
   const featuredWalletRechargeRowRef = useRef(null)
   const newOrderWalletRechargesRef = useRef([])
+  /** Elección explícita del usuario; evita que efectos de hidratación reseteen el Select. */
+  const rechargePaymentMethodUserPickRef = useRef({})
+  const salePaymentMethodUserPickRef = useRef({})
 
   const handleRetiroWidgetError = useCallback((message) => {
     retiroInFlightRef.current = false
@@ -4042,6 +4045,11 @@ function ClientPortalPageInner() {
       for (const sale of ordersToShow) {
         const sid = Number(sale.sale_id)
         if (!Number.isFinite(sid)) continue
+        const userPick = String(salePaymentMethodUserPickRef.current[sid] || '').trim()
+        if (userPick) {
+          if (next[sid] !== userPick) next[sid] = userPick
+          continue
+        }
         if (next[sid] != null && next[sid] !== '') continue
         const saleCur =
           sale.currency && String(sale.currency).trim().length >= 3
@@ -4092,6 +4100,11 @@ function ClientPortalPageInner() {
       for (const r of newOrderWalletRecharges) {
         const rid = Number(r?.id)
         if (!Number.isFinite(rid)) continue
+        const userPick = String(rechargePaymentMethodUserPickRef.current[rid] || '').trim()
+        if (userPick) {
+          if (next[rid] !== userPick) next[rid] = userPick
+          continue
+        }
         const cur =
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
@@ -4121,6 +4134,7 @@ function ClientPortalPageInner() {
       for (const r of newOrderWalletRecharges) {
         const rid = Number(r?.id)
         if (!Number.isFinite(rid)) continue
+        const userPick = String(rechargePaymentMethodUserPickRef.current[rid] || '').trim()
         const cur =
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
@@ -4136,7 +4150,13 @@ function ClientPortalPageInner() {
         const featPaid = Math.max(0, parseMoneyNum(r?.amount_paid) || 0)
         const pend = portalRechargeOpenBalance(r)
         const isPartialFollowUp = featPaid > 1e-9 && pend > 1e-9
-        const methodId = next[rid] || prev[rid] || methods[0]?.id
+        const methodId = userPick || next[rid] || prev[rid] || methods[0]?.id
+        if (userPick) {
+          if (next[rid] != null && next[rid] !== '') continue
+          const accs = portalAccountsForMethod(tree, userPick)
+          if (accs.length === 1) next[rid] = String(accs[0].id)
+          continue
+        }
         if (isPartialFollowUp && methods.length > 1) {
           delete next[rid]
           continue
@@ -4155,6 +4175,16 @@ function ClientPortalPageInner() {
         if (!Number.isFinite(rid)) continue
         const k = String(rid)
         const curForm = rechargePayFormFromMap(prev, rid)
+        const userPick = String(rechargePaymentMethodUserPickRef.current[rid] || '').trim()
+        if (userPick) {
+          const patch = {}
+          if (curForm.method !== userPick) patch.method = userPick
+          if (Object.keys(patch).length) {
+            next[k] = { ...curForm, ...patch }
+            changed = true
+          }
+          continue
+        }
         const cur =
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
@@ -6249,7 +6279,7 @@ function ClientPortalPageInner() {
             )
             const rechargePaymentMethods = portalParentMethods(payTree)
             const selectedRechargePaymentMethodId = String(
-              rechargeForm.method || payMethodByRecharge[frId] || '',
+              payMethodByRecharge[frId] ?? rechargeForm.method ?? '',
             ).trim()
             const rechargeDepositAccounts = portalAccountsForMethod(payTree, selectedRechargePaymentMethodId)
             const isRechargeRetiroMethod = isCodigosRetiroMethodId(
@@ -6494,8 +6524,9 @@ function ClientPortalPageInner() {
                         disabled={rechargePaymentMethods.length === 0}
                         value={selectedRechargePaymentMethodId}
                         onChange={(mid) => {
-                          setRechargeForm({ method: mid, account: '', error: null })
+                          rechargePaymentMethodUserPickRef.current[frId] = mid
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
+                          setRechargeForm({ method: mid, account: '', error: null })
                           setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
                           void syncPortalRechargePaymentPrefs(fr, { paymentMethodId: mid })
                         }}
@@ -7101,6 +7132,7 @@ function ClientPortalPageInner() {
                               disabled={pmList.length === 0}
                               value={selectedSalePaymentMethodId}
                               onChange={(nextMethod) => {
+                                salePaymentMethodUserPickRef.current[sid] = nextMethod
                                 setPayMethodBySale((p) => ({ ...p, [sid]: nextMethod }))
                                 setPayAccountBySale((p) => {
                                   const n = { ...p }
