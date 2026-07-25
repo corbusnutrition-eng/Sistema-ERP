@@ -523,6 +523,23 @@ export default function NuevaCuentaModal({
             />
           </div>
 
+          {usingPaymentMethodsAsDetail && !isCryptoWallet && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="account-cedula-ruc">
+                Número de cédula o RUC (Opcional)
+              </label>
+              <input
+                id="account-cedula-ruc"
+                name="cedula_ruc"
+                value={form.cedula_ruc}
+                onChange={handleChange}
+                className={inputCls}
+                placeholder="Ej. 1234567890"
+                disabled={saving}
+              />
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cuenta *</label>
@@ -576,23 +593,6 @@ export default function NuevaCuentaModal({
               <p className="text-[11px] text-gray-500 mt-1">
                 Red blockchain de la dirección de billetera (opcional).
               </p>
-            </div>
-          )}
-
-          {usingPaymentMethodsAsDetail && !isCryptoWallet && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="account-cedula-ruc">
-                Número de cédula o RUC (Opcional)
-              </label>
-              <input
-                id="account-cedula-ruc"
-                name="cedula_ruc"
-                value={form.cedula_ruc}
-                onChange={handleChange}
-                className={inputCls}
-                placeholder="Ej. 1234567890"
-                disabled={saving}
-              />
             </div>
           )}
 
