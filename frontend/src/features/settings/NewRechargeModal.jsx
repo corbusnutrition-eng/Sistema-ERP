@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { X, Plus, Trash2 } from 'lucide-react'
 import FinancialSummarySidebar from '../../components/ui/FinancialSummarySidebar'
 import OcrSecurityBadges, {
@@ -29,6 +29,27 @@ export function newRechargeLineRow() {
 function parseLineNum(s) {
   const n = parseFloat(String(s ?? '').replace(',', '.'))
   return Number.isFinite(n) ? n : NaN
+}
+
+/** Convierte snapshot/API de precios Flujo al estado local del modal (packageId → texto). */
+function draftFlujoPricingFromAssignedRows(rows) {
+  const list = Array.isArray(rows) ? rows : []
+  const prices = {}
+  const exchangeRates = {}
+  for (const row of list) {
+    const pid = String(row?.package_catalog_id ?? row?.package_id ?? '').trim()
+    if (!pid) continue
+    const local =
+      row?.local_price ?? row?.sale_price_local ?? row?.precio_venta_local ?? row?.custom_price
+    if (local != null && Number(local) > 0) {
+      prices[pid] = String(local)
+    }
+    const xr = row?.exchange_rate
+    if (xr != null && Number(xr) > 0) {
+      exchangeRates[pid] = String(xr)
+    }
+  }
+  return { prices, exchangeRates, hasPrices: Object.keys(prices).length > 0 }
 }
 
 function inputClsBase() {
@@ -181,6 +202,9 @@ export default function NewRechargeModal({
 
   const apiOrigin = salesApiOrigin()
 
+  /** Evita que efectos de catálogo/tasa borren precios ya hidratados en edición. */
+  const editPricingHydratedRef = useRef(false)
+
   const cargarClientesDesdeRender = useCallback(async ({ signal } = {}) => {
     try {
       setRenderClientesLoading(true)
@@ -323,13 +347,17 @@ export default function NewRechargeModal({
   }, [isReadOnly, editMode, pricingClientId, clientSnapshotForEdit, linkClientId])
 
   useEffect(() => {
-    if (!open) return undefined
-    setExistingReceiptCleared(false)
+    if (open) {
+      setExistingReceiptCleared(false)
+      editPricingHydratedRef.current = false
+      return undefined
+    }
+    editPricingHydratedRef.current = false
     setFlujoPriceByPackageId({})
     setExchangeRates({})
     setBillingExchangeRateStr('1')
     return undefined
-  }, [open, existingReceiptUrl])
+  }, [open])
 
   useEffect(() => {
     if (!open || isReadOnly) {
@@ -359,51 +387,94 @@ export default function NewRechargeModal({
   useEffect(() => {
     if (!open || isReadOnly) return undefined
 
+    let cancelled = false
+
+    const applyPricingDraft = (rows, { lockEdit = false } = {}) => {
+      const { prices, exchangeRates: xrDraft, hasPrices } = draftFlujoPricingFromAssignedRows(rows)
+      if (!hasPrices) return false
+      setFlujoPriceByPackageId(prices)
+      setExchangeRates((prev) => ({ ...prev, ...xrDraft }))
+      if (lockEdit && editMode) editPricingHydratedRef.current = true
+      return true
+    }
+
+    const loadClientAssignedPrices = (clientId) => {
+      if (!Number.isFinite(clientId) || clientId < 1) return Promise.resolve(false)
+      return api
+        .get(`/api/v1/admin/clients/${clientId}/assigned-package-prices`)
+        .then(({ data }) => {
+          if (cancelled || editPricingHydratedRef.current) return false
+          return applyPricingDraft(data)
+        })
+        .catch(() => false)
+    }
+
     const prefill = Array.isArray(assignedPackagePricesPrefill) ? assignedPackagePricesPrefill : []
-    if (prefill.length > 0) {
-      const draft = {}
-      const xrDraft = {}
-      for (const row of prefill) {
-        const pid = String(row?.package_catalog_id ?? row?.package_id ?? '')
-        const local = row?.local_price ?? row?.sale_price_local ?? row?.precio_venta_local
-        if (pid && local != null && Number(local) > 0) {
-          draft[pid] = String(local)
-        }
-        const xr = row?.exchange_rate
-        if (pid && xr != null && Number(xr) > 0) {
-          xrDraft[pid] = String(xr)
+    if (editMode && editTargetRequestId != null) {
+      if (applyPricingDraft(prefill, { lockEdit: true })) {
+        return () => {
+          cancelled = true
         }
       }
-      setFlujoPriceByPackageId(draft)
-      setExchangeRates(xrDraft)
-      return undefined
+
+      const ac = new AbortController()
+      api
+        .get(`/api/v1/distributors/recharge-requests/${editTargetRequestId}`, { signal: ac.signal })
+        .then(({ data }) => {
+          if (cancelled || editPricingHydratedRef.current) return undefined
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('Datos recibidos del backend (edición recarga):', data)
+          }
+          if (applyPricingDraft(data?.assigned_package_prices, { lockEdit: true })) return undefined
+          const cid = Number(data?.client_id)
+          return loadClientAssignedPrices(cid)
+        })
+        .catch((err) => {
+          if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') return
+          const cid = Number(clientSnapshotForEdit?.client_id)
+          if (Number.isFinite(cid) && cid > 0) void loadClientAssignedPrices(cid)
+        })
+      return () => {
+        cancelled = true
+        ac.abort()
+      }
+    }
+
+    if (applyPricingDraft(prefill)) {
+      return () => {
+        cancelled = true
+      }
     }
 
     const cid = pricingClientId
     if (!Number.isFinite(cid) || cid < 1) {
-      setFlujoPriceByPackageId({})
+      if (!editPricingHydratedRef.current) setFlujoPriceByPackageId({})
       return undefined
     }
+
     const ac = new AbortController()
     api
       .get(`/api/v1/admin/clients/${cid}/assigned-package-prices`, { signal: ac.signal })
       .then(({ data }) => {
-        const list = Array.isArray(data) ? data : []
-        const draft = {}
-        for (const row of list) {
-          const pid = String(row?.package_catalog_id ?? row?.package_id ?? '')
-          const existing = row?.sale_price_local
-          if (pid && existing != null && Number(existing) > 0) {
-            draft[pid] = String(existing)
-          }
-        }
-        setFlujoPriceByPackageId(draft)
+        if (cancelled || editPricingHydratedRef.current) return
+        applyPricingDraft(data)
       })
       .catch(() => {
-        setFlujoPriceByPackageId({})
+        if (!cancelled && !editPricingHydratedRef.current) setFlujoPriceByPackageId({})
       })
-    return () => ac.abort()
-  }, [open, isReadOnly, pricingClientId, assignedPackagePricesPrefill])
+    return () => {
+      cancelled = true
+      ac.abort()
+    }
+  }, [
+    open,
+    isReadOnly,
+    editMode,
+    editTargetRequestId,
+    pricingClientId,
+    assignedPackagePricesPrefill,
+    clientSnapshotForEdit?.client_id,
+  ])
 
   useEffect(() => {
     if (!open || !editMode || editTargetRequestId == null) {
@@ -468,6 +539,7 @@ export default function NewRechargeModal({
         const xr = Number.isFinite(rate) && rate > 0 ? rate : cur === 'USD' ? 1 : salesCurrencyDefaultRate(cur)
         const xrStr = String(xr)
         setBillingExchangeRateStr(xrStr)
+        if (editPricingHydratedRef.current) return
         setExchangeRates((prev) => {
           const list = Array.isArray(flujoPackages) ? flujoPackages : []
           if (!list.length) return prev
@@ -475,7 +547,9 @@ export default function NewRechargeModal({
           for (const pkg of list) {
             const pkgId = Number(pkg?.package_catalog_id)
             if (!Number.isFinite(pkgId)) continue
-            next[String(pkgId)] = xrStr
+            const key = String(pkgId)
+            if (String(next[key] ?? '').trim() !== '') continue
+            next[key] = xrStr
           }
           return next
         })
@@ -484,6 +558,7 @@ export default function NewRechargeModal({
         if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') return
         const fallback = cur === 'USD' ? '1' : String(salesCurrencyDefaultRate(cur))
         setBillingExchangeRateStr(fallback)
+        if (editPricingHydratedRef.current) return
         setExchangeRates((prev) => {
           const list = Array.isArray(flujoPackages) ? flujoPackages : []
           if (!list.length) return prev
@@ -491,7 +566,9 @@ export default function NewRechargeModal({
           for (const pkg of list) {
             const pkgId = Number(pkg?.package_catalog_id)
             if (!Number.isFinite(pkgId)) continue
-            next[String(pkgId)] = fallback
+            const key = String(pkgId)
+            if (String(next[key] ?? '').trim() !== '') continue
+            next[key] = fallback
           }
           return next
         })

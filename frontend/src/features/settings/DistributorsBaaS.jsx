@@ -1596,8 +1596,10 @@ export default function DistributorsBaaSPage() {
   const clientSnapshotForEdit = useMemo(() => {
     if (!editRechargeRow) return null
     const em = String(editRechargeRow.client_email ?? '').trim()
+    const clientId = Number(editRechargeRow.client_id)
     return {
       id: em,
+      client_id: Number.isFinite(clientId) && clientId > 0 ? clientId : undefined,
       email: em,
       nombre: editRechargeRow.client_name,
       full_name: editRechargeRow.client_name,
