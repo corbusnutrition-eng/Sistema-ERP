@@ -523,14 +523,11 @@ def merge_client_payment_accounts_from_transaction(
     *,
     client_id: int,
     deposit_account_ids: Optional[list[int]] = None,
-    payment_method_ids: Optional[list[int]] = None,
-    payment_method_names: Optional[list[str]] = None,
     single_deposit_account_id: Optional[int] = None,
-    single_payment_method_id: Optional[int] = None,
 ) -> int:
     """
-    Une métodos/cuentas de una transacción al perfil CRM del cliente (sin borrar los existentes).
-    Devuelve el número de asignaciones granulares tras la operación.
+    Une al perfil CRM solo los account_ids explícitos de la transacción (granularidad estricta).
+    No expande cuentas a partir de métodos de pago.
     """
     cid = int(client_id)
     if cid < 1:
@@ -539,31 +536,6 @@ def merge_client_payment_accounts_from_transaction(
     new_ids: set[int] = set(_normalize_positive_int_ids(deposit_account_ids))
     if single_deposit_account_id is not None:
         new_ids.update(_normalize_positive_int_ids([single_deposit_account_id]))
-
-    pm_from_ids = resolve_account_ids_from_payment_method_ids(
-        db,
-        client_id=cid,
-        payment_method_ids=payment_method_ids,
-    )
-    new_ids.update(pm_from_ids)
-
-    if single_payment_method_id is not None:
-        new_ids.update(
-            resolve_account_ids_from_payment_method_ids(
-                db,
-                client_id=cid,
-                payment_method_ids=[int(single_payment_method_id)],
-            )
-        )
-
-    if payment_method_names:
-        new_ids.update(
-            resolve_account_ids_from_payment_method_names(
-                db,
-                client_id=cid,
-                payment_method_names=payment_method_names,
-            )
-        )
 
     if not new_ids:
         return 0
@@ -583,7 +555,7 @@ def merge_client_payment_accounts_from_transaction(
 
 
 def sync_client_payment_prefs_from_sale(db: Session, sale) -> None:
-    """Sincroniza allowlists de una venta al perfil de pago del cliente."""
+    """Sincroniza al CRM solo las cuentas explícitas permitidas en la venta."""
     cid = getattr(sale, "client_id", None)
     if cid is None:
         return
@@ -592,9 +564,7 @@ def sync_client_payment_prefs_from_sale(db: Session, sale) -> None:
             db,
             client_id=int(cid),
             deposit_account_ids=list(getattr(sale, "allowed_deposit_accounts", None) or []),
-            payment_method_names=list(getattr(sale, "allowed_payment_methods", None) or []),
             single_deposit_account_id=getattr(sale, "deposit_account_id", None),
-            single_payment_method_id=getattr(sale, "payment_method_id", None),
         )
     except HTTPException:
         raise
@@ -603,7 +573,7 @@ def sync_client_payment_prefs_from_sale(db: Session, sale) -> None:
 
 
 def sync_client_payment_prefs_from_recharge(db: Session, req) -> None:
-    """Sincroniza allowlists de una recarga al perfil de pago del cliente."""
+    """Sincroniza al CRM solo las cuentas explícitas permitidas en la recarga."""
     cid = getattr(req, "client_id", None)
     if cid is None:
         return
@@ -612,8 +582,6 @@ def sync_client_payment_prefs_from_recharge(db: Session, req) -> None:
             db,
             client_id=int(cid),
             deposit_account_ids=list(getattr(req, "allowed_deposit_account_ids", None) or []),
-            payment_method_ids=[int(x) for x in (getattr(req, "allowed_payment_methods", None) or [])],
-            single_payment_method_id=getattr(req, "payment_method_id", None),
         )
     except HTTPException:
         raise
