@@ -56,6 +56,9 @@ function publicApi() {
   })
 }
 
+/** Espera tras el último cambio de método antes de PATCH/GET de bloques multimedia. */
+const PORTAL_PAYMENT_METHOD_DEBOUNCE_MS = 500
+
 /** Layout mobile-first del portal público (link de pago / autogestión). */
 const PORTAL_PAGE_ROOT_CLASS =
   'portal-public-root min-h-screen w-full overflow-x-hidden bg-[linear-gradient(145deg,#0f0c29_0%,#1a1440_42%,#16324a_100%)] px-3 pb-12 pt-3 font-[DM_Sans,Inter,-apple-system,BlinkMacSystemFont,sans-serif] text-slate-50 md:px-4 md:pb-16 md:pt-4'
@@ -1980,6 +1983,8 @@ function ClientPortalPageInner() {
   const [rechargeFormById, setRechargeFormById] = useState({})
   const [payMethodByRecharge, setPayMethodByRecharge] = useState({})
   const [payAccountByRecharge, setPayAccountByRecharge] = useState({})
+  const payAccountByRechargeRef = useRef({})
+  payAccountByRechargeRef.current = payAccountByRecharge
 
   const [portalClock, setPortalClock] = useState(0)
 
@@ -2004,6 +2009,14 @@ function ClientPortalPageInner() {
   /** Cancelación / orden de peticiones GET de bloques Hotmart (ventas). */
   const saleHotmartLinksAbortRef = useRef({})
   const saleHotmartLinksRequestGenRef = useRef({})
+  /** Debounce de cambio de método y snapshot del último estado persistido con éxito. */
+  const rechargePaymentMethodDebounceRef = useRef({})
+  const rechargePaymentPrefsLastSuccessRef = useRef({})
+  const salePaymentMethodDebounceRef = useRef({})
+  const saleHotmartLinksLastSuccessRef = useRef({})
+  const saleHotmartLinksRowSnapshotRef = useRef({})
+  const payAccountBySaleRef = useRef({})
+  payAccountBySaleRef.current = payAccountBySale
   const [rechargePaymentPrefsPatchingById, setRechargePaymentPrefsPatchingById] = useState({})
   const [saleHotmartLinksFetchingById, setSaleHotmartLinksFetchingById] = useState({})
 
@@ -2344,6 +2357,61 @@ function ClientPortalPageInner() {
     [loadPortal, loadWalletRecharges],
   )
 
+  const commitRechargePaymentPrefsSuccess = useCallback((rechargeId, paymentMethodId, response) => {
+    const rid = Number(rechargeId)
+    const pm = String(paymentMethodId || response?.payment_method_id || '').trim()
+    if (!Number.isFinite(rid) || rid < 1 || !pm) return
+    rechargePaymentPrefsLastSuccessRef.current[rid] = {
+      paymentMethodId: pm,
+      payAccount: String(payAccountByRechargeRef.current[rid] || ''),
+      patch: response,
+      hotmartLinks: Array.isArray(response?.hotmart_links) ? response.hotmart_links : [],
+    }
+  }, [])
+
+  const rollbackRechargePaymentPrefs = useCallback((rechargeRow, errorMessage) => {
+    const rid = Number(rechargeRow?.id)
+    if (!Number.isFinite(rid) || rid < 1) return
+    const snap = rechargePaymentPrefsLastSuccessRef.current[rid]
+    const fallbackPm =
+      snap?.paymentMethodId
+      || portalRechargeStoredPaymentMethodId(rechargeRow)
+      || ''
+    const fallbackLinks =
+      snap?.hotmartLinks
+      ?? (Array.isArray(rechargeRow?.hotmart_links) ? rechargeRow.hotmart_links : [])
+    const fallbackAccount = snap?.payAccount || ''
+
+    rechargePaymentMethodUserPickRef.current[rid] = fallbackPm
+    setPayMethodByRecharge((p) => ({ ...p, [rid]: fallbackPm }))
+    setPayAccountByRecharge((p) => ({ ...p, [rid]: fallbackAccount }))
+    patchRechargePayForm(setRechargeFormById, rid, {
+      method: fallbackPm,
+      account: fallbackAccount,
+      error: errorMessage || null,
+    })
+
+    if (snap?.patch) {
+      setWalletRechargePatchById((p) => ({ ...p, [rid]: snap.patch }))
+    } else if (fallbackPm || fallbackLinks.length) {
+      setWalletRechargePatchById((p) => ({
+        ...p,
+        [rid]: {
+          ...(p[rid] || {}),
+          payment_method_id: fallbackPm ? Number(fallbackPm) : null,
+          hotmart_links: fallbackLinks,
+        },
+      }))
+    } else {
+      setWalletRechargePatchById((p) => {
+        if (!p[rid]) return p
+        const next = { ...p }
+        delete next[rid]
+        return next
+      })
+    }
+  }, [])
+
   const clearRechargeHotmartLinksOptimistic = useCallback((rechargeId, paymentMethodId) => {
     const rid = Number(rechargeId)
     const pm = Number(paymentMethodId)
@@ -2398,9 +2466,22 @@ function ClientPortalPageInner() {
         if (rechargePaymentPrefsRequestGenRef.current[rid] !== requestGen) return
         if (!shouldApplyRechargePaymentPrefsResponse(rid, pm, data)) return
         setWalletRechargePatchById((prev) => ({ ...prev, [rid]: data }))
+        commitRechargePaymentPrefsSuccess(rid, pm, data)
       } catch (err) {
         if (rechargePaymentPrefsRequestGenRef.current[rid] !== requestGen) return
         if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return
+        if (clearHotmartLinks) {
+          const status = err?.response?.status
+          const detail = err?.response?.data?.detail
+          const errMsg =
+            status === 429
+              ? 'Demasiados cambios seguidos. Espera un momento e intenta de nuevo.'
+              : typeof detail === 'string'
+                ? detail
+                : 'No se pudo actualizar el método de pago. Intenta de nuevo.'
+          rollbackRechargePaymentPrefs(rechargeRow, errMsg)
+          return
+        }
         const detail = err?.response?.data?.detail
         patchRechargePayForm(setRechargeFormById, rid, {
           error:
@@ -2422,8 +2503,57 @@ function ClientPortalPageInner() {
         }
       }
     },
-    [api, clearRechargeHotmartLinksOptimistic, shouldApplyRechargePaymentPrefsResponse, token],
+    [api, clearRechargeHotmartLinksOptimistic, commitRechargePaymentPrefsSuccess, rollbackRechargePaymentPrefs, shouldApplyRechargePaymentPrefsResponse, token],
   )
+
+  const scheduleDebouncedRechargePaymentMethodSync = useCallback(
+    (rechargeRow, paymentMethodId) => {
+      const rid = Number(rechargeRow?.id)
+      const pm = String(paymentMethodId || '').trim()
+      if (!Number.isFinite(rid) || rid < 1 || !pm) return
+      clearTimeout(rechargePaymentMethodDebounceRef.current[rid])
+      rechargePaymentMethodDebounceRef.current[rid] = window.setTimeout(() => {
+        delete rechargePaymentMethodDebounceRef.current[rid]
+        void syncPortalRechargePaymentPrefs(rechargeRow, {
+          paymentMethodId: pm,
+          clearHotmartLinks: true,
+        })
+      }, PORTAL_PAYMENT_METHOD_DEBOUNCE_MS)
+    },
+    [syncPortalRechargePaymentPrefs],
+  )
+
+  const commitSaleHotmartLinksSuccess = useCallback((saleId, paymentMethodId, hotmartLinks) => {
+    const sid = Number(saleId)
+    const pm = String(paymentMethodId || '').trim()
+    if (!Number.isFinite(sid) || sid < 1 || !pm) return
+    saleHotmartLinksLastSuccessRef.current[sid] = {
+      paymentMethodId: pm,
+      payAccount: String(payAccountBySaleRef.current[sid] || ''),
+      hotmartLinks: Array.isArray(hotmartLinks) ? hotmartLinks : [],
+    }
+  }, [])
+
+  const rollbackSaleHotmartLinks = useCallback((saleRow, errorMessage) => {
+    const sid = Number(saleRow?.sale_id ?? saleRow?.id)
+    if (!Number.isFinite(sid) || sid < 1) return
+    const snap = saleHotmartLinksLastSuccessRef.current[sid]
+    const fallbackPm = snap?.paymentMethodId || ''
+    const fallbackLinks =
+      snap?.hotmartLinks
+      ?? (Array.isArray(saleRow?.hotmart_links) ? saleRow.hotmart_links : [])
+    const fallbackAccount = snap?.payAccount || ''
+
+    if (fallbackPm) {
+      salePaymentMethodUserPickRef.current[sid] = fallbackPm
+      setPayMethodBySale((p) => ({ ...p, [sid]: fallbackPm }))
+    }
+    setPayAccountBySale((p) => ({ ...p, [sid]: fallbackAccount }))
+    setSaleHotmartLinksById((p) => ({ ...p, [sid]: fallbackLinks }))
+    if (errorMessage) {
+      setSubmitErrorBySale((p) => ({ ...p, [sid]: errorMessage }))
+    }
+  }, [])
 
   const shouldApplySaleHotmartLinksResponse = useCallback((saleId, requestedPaymentMethodId) => {
     const sid = Number(saleId)
@@ -2446,7 +2576,6 @@ function ClientPortalPageInner() {
       const requestGen = (saleHotmartLinksRequestGenRef.current[sid] || 0) + 1
       saleHotmartLinksRequestGenRef.current[sid] = requestGen
 
-      setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
       setSaleHotmartLinksFetchingById((prev) => ({ ...prev, [sid]: true }))
 
       try {
@@ -2460,12 +2589,22 @@ function ClientPortalPageInner() {
           ...prev,
           [sid]: Array.isArray(data?.hotmart_links) ? data.hotmart_links : [],
         }))
+        commitSaleHotmartLinksSuccess(sid, pm, data?.hotmart_links)
       } catch (err) {
         if (saleHotmartLinksRequestGenRef.current[sid] !== requestGen) return
         if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return
-        if (shouldApplySaleHotmartLinksResponse(sid, pm)) {
-          setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
-        }
+        const status = err?.response?.status
+        const detail = err?.response?.data?.detail
+        const errMsg =
+          status === 429
+            ? 'Demasiados cambios seguidos. Espera un momento e intenta de nuevo.'
+            : typeof detail === 'string'
+              ? detail
+              : 'No se pudieron cargar las opciones de pago. Intenta de nuevo.'
+        rollbackSaleHotmartLinks(
+          saleHotmartLinksRowSnapshotRef.current[sid] || { sale_id: sid },
+          errMsg,
+        )
       } finally {
         if (saleHotmartLinksAbortRef.current[sid] === controller) {
           delete saleHotmartLinksAbortRef.current[sid]
@@ -2480,7 +2619,23 @@ function ClientPortalPageInner() {
         }
       }
     },
-    [api, shouldApplySaleHotmartLinksResponse, token],
+    [api, commitSaleHotmartLinksSuccess, rollbackSaleHotmartLinks, shouldApplySaleHotmartLinksResponse, token],
+  )
+
+  const scheduleDebouncedSalePaymentMethodSync = useCallback(
+    (saleRow, paymentMethodId) => {
+      const sid = Number(saleRow?.sale_id ?? saleRow?.id)
+      const pm = String(paymentMethodId || '').trim()
+      if (!Number.isFinite(sid) || sid < 1 || !pm) return
+      saleHotmartLinksRowSnapshotRef.current[sid] = saleRow
+      clearTimeout(salePaymentMethodDebounceRef.current[sid])
+      salePaymentMethodDebounceRef.current[sid] = window.setTimeout(() => {
+        delete salePaymentMethodDebounceRef.current[sid]
+        setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
+        void syncPortalSaleHotmartLinks(sid, pm)
+      }, PORTAL_PAYMENT_METHOD_DEBOUNCE_MS)
+    },
+    [syncPortalSaleHotmartLinks],
   )
 
   const handleCancelClientRecharge = useCallback(
@@ -3426,6 +3581,46 @@ function ClientPortalPageInner() {
 
   newOrderWalletRechargesRef.current = newOrderWalletRecharges
   featuredWalletRechargeRowRef.current = newOrderWalletRecharges[0] ?? null
+
+  useEffect(() => {
+    for (const r of walletRechargesDisplay) {
+      const rid = Number(r?.id)
+      if (!Number.isFinite(rid) || rid < 1) continue
+      if (rechargePaymentPrefsLastSuccessRef.current[rid]) continue
+      const pm = portalRechargeStoredPaymentMethodId(r)
+      rechargePaymentPrefsLastSuccessRef.current[rid] = {
+        paymentMethodId: pm || '',
+        payAccount: '',
+        patch: null,
+        hotmartLinks: Array.isArray(r.hotmart_links) ? r.hotmart_links : [],
+      }
+    }
+  }, [walletRechargesDisplay])
+
+  useEffect(() => {
+    for (const sale of ordersToShow) {
+      const sid = Number(sale?.sale_id)
+      if (!Number.isFinite(sid) || sid < 1) continue
+      if (saleHotmartLinksLastSuccessRef.current[sid]) continue
+      saleHotmartLinksLastSuccessRef.current[sid] = {
+        paymentMethodId: '',
+        payAccount: '',
+        hotmartLinks: Array.isArray(sale.hotmart_links) ? sale.hotmart_links : [],
+      }
+    }
+  }, [ordersToShow])
+
+  useEffect(
+    () => () => {
+      Object.values(rechargePaymentMethodDebounceRef.current).forEach((timerId) => {
+        clearTimeout(timerId)
+      })
+      Object.values(salePaymentMethodDebounceRef.current).forEach((timerId) => {
+        clearTimeout(timerId)
+      })
+    },
+    [],
+  )
 
   useEffect(() => {
     const raw = searchParams.get('open_recharge')
@@ -6754,14 +6949,10 @@ function ClientPortalPageInner() {
                         value={selectedRechargePaymentMethodId}
                         onChange={(mid) => {
                           rechargePaymentMethodUserPickRef.current[frId] = mid
-                          clearRechargeHotmartLinksOptimistic(frId, mid)
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
                           setRechargeForm({ method: mid, account: '', error: null })
                           setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
-                          void syncPortalRechargePaymentPrefs(fr, {
-                            paymentMethodId: mid,
-                            clearHotmartLinks: true,
-                          })
+                          scheduleDebouncedRechargePaymentMethodSync(fr, mid)
                         }}
                         options={portalPaymentMethodOptions(rechargePaymentMethods)}
                         placeholder="Seleccionar…"
@@ -7382,7 +7573,6 @@ function ClientPortalPageInner() {
                               value={selectedSalePaymentMethodId}
                               onChange={(nextMethod) => {
                                 salePaymentMethodUserPickRef.current[sid] = nextMethod
-                                setSaleHotmartLinksById((p) => ({ ...p, [sid]: [] }))
                                 setPayMethodBySale((p) => ({ ...p, [sid]: nextMethod }))
                                 setPayAccountBySale((p) => {
                                   const n = { ...p }
@@ -7391,7 +7581,7 @@ function ClientPortalPageInner() {
                                   else n[sid] = ''
                                   return n
                                 })
-                                void syncPortalSaleHotmartLinks(sid, nextMethod)
+                                scheduleDebouncedSalePaymentMethodSync(sale, nextMethod)
                               }}
                               options={portalPaymentMethodOptions(pmList)}
                               placeholder="Seleccionar…"
