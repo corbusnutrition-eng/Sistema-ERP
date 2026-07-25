@@ -1457,6 +1457,18 @@ def _portal_baas_hotmart_links_for_payment_method(db: Session, payment_method_id
     return resolve_baas_hotmart_links_for_payment_method(db, payment_method_id)
 
 
+def _portal_fresh_baas_hotmart_link_items(db: Session, payment_method_id: int) -> list:
+    """Plantilla BAAS recién consultada (sin reutilizar JSON obsoleto de la transacción)."""
+    from app.models.payment_link_template import PaymentLinkTemplate
+
+    db.query(PaymentLinkTemplate).filter(
+        PaymentLinkTemplate.payment_method_id == int(payment_method_id),
+        PaymentLinkTemplate.module_type == "BAAS",
+        PaymentLinkTemplate.product_id.is_(None),
+    ).execution_options(populate_existing=True).first()
+    return hotmart_links_from_model(_portal_baas_hotmart_links_for_payment_method(db, payment_method_id))
+
+
 def _portal_filter_recharge_payment_options_by_currency(
     options: list[PortalAssignedPaymentMethod],
     currency: str,
@@ -2014,8 +2026,8 @@ def portal_baas_link_blocks_for_payment_method(
     from app.services.client_payment_method_service import validate_client_portal_payment_method_id
 
     validate_client_portal_payment_method_id(db, client, pm_id)
-    links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
-    return PortalPaymentMethodLinkBlocks(hotmart_links=hotmart_links_from_model(links))
+    links = _portal_fresh_baas_hotmart_link_items(db, pm_id)
+    return PortalPaymentMethodLinkBlocks(hotmart_links=links)
 
 
 @router.get("/{portal_token}/recharges", response_model=list[PortalWalletRechargeItem])
@@ -2063,15 +2075,19 @@ def portal_update_wallet_recharge(
             deposit_account_id=payload.deposit_account_id,
         )
         req.payment_method_id = pm_id
-        resolved_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
-        req.hotmart_links = resolved_links if resolved_links else []
+        raw_tpl_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+        req.hotmart_links = raw_tpl_links if raw_tpl_links else []
 
     if payload.deposit_account_id is not None:
         _validate_wallet_recharge_deposit_account(db, client, req, int(payload.deposit_account_id))
 
     db.commit()
     db.refresh(req)
-    return _portal_wallet_recharge_item_from_request(db, client, req)
+    item = _portal_wallet_recharge_item_from_request(db, client, req)
+    if payload.payment_method_id is not None:
+        live_links = _portal_fresh_baas_hotmart_link_items(db, int(req.payment_method_id))
+        return item.model_copy(update={"hotmart_links": live_links, "payment_method_id": int(req.payment_method_id)})
+    return item
 
 
 @router.delete(

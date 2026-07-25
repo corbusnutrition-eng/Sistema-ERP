@@ -1998,6 +1998,14 @@ function ClientPortalPageInner() {
   /** Elección explícita del usuario; evita que efectos de hidratación reseteen el Select. */
   const rechargePaymentMethodUserPickRef = useRef({})
   const salePaymentMethodUserPickRef = useRef({})
+  /** Cancelación / orden de peticiones PATCH de preferencias de pago (recargas). */
+  const rechargePaymentPrefsAbortRef = useRef({})
+  const rechargePaymentPrefsRequestGenRef = useRef({})
+  /** Cancelación / orden de peticiones GET de bloques Hotmart (ventas). */
+  const saleHotmartLinksAbortRef = useRef({})
+  const saleHotmartLinksRequestGenRef = useRef({})
+  const [rechargePaymentPrefsPatchingById, setRechargePaymentPrefsPatchingById] = useState({})
+  const [saleHotmartLinksFetchingById, setSaleHotmartLinksFetchingById] = useState({})
 
   const handleRetiroWidgetError = useCallback((message) => {
     retiroInFlightRef.current = false
@@ -2350,12 +2358,34 @@ function ClientPortalPageInner() {
     }))
   }, [])
 
+  const shouldApplyRechargePaymentPrefsResponse = useCallback((rechargeId, requestedPaymentMethodId, response) => {
+    const rid = Number(rechargeId)
+    const requestedPm = Number(requestedPaymentMethodId)
+    const responsePm = Number(response?.payment_method_id)
+    const currentPick = Number(rechargePaymentMethodUserPickRef.current[rid])
+    if (!Number.isFinite(requestedPm) || requestedPm < 1) return false
+    if (Number.isFinite(responsePm) && responsePm !== requestedPm) return false
+    if (Number.isFinite(currentPick) && currentPick > 0 && currentPick !== requestedPm) return false
+    return true
+  }, [])
+
   const syncPortalRechargePaymentPrefs = useCallback(
-    async (rechargeRow, { paymentMethodId, depositAccountId } = {}) => {
+    async (rechargeRow, { paymentMethodId, depositAccountId, clearHotmartLinks = false } = {}) => {
       const rid = Number(rechargeRow?.id)
       const pm = Number(paymentMethodId)
       if (!token || !Number.isFinite(rid) || rid < 1 || !Number.isFinite(pm) || pm < 1) return
-      clearRechargeHotmartLinksOptimistic(rid, pm)
+
+      rechargePaymentPrefsAbortRef.current[rid]?.abort()
+      const controller = new AbortController()
+      rechargePaymentPrefsAbortRef.current[rid] = controller
+      const requestGen = (rechargePaymentPrefsRequestGenRef.current[rid] || 0) + 1
+      rechargePaymentPrefsRequestGenRef.current[rid] = requestGen
+
+      if (clearHotmartLinks) {
+        clearRechargeHotmartLinksOptimistic(rid, pm)
+      }
+      setRechargePaymentPrefsPatchingById((prev) => ({ ...prev, [rid]: true }))
+
       try {
         const body = { payment_method_id: pm }
         const dep = Number(depositAccountId)
@@ -2363,9 +2393,14 @@ function ClientPortalPageInner() {
         const { data } = await api.patch(
           `/api/v1/portal/${encodeURIComponent(token)}/recharges/${rid}`,
           body,
+          { signal: controller.signal },
         )
+        if (rechargePaymentPrefsRequestGenRef.current[rid] !== requestGen) return
+        if (!shouldApplyRechargePaymentPrefsResponse(rid, pm, data)) return
         setWalletRechargePatchById((prev) => ({ ...prev, [rid]: data }))
       } catch (err) {
+        if (rechargePaymentPrefsRequestGenRef.current[rid] !== requestGen) return
+        if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return
         const detail = err?.response?.data?.detail
         patchRechargePayForm(setRechargeFormById, rid, {
           error:
@@ -2373,30 +2408,79 @@ function ClientPortalPageInner() {
               ? detail
               : 'No se pudo actualizar el método de pago. Intenta de nuevo.',
         })
+      } finally {
+        if (rechargePaymentPrefsAbortRef.current[rid] === controller) {
+          delete rechargePaymentPrefsAbortRef.current[rid]
+        }
+        if (rechargePaymentPrefsRequestGenRef.current[rid] === requestGen) {
+          setRechargePaymentPrefsPatchingById((prev) => {
+            if (!prev[rid]) return prev
+            const next = { ...prev }
+            delete next[rid]
+            return next
+          })
+        }
       }
     },
-    [api, clearRechargeHotmartLinksOptimistic, token],
+    [api, clearRechargeHotmartLinksOptimistic, shouldApplyRechargePaymentPrefsResponse, token],
   )
+
+  const shouldApplySaleHotmartLinksResponse = useCallback((saleId, requestedPaymentMethodId) => {
+    const sid = Number(saleId)
+    const requestedPm = Number(requestedPaymentMethodId)
+    const currentPick = Number(salePaymentMethodUserPickRef.current[sid])
+    if (!Number.isFinite(requestedPm) || requestedPm < 1) return false
+    if (Number.isFinite(currentPick) && currentPick > 0 && currentPick !== requestedPm) return false
+    return true
+  }, [])
 
   const syncPortalSaleHotmartLinks = useCallback(
     async (saleId, paymentMethodId) => {
       const sid = Number(saleId)
       const pm = Number(paymentMethodId)
       if (!token || !Number.isFinite(sid) || sid < 1 || !Number.isFinite(pm) || pm < 1) return
+
+      saleHotmartLinksAbortRef.current[sid]?.abort()
+      const controller = new AbortController()
+      saleHotmartLinksAbortRef.current[sid] = controller
+      const requestGen = (saleHotmartLinksRequestGenRef.current[sid] || 0) + 1
+      saleHotmartLinksRequestGenRef.current[sid] = requestGen
+
       setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
+      setSaleHotmartLinksFetchingById((prev) => ({ ...prev, [sid]: true }))
+
       try {
         const { data } = await api.get(
           `/api/v1/portal/${encodeURIComponent(token)}/payment-methods/${pm}/baas-link-blocks`,
+          { signal: controller.signal },
         )
+        if (saleHotmartLinksRequestGenRef.current[sid] !== requestGen) return
+        if (!shouldApplySaleHotmartLinksResponse(sid, pm)) return
         setSaleHotmartLinksById((prev) => ({
           ...prev,
           [sid]: Array.isArray(data?.hotmart_links) ? data.hotmart_links : [],
         }))
-      } catch {
-        setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
+      } catch (err) {
+        if (saleHotmartLinksRequestGenRef.current[sid] !== requestGen) return
+        if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return
+        if (shouldApplySaleHotmartLinksResponse(sid, pm)) {
+          setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
+        }
+      } finally {
+        if (saleHotmartLinksAbortRef.current[sid] === controller) {
+          delete saleHotmartLinksAbortRef.current[sid]
+        }
+        if (saleHotmartLinksRequestGenRef.current[sid] === requestGen) {
+          setSaleHotmartLinksFetchingById((prev) => {
+            if (!prev[sid]) return prev
+            const next = { ...prev }
+            delete next[sid]
+            return next
+          })
+        }
       }
     },
-    [api, token],
+    [api, shouldApplySaleHotmartLinksResponse, token],
   )
 
   const handleCancelClientRecharge = useCallback(
@@ -6663,7 +6747,10 @@ function ClientPortalPageInner() {
                       </label>
                       <PortalCustomSelect
                         id={`recharge-baas-pm-${frId}`}
-                        disabled={rechargePaymentMethods.length === 0}
+                        disabled={
+                          rechargePaymentMethods.length === 0
+                          || Boolean(rechargePaymentPrefsPatchingById[frId])
+                        }
                         value={selectedRechargePaymentMethodId}
                         onChange={(mid) => {
                           rechargePaymentMethodUserPickRef.current[frId] = mid
@@ -6671,7 +6758,10 @@ function ClientPortalPageInner() {
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
                           setRechargeForm({ method: mid, account: '', error: null })
                           setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
-                          void syncPortalRechargePaymentPrefs(fr, { paymentMethodId: mid })
+                          void syncPortalRechargePaymentPrefs(fr, {
+                            paymentMethodId: mid,
+                            clearHotmartLinks: true,
+                          })
                         }}
                         options={portalPaymentMethodOptions(rechargePaymentMethods)}
                         placeholder="Seleccionar…"
@@ -7285,7 +7375,10 @@ function ClientPortalPageInner() {
                             </label>
                             <PortalCustomSelect
                               id={`pm-${sid}`}
-                              disabled={pmList.length === 0}
+                              disabled={
+                                pmList.length === 0
+                                || Boolean(saleHotmartLinksFetchingById[sid])
+                              }
                               value={selectedSalePaymentMethodId}
                               onChange={(nextMethod) => {
                                 salePaymentMethodUserPickRef.current[sid] = nextMethod
