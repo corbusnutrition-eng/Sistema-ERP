@@ -313,6 +313,12 @@ class PortalWalletRechargeItem(BaseModel):
     hotmart_links: list[HotmartLinkItem] = Field(default_factory=list)
 
 
+class PortalPaymentMethodLinkBlocks(BaseModel):
+    """Bloques de links/multimedia BAAS para un método de pago en checkout del portal."""
+
+    hotmart_links: list[HotmartLinkItem] = Field(default_factory=list)
+
+
 class PortalNetworkLevelCount(BaseModel):
     level: int = Field(..., ge=1, description="Profundidad en el árbol (raíz = 1).")
     count: int = Field(..., ge=0, description="Distribuidores en ese nivel.")

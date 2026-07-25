@@ -1938,6 +1938,7 @@ function ClientPortalPageInner() {
 
   const [payMethodBySale, setPayMethodBySale] = useState({})
   const [payAccountBySale, setPayAccountBySale] = useState({})
+  const [saleHotmartLinksById, setSaleHotmartLinksById] = useState({})
   const [receiptFilesBySale, setReceiptFilesBySale] = useState({})
   const [thumbnailUrlsBySale, setThumbnailUrlsBySale] = useState({})
   const receiptFilesRef = useRef({})
@@ -2335,11 +2336,26 @@ function ClientPortalPageInner() {
     [loadPortal, loadWalletRecharges],
   )
 
+  const clearRechargeHotmartLinksOptimistic = useCallback((rechargeId, paymentMethodId) => {
+    const rid = Number(rechargeId)
+    const pm = Number(paymentMethodId)
+    if (!Number.isFinite(rid) || rid < 1) return
+    setWalletRechargePatchById((prev) => ({
+      ...prev,
+      [rid]: {
+        ...(prev[rid] || {}),
+        hotmart_links: [],
+        ...(Number.isFinite(pm) && pm > 0 ? { payment_method_id: pm } : {}),
+      },
+    }))
+  }, [])
+
   const syncPortalRechargePaymentPrefs = useCallback(
     async (rechargeRow, { paymentMethodId, depositAccountId } = {}) => {
       const rid = Number(rechargeRow?.id)
       const pm = Number(paymentMethodId)
       if (!token || !Number.isFinite(rid) || rid < 1 || !Number.isFinite(pm) || pm < 1) return
+      clearRechargeHotmartLinksOptimistic(rid, pm)
       try {
         const body = { payment_method_id: pm }
         const dep = Number(depositAccountId)
@@ -2357,6 +2373,27 @@ function ClientPortalPageInner() {
               ? detail
               : 'No se pudo actualizar el método de pago. Intenta de nuevo.',
         })
+      }
+    },
+    [api, clearRechargeHotmartLinksOptimistic, token],
+  )
+
+  const syncPortalSaleHotmartLinks = useCallback(
+    async (saleId, paymentMethodId) => {
+      const sid = Number(saleId)
+      const pm = Number(paymentMethodId)
+      if (!token || !Number.isFinite(sid) || sid < 1 || !Number.isFinite(pm) || pm < 1) return
+      setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
+      try {
+        const { data } = await api.get(
+          `/api/v1/portal/${encodeURIComponent(token)}/payment-methods/${pm}/baas-link-blocks`,
+        )
+        setSaleHotmartLinksById((prev) => ({
+          ...prev,
+          [sid]: Array.isArray(data?.hotmart_links) ? data.hotmart_links : [],
+        }))
+      } catch {
+        setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
       }
     },
     [api, token],
@@ -6630,6 +6667,7 @@ function ClientPortalPageInner() {
                         value={selectedRechargePaymentMethodId}
                         onChange={(mid) => {
                           rechargePaymentMethodUserPickRef.current[frId] = mid
+                          clearRechargeHotmartLinksOptimistic(frId, mid)
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
                           setRechargeForm({ method: mid, account: '', error: null })
                           setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
@@ -6646,7 +6684,11 @@ function ClientPortalPageInner() {
                     </PortalPaymentSectionShell>
 
                     {showRechargeHotmartLinks ? (
-                      <PortalHotmartLinksPanel links={rechargeHotmartLinks} currency={cur} />
+                      <PortalHotmartLinksPanel
+                        key={`recharge-hotmart-${frId}-${selectedRechargePaymentMethodId}`}
+                        links={rechargeHotmartLinks}
+                        currency={cur}
+                      />
                     ) : null}
 
                     {showRechargeDepositSection ? (
@@ -6996,6 +7038,13 @@ function ClientPortalPageInner() {
                 const methodId = payMethodBySale[sid] ?? ''
                 const selectedSalePaymentMethodId = String(methodId || '').trim()
                 const depositAccountId = payAccountBySale[sid] ?? ''
+                const saleHotmartLinks =
+                  saleHotmartLinksById[sid] !== undefined
+                    ? saleHotmartLinksById[sid]
+                    : (Array.isArray(sale.hotmart_links) ? sale.hotmart_links : [])
+                const showSaleHotmartLinks =
+                  Boolean(selectedSalePaymentMethodId)
+                  && saleHotmartLinks.some(paymentLinkBlockHasPortalContent)
                 const salePayTree = buildPortalPaymentTree(
                   data,
                   sale?.allowed_payment_methods,
@@ -7240,6 +7289,7 @@ function ClientPortalPageInner() {
                               value={selectedSalePaymentMethodId}
                               onChange={(nextMethod) => {
                                 salePaymentMethodUserPickRef.current[sid] = nextMethod
+                                setSaleHotmartLinksById((p) => ({ ...p, [sid]: [] }))
                                 setPayMethodBySale((p) => ({ ...p, [sid]: nextMethod }))
                                 setPayAccountBySale((p) => {
                                   const n = { ...p }
@@ -7248,6 +7298,7 @@ function ClientPortalPageInner() {
                                   else n[sid] = ''
                                   return n
                                 })
+                                void syncPortalSaleHotmartLinks(sid, nextMethod)
                               }}
                               options={portalPaymentMethodOptions(pmList)}
                               placeholder="Seleccionar…"
@@ -7261,10 +7312,12 @@ function ClientPortalPageInner() {
                           </PortalPaymentSectionShell>
                         )}
 
-                        {(Array.isArray(sale.hotmart_links) ? sale.hotmart_links : []).some(
-                          paymentLinkBlockHasPortalContent,
-                        ) ? (
-                          <PortalHotmartLinksPanel links={sale.hotmart_links} currency={saleCurrency} />
+                        {showSaleHotmartLinks ? (
+                          <PortalHotmartLinksPanel
+                            key={`sale-hotmart-${sid}-${selectedSalePaymentMethodId}`}
+                            links={saleHotmartLinks}
+                            currency={saleCurrency}
+                          />
                         ) : null}
 
                         {showSaleDepositSection ? (

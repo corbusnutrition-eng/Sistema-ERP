@@ -92,6 +92,7 @@ from app.schemas.portal_public import (
     PortalLedgerEntry,
     PortalOutstandingSale,
     PortalPaymentMethodPick,
+    PortalPaymentMethodLinkBlocks,
     PortalPaymentSubmitResponse,
     PortalSalePaymentBrief,
     PortalAssignPricesRequest,
@@ -1056,13 +1057,11 @@ def _portal_hotmart_links_for_recharge_display(
             pid = None
         if pid is not None and pid in allowed_pm_ids:
             links = _portal_baas_hotmart_links_for_payment_method(db, pid)
-            if links:
-                return hotmart_links_from_model(links)
+            return hotmart_links_from_model(links)
     if len(allowed_pm_ids) == 1:
         only_pm = next(iter(allowed_pm_ids))
         links = _portal_baas_hotmart_links_for_payment_method(db, only_pm)
-        if links:
-            return hotmart_links_from_model(links)
+        return hotmart_links_from_model(links)
     return hotmart_links_from_model(getattr(req, "hotmart_links", None))
 
 
@@ -1080,13 +1079,11 @@ def _portal_hotmart_links_for_sale_display(
             pid = None
         if pid is not None and pid in allowed_pm_ids:
             links = _portal_baas_hotmart_links_for_payment_method(db, pid)
-            if links:
-                return hotmart_links_from_model(links)
+            return hotmart_links_from_model(links)
     if len(allowed_pm_ids) == 1:
         only_pm = next(iter(allowed_pm_ids))
         links = _portal_baas_hotmart_links_for_payment_method(db, only_pm)
-        if links:
-            return hotmart_links_from_model(links)
+        return hotmart_links_from_model(links)
     stored = hotmart_links_from_model(getattr(sale, "hotmart_links", None))
     if stored:
         pm_names_allowed = {(p.name or "").strip().lower() for p in pm_picks}
@@ -2000,6 +1997,27 @@ def portal_create_wallet_recharge(
     )
 
 
+@router.get(
+    "/{portal_token}/payment-methods/{payment_method_id}/baas-link-blocks",
+    response_model=PortalPaymentMethodLinkBlocks,
+    summary="Bloques de links/multimedia BAAS para un método de pago (checkout portal)",
+)
+@limiter.limit(PORTAL_FINANCIAL_LIMIT)
+def portal_baas_link_blocks_for_payment_method(
+    request: Request,
+    portal_token: uuid_pkg.UUID,
+    payment_method_id: int,
+    db: DbDep,
+) -> PortalPaymentMethodLinkBlocks:
+    client = _portal_client_from_token(db, portal_token)
+    pm_id = int(payment_method_id)
+    from app.services.client_payment_method_service import validate_client_portal_payment_method_id
+
+    validate_client_portal_payment_method_id(db, client, pm_id)
+    links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+    return PortalPaymentMethodLinkBlocks(hotmart_links=hotmart_links_from_model(links))
+
+
 @router.get("/{portal_token}/recharges", response_model=list[PortalWalletRechargeItem])
 def portal_list_wallet_recharges(portal_token: uuid_pkg.UUID, db: DbDep) -> list[PortalWalletRechargeItem]:
     """Solicitudes de recarga abiertas para el cliente (incluye pagos parciales en curso)."""
@@ -2045,7 +2063,8 @@ def portal_update_wallet_recharge(
             deposit_account_id=payload.deposit_account_id,
         )
         req.payment_method_id = pm_id
-        req.hotmart_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+        resolved_links = _portal_baas_hotmart_links_for_payment_method(db, pm_id)
+        req.hotmart_links = resolved_links if resolved_links else []
 
     if payload.deposit_account_id is not None:
         _validate_wallet_recharge_deposit_account(db, client, req, int(payload.deposit_account_id))
