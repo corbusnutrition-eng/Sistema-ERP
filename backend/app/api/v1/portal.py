@@ -787,6 +787,14 @@ def _portal_resolve_payment_picks_for_client(
     cur = normalize_currency_code(currency, "USD")
 
     if sale is not None:
+        crm_override = _portal_crm_override_payment_picks_for_transaction(
+            db,
+            client,
+            currency=cur,
+        )
+        if crm_override is not None:
+            return crm_override
+
         raw_pm = (
             list(sale.allowed_payment_methods or [])
             if isinstance(sale.allowed_payment_methods, list)
@@ -794,17 +802,6 @@ def _portal_resolve_payment_picks_for_client(
         )
         labels = [str(x).strip() for x in raw_pm if str(x).strip()]
         pm_picks_from_labels = _portal_build_method_picks(db, labels) if labels else []
-        pm_ids = [int(p.id) for p in pm_picks_from_labels]
-
-        crm_override = _portal_crm_override_payment_picks_for_transaction(
-            db,
-            client,
-            currency=cur,
-            transaction_payment_method_ids=pm_ids if pm_ids else None,
-            transaction_payment_method_names=labels if labels else None,
-        )
-        if crm_override is not None:
-            return crm_override
 
         dep_ids = _portal_positive_int_ids_from_list(
             sale.allowed_deposit_accounts if isinstance(sale.allowed_deposit_accounts, list) else None
@@ -920,7 +917,7 @@ def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple
         payment_methods_tree=list(pm_tree or []),
         payment_events=list(payment_events or []),
         client_payments=list(client_payments or []),
-        hotmart_links=hotmart_links_from_model(getattr(s, "hotmart_links", None)),
+        hotmart_links=_portal_hotmart_links_for_sale_display(db, s, methods),
     )
     return _portal_sanitize_outstanding_sale(row), balance_due_out
 
@@ -1001,12 +998,10 @@ def _portal_crm_override_payment_picks_for_transaction(
     client: Client,
     *,
     currency: str,
-    transaction_payment_method_ids: Optional[list[int]] = None,
-    transaction_payment_method_names: Optional[list[str]] = None,
 ) -> Optional[tuple[list[PortalPaymentMethodPick], list[PortalDepositPick], list[PortalAssignedPaymentMethod]]]:
     """
-    Override maestro CRM: reemplaza el snapshot de la transacción con cuentas CRM vigentes,
-    acotadas a los métodos de pago de la transacción.
+    Override maestro CRM: reemplaza snapshot de la transacción con todos los métodos
+    y cuentas activos en el perfil del cliente.
     """
     from app.services.client_payment_method_service import (
         client_has_custom_payment_account_prefs,
@@ -1025,31 +1020,14 @@ def _portal_crm_override_payment_picks_for_transaction(
     if not nested:
         return None
 
-    pm_id_filter: Optional[set[int]] = None
-    if transaction_payment_method_ids:
-        pm_id_filter = set(_portal_positive_int_ids_from_list(transaction_payment_method_ids))
-    elif transaction_payment_method_names:
-        labels = [str(x).strip() for x in transaction_payment_method_names if str(x).strip()]
-        if labels:
-            pm_picks = _portal_build_method_picks(db, labels)
-            if pm_picks:
-                pm_id_filter = {int(p.id) for p in pm_picks}
-
-    filtered_nested = nested
-    if pm_id_filter:
-        filtered_nested = [m for m in nested if int(m.id) in pm_id_filter]
-
-    if not filtered_nested:
-        return None
-
     methods = [
         PortalPaymentMethodPick(id=int(m.id), name=m.name)
-        for m in filtered_nested
+        for m in nested
         if m.deposit_accounts
     ]
     deps: list[PortalDepositPick] = []
     seen_dep: set[int] = set()
-    for method in filtered_nested:
+    for method in nested:
         for dep in method.deposit_accounts or []:
             did = int(dep.id)
             if did in seen_dep:
@@ -1060,7 +1038,63 @@ def _portal_crm_override_payment_picks_for_transaction(
     if not deps:
         return None
 
-    return methods, deps, filtered_nested
+    return methods, deps, nested
+
+
+def _portal_hotmart_links_for_recharge_display(
+    db: Session,
+    req: WalletRechargeRequest,
+    pm_picks: list[PortalPaymentMethodPick],
+) -> Optional[list]:
+    """Links Hotmart para portal según métodos CRM vigentes y selección persistida."""
+    allowed_pm_ids = {int(p.id) for p in (pm_picks or [])}
+    stored_pm = getattr(req, "payment_method_id", None)
+    if stored_pm is not None:
+        try:
+            pid = int(stored_pm)
+        except (TypeError, ValueError):
+            pid = None
+        if pid is not None and pid in allowed_pm_ids:
+            links = _portal_baas_hotmart_links_for_payment_method(db, pid)
+            if links:
+                return hotmart_links_from_model(links)
+    if len(allowed_pm_ids) == 1:
+        only_pm = next(iter(allowed_pm_ids))
+        links = _portal_baas_hotmart_links_for_payment_method(db, only_pm)
+        if links:
+            return hotmart_links_from_model(links)
+    return None
+
+
+def _portal_hotmart_links_for_sale_display(
+    db: Session,
+    sale: Sale,
+    pm_picks: list[PortalPaymentMethodPick],
+) -> Optional[list]:
+    allowed_pm_ids = {int(p.id) for p in (pm_picks or [])}
+    stored_pm = getattr(sale, "payment_method_id", None)
+    if stored_pm is not None:
+        try:
+            pid = int(stored_pm)
+        except (TypeError, ValueError):
+            pid = None
+        if pid is not None and pid in allowed_pm_ids:
+            links = _portal_baas_hotmart_links_for_payment_method(db, pid)
+            if links:
+                return hotmart_links_from_model(links)
+    if len(allowed_pm_ids) == 1:
+        only_pm = next(iter(allowed_pm_ids))
+        links = _portal_baas_hotmart_links_for_payment_method(db, only_pm)
+        if links:
+            return hotmart_links_from_model(links)
+    stored = hotmart_links_from_model(getattr(sale, "hotmart_links", None))
+    if stored:
+        pm_names_allowed = {(p.name or "").strip().lower() for p in pm_picks}
+        raw_pm = sale.allowed_payment_methods if isinstance(sale.allowed_payment_methods, list) else []
+        for name in raw_pm:
+            if str(name).strip().lower() in pm_names_allowed:
+                return stored
+    return None
 
 
 def _portal_wallet_recharge_deposit_pick_ids_ordered(db: Session, req: WalletRechargeRequest) -> list[int]:
@@ -1462,19 +1496,17 @@ def _portal_resolve_payment_picks_for_recharge(
         get_client_currency(client),
     )
 
-    raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else []
-    pm_ids = _portal_positive_int_ids_from_list(raw_pm)
-
     crm_override = _portal_crm_override_payment_picks_for_transaction(
         db,
         client,
         currency=recharge_cur,
-        transaction_payment_method_ids=pm_ids if pm_ids else None,
     )
     if crm_override is not None:
         pm_picks, dep_picks, pm_tree = crm_override
-        pm_disp = payment_methods_display(db, raw_pm) if raw_pm else ", ".join(p.name for p in pm_picks)
+        pm_disp = ", ".join(p.name for p in pm_picks) if pm_picks else ""
         return pm_picks, dep_picks, pm_tree, pm_disp
+
+    raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else []
 
     pm_picks: list[PortalPaymentMethodPick] = []
     dep_picks: list[PortalDepositPick] = []
@@ -1581,7 +1613,7 @@ def _portal_wallet_recharge_item_from_request(
             if getattr(req, "payment_method_id", None) is not None
             else None
         ),
-        hotmart_links=hotmart_links_from_model(getattr(req, "hotmart_links", None)),
+        hotmart_links=_portal_hotmart_links_for_recharge_display(db, req, pm_picks),
     )
 
 

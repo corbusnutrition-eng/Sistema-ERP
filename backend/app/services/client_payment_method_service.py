@@ -639,6 +639,116 @@ def get_crm_account_ids_for_client_payment_methods(
     return sorted(out)
 
 
+def get_crm_payment_method_ids_for_client(
+    db: Session,
+    client_id: int,
+    *,
+    currency: str,
+) -> list[int]:
+    """IDs de métodos de pago activos en CRM con al menos una cuenta en la moneda."""
+    cid = int(client_id)
+    if cid < 1 or not client_has_custom_payment_account_prefs(db, cid):
+        return []
+
+    selections = get_client_assigned_selections(db, cid)
+    if not selections:
+        return []
+
+    cur = normalize_currency_code(currency, "USD")
+    out: list[int] = []
+    seen: set[int] = set()
+    for sel in selections:
+        pid = int(sel.payment_method_id)
+        if pid in seen:
+            continue
+        has_acc_in_cur = False
+        for aid in sel.account_ids:
+            acc = db.get(Account, aid)
+            if acc is None or not acc.is_active or not is_liquid_deposit_account(acc):
+                continue
+            if normalize_currency_code(str(acc.currency or "USD"), "USD") == cur:
+                has_acc_in_cur = True
+                break
+        if not has_acc_in_cur:
+            continue
+        pm = db.get(PaymentMethod, pid)
+        if pm is None or not pm.is_active:
+            continue
+        seen.add(pid)
+        out.append(pid)
+    return sorted(out)
+
+
+def get_crm_payment_method_names_for_client(
+    db: Session,
+    client_id: int,
+    *,
+    currency: str,
+) -> list[str]:
+    """Nombres de métodos CRM (ventas ERP almacenan etiquetas, no IDs)."""
+    names: list[str] = []
+    for pid in get_crm_payment_method_ids_for_client(db, int(client_id), currency=currency):
+        pm = db.get(PaymentMethod, int(pid))
+        if pm is None or not pm.is_active:
+            continue
+        label = (pm.name or "").strip()
+        if label:
+            names.append(label)
+    return names
+
+
+def _recalculate_recharge_hotmart_links_after_crm(
+    db: Session,
+    req,
+    payment_method_ids: list[int],
+) -> None:
+    from app.services.payment_link_template_propagation import resolve_baas_hotmart_links_for_recharge_create
+
+    pm_ids = _normalize_positive_int_ids(payment_method_ids)
+    stored_pm = getattr(req, "payment_method_id", None)
+    resolved_pm: Optional[int] = None
+    if stored_pm is not None:
+        try:
+            iv = int(stored_pm)
+            if iv in pm_ids:
+                resolved_pm = iv
+        except (TypeError, ValueError):
+            resolved_pm = None
+    if resolved_pm is None and len(pm_ids) == 1:
+        resolved_pm = pm_ids[0]
+
+    req.payment_method_id = resolved_pm
+    req.hotmart_links = resolve_baas_hotmart_links_for_recharge_create(
+        db,
+        payment_method_id=resolved_pm,
+        allowed_payment_method_ids=pm_ids,
+    )
+
+
+def _recalculate_sale_hotmart_links_after_crm(
+    db: Session,
+    sale,
+    payment_method_names: list[str],
+) -> None:
+    names_norm = {(n or "").strip().lower() for n in payment_method_names if (n or "").strip()}
+    pm_fk = getattr(sale, "payment_method_id", None)
+    if pm_fk is not None:
+        pm_row = db.get(PaymentMethod, int(pm_fk))
+        if pm_row is None or (pm_row.name or "").strip().lower() not in names_norm:
+            sale.payment_method_id = None
+            sale.hotmart_links = None
+            return
+    if not names_norm:
+        sale.hotmart_links = None
+        return
+    stored = getattr(sale, "hotmart_links", None)
+    if isinstance(stored, list) and stored:
+        raw_pm = sale.allowed_payment_methods if isinstance(sale.allowed_payment_methods, list) else []
+        still_ok = any(str(x).strip().lower() in names_norm for x in raw_pm if str(x).strip())
+        if not still_ok:
+            sale.hotmart_links = None
+
+
 def sync_pending_transaction_deposit_accounts_from_crm(
     db: Session,
     *,
@@ -646,8 +756,7 @@ def sync_pending_transaction_deposit_accounts_from_crm(
     allowed_account_ids: list[int],
 ) -> tuple[int, int]:
     """
-    Reemplaza allowlists de ventas/recargas abiertas con cuentas CRM vigentes,
-    acotadas al método de pago de cada transacción.
+    Reemplaza métodos y cuentas de ventas/recargas abiertas con la configuración CRM vigente.
     """
     cid = int(client_id)
     if cid < 1 or not client_has_custom_payment_account_prefs(db, cid):
@@ -660,7 +769,6 @@ def sync_pending_transaction_deposit_accounts_from_crm(
 
     client = db.get(Client, cid)
     default_cur = get_client_currency(client) if client is not None else "USD"
-    all_crm_ids = _normalize_positive_int_ids(allowed_account_ids)
 
     sales_updated = 0
     recharges_updated = 0
@@ -677,31 +785,38 @@ def sync_pending_transaction_deposit_accounts_from_crm(
     )
     for sale in sales:
         sale_cur = normalize_currency_code(str(getattr(sale, "currency", None) or default_cur), default_cur)
-        raw_pm = sale.allowed_payment_methods if isinstance(sale.allowed_payment_methods, list) else None
-        pm_names = [str(x).strip() for x in (raw_pm or []) if str(x).strip()]
-        new_ids = get_crm_account_ids_for_client_payment_methods(
+        new_pm_names = get_crm_payment_method_names_for_client(db, cid, currency=sale_cur)
+        new_account_ids = get_crm_account_ids_for_client_payment_methods(
             db,
             cid,
             currency=sale_cur,
-            payment_method_names=pm_names if pm_names else None,
         )
-        if not new_ids:
-            new_ids = all_crm_ids
-        current = _normalize_positive_int_ids(
+        current_pm = [
+            str(x).strip()
+            for x in (sale.allowed_payment_methods if isinstance(sale.allowed_payment_methods, list) else [])
+            if str(x).strip()
+        ]
+        current_accounts = _normalize_positive_int_ids(
             sale.allowed_deposit_accounts if isinstance(sale.allowed_deposit_accounts, list) else []
         )
-        if sorted(new_ids) == sorted(current):
+        pm_changed = sorted(current_pm) != sorted(new_pm_names)
+        acc_changed = sorted(current_accounts) != sorted(new_account_ids)
+        if not pm_changed and not acc_changed:
             continue
-        sale.allowed_deposit_accounts = new_ids if new_ids else None
-        dep_fk = getattr(sale, "deposit_account_id", None)
-        if dep_fk is not None:
-            try:
-                dep_iv = int(dep_fk)
-            except (TypeError, ValueError):
-                dep_iv = None
-            allowed_set = set(new_ids)
-            if dep_iv is not None and dep_iv not in allowed_set:
-                sale.deposit_account_id = new_ids[0] if new_ids else None
+        if pm_changed:
+            sale.allowed_payment_methods = new_pm_names if new_pm_names else None
+        if acc_changed:
+            sale.allowed_deposit_accounts = new_account_ids if new_account_ids else None
+            dep_fk = getattr(sale, "deposit_account_id", None)
+            if dep_fk is not None:
+                try:
+                    dep_iv = int(dep_fk)
+                except (TypeError, ValueError):
+                    dep_iv = None
+                allowed_set = set(new_account_ids)
+                if dep_iv is not None and dep_iv not in allowed_set:
+                    sale.deposit_account_id = new_account_ids[0] if new_account_ids else None
+        _recalculate_sale_hotmart_links_after_crm(db, sale, new_pm_names)
         sales_updated += 1
 
     recharges = (
@@ -717,22 +832,27 @@ def sync_pending_transaction_deposit_accounts_from_crm(
             getattr(req, "recharge_currency", None),
             default_cur,
         )
-        raw_pm = req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else None
-        pm_ids = _normalize_positive_int_ids(raw_pm if isinstance(raw_pm, list) else [])
-        new_ids = get_crm_account_ids_for_client_payment_methods(
+        new_pm_ids = get_crm_payment_method_ids_for_client(db, cid, currency=req_cur)
+        new_account_ids = get_crm_account_ids_for_client_payment_methods(
             db,
             cid,
             currency=req_cur,
-            payment_method_ids=pm_ids if pm_ids else None,
         )
-        if not new_ids:
-            new_ids = all_crm_ids
-        current = _normalize_positive_int_ids(
+        current_pm = _normalize_positive_int_ids(
+            req.allowed_payment_methods if isinstance(req.allowed_payment_methods, list) else []
+        )
+        current_accounts = _normalize_positive_int_ids(
             req.allowed_deposit_account_ids if isinstance(req.allowed_deposit_account_ids, list) else []
         )
-        if sorted(new_ids) == sorted(current):
+        pm_changed = sorted(current_pm) != sorted(new_pm_ids)
+        acc_changed = sorted(current_accounts) != sorted(new_account_ids)
+        if not pm_changed and not acc_changed:
             continue
-        req.allowed_deposit_account_ids = new_ids if new_ids else None
+        if pm_changed:
+            req.allowed_payment_methods = new_pm_ids if new_pm_ids else None
+        if acc_changed:
+            req.allowed_deposit_account_ids = new_account_ids if new_account_ids else None
+        _recalculate_recharge_hotmart_links_after_crm(db, req, new_pm_ids)
         recharges_updated += 1
 
     return sales_updated, recharges_updated
