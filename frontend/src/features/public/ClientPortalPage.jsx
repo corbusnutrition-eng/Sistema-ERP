@@ -40,7 +40,7 @@ import {
 import PortalManualAmountField from './PortalManualAmountField'
 import ClientRechargeRequestModal from './ClientRechargeRequestModal'
 import PortalCustomSelect from './PortalCustomSelect'
-import PortalHotmartLinksPanel from './PortalHotmartLinksPanel'
+import PortalHotmartLinksPanel, { PortalHotmartLinksLoadingShell } from './PortalHotmartLinksPanel'
 import { paymentLinkBlockHasPortalContent } from '../../utils/hotmartLinks'
 import {
   formatCryptoNetworkLabel,
@@ -2018,7 +2018,9 @@ function ClientPortalPageInner() {
   const payAccountBySaleRef = useRef({})
   payAccountBySaleRef.current = payAccountBySale
   const [rechargePaymentPrefsPatchingById, setRechargePaymentPrefsPatchingById] = useState({})
+  const [rechargeHotmartBlocksLoadingById, setRechargeHotmartBlocksLoadingById] = useState({})
   const [saleHotmartLinksFetchingById, setSaleHotmartLinksFetchingById] = useState({})
+  const [saleHotmartBlocksLoadingById, setSaleHotmartBlocksLoadingById] = useState({})
 
   const handleRetiroWidgetError = useCallback((message) => {
     retiroInFlightRef.current = false
@@ -2369,6 +2371,28 @@ function ClientPortalPageInner() {
     }
   }, [])
 
+  const clearRechargeHotmartBlocksLoading = useCallback((rechargeId) => {
+    const rid = Number(rechargeId)
+    if (!Number.isFinite(rid) || rid < 1) return
+    setRechargeHotmartBlocksLoadingById((prev) => {
+      if (!prev[rid]) return prev
+      const next = { ...prev }
+      delete next[rid]
+      return next
+    })
+  }, [])
+
+  const clearSaleHotmartBlocksLoading = useCallback((saleId) => {
+    const sid = Number(saleId)
+    if (!Number.isFinite(sid) || sid < 1) return
+    setSaleHotmartBlocksLoadingById((prev) => {
+      if (!prev[sid]) return prev
+      const next = { ...prev }
+      delete next[sid]
+      return next
+    })
+  }, [])
+
   const rollbackRechargePaymentPrefs = useCallback((rechargeRow, errorMessage) => {
     const rid = Number(rechargeRow?.id)
     if (!Number.isFinite(rid) || rid < 1) return
@@ -2410,7 +2434,8 @@ function ClientPortalPageInner() {
         return next
       })
     }
-  }, [])
+    clearRechargeHotmartBlocksLoading(rid)
+  }, [clearRechargeHotmartBlocksLoading])
 
   const clearRechargeHotmartLinksOptimistic = useCallback((rechargeId, paymentMethodId) => {
     const rid = Number(rechargeId)
@@ -2438,7 +2463,7 @@ function ClientPortalPageInner() {
   }, [])
 
   const syncPortalRechargePaymentPrefs = useCallback(
-    async (rechargeRow, { paymentMethodId, depositAccountId, clearHotmartLinks = false } = {}) => {
+    async (rechargeRow, { paymentMethodId, depositAccountId, clearHotmartLinks = false, rollbackOnError = false } = {}) => {
       const rid = Number(rechargeRow?.id)
       const pm = Number(paymentMethodId)
       if (!token || !Number.isFinite(rid) || rid < 1 || !Number.isFinite(pm) || pm < 1) return
@@ -2470,7 +2495,7 @@ function ClientPortalPageInner() {
       } catch (err) {
         if (rechargePaymentPrefsRequestGenRef.current[rid] !== requestGen) return
         if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return
-        if (clearHotmartLinks) {
+        if (clearHotmartLinks || rollbackOnError) {
           const status = err?.response?.status
           const detail = err?.response?.data?.detail
           const errMsg =
@@ -2500,10 +2525,11 @@ function ClientPortalPageInner() {
             delete next[rid]
             return next
           })
+          clearRechargeHotmartBlocksLoading(rid)
         }
       }
     },
-    [api, clearRechargeHotmartLinksOptimistic, commitRechargePaymentPrefsSuccess, rollbackRechargePaymentPrefs, shouldApplyRechargePaymentPrefsResponse, token],
+    [api, clearRechargeHotmartBlocksLoading, clearRechargeHotmartLinksOptimistic, commitRechargePaymentPrefsSuccess, rollbackRechargePaymentPrefs, shouldApplyRechargePaymentPrefsResponse, token],
   )
 
   const scheduleDebouncedRechargePaymentMethodSync = useCallback(
@@ -2516,7 +2542,8 @@ function ClientPortalPageInner() {
         delete rechargePaymentMethodDebounceRef.current[rid]
         void syncPortalRechargePaymentPrefs(rechargeRow, {
           paymentMethodId: pm,
-          clearHotmartLinks: true,
+          clearHotmartLinks: false,
+          rollbackOnError: true,
         })
       }, PORTAL_PAYMENT_METHOD_DEBOUNCE_MS)
     },
@@ -2553,7 +2580,8 @@ function ClientPortalPageInner() {
     if (errorMessage) {
       setSubmitErrorBySale((p) => ({ ...p, [sid]: errorMessage }))
     }
-  }, [])
+    clearSaleHotmartBlocksLoading(sid)
+  }, [clearSaleHotmartBlocksLoading])
 
   const shouldApplySaleHotmartLinksResponse = useCallback((saleId, requestedPaymentMethodId) => {
     const sid = Number(saleId)
@@ -2616,10 +2644,11 @@ function ClientPortalPageInner() {
             delete next[sid]
             return next
           })
+          clearSaleHotmartBlocksLoading(sid)
         }
       }
     },
-    [api, commitSaleHotmartLinksSuccess, rollbackSaleHotmartLinks, shouldApplySaleHotmartLinksResponse, token],
+    [api, clearSaleHotmartBlocksLoading, commitSaleHotmartLinksSuccess, rollbackSaleHotmartLinks, shouldApplySaleHotmartLinksResponse, token],
   )
 
   const scheduleDebouncedSalePaymentMethodSync = useCallback(
@@ -2631,7 +2660,6 @@ function ClientPortalPageInner() {
       clearTimeout(salePaymentMethodDebounceRef.current[sid])
       salePaymentMethodDebounceRef.current[sid] = window.setTimeout(() => {
         delete salePaymentMethodDebounceRef.current[sid]
-        setSaleHotmartLinksById((prev) => ({ ...prev, [sid]: [] }))
         void syncPortalSaleHotmartLinks(sid, pm)
       }, PORTAL_PAYMENT_METHOD_DEBOUNCE_MS)
     },
@@ -6691,6 +6719,12 @@ function ClientPortalPageInner() {
             const showRechargeHotmartLinks =
               Boolean(selectedRechargePaymentMethodId)
               && rechargeHotmartLinks.some(paymentLinkBlockHasPortalContent)
+            const rechargeHotmartBlocksLoading =
+              Boolean(selectedRechargePaymentMethodId)
+              && (
+                Boolean(rechargeHotmartBlocksLoadingById[frId])
+                || Boolean(rechargePaymentPrefsPatchingById[frId])
+              )
             const rechargeDepositAccounts = portalAccountsForMethod(payTree, selectedRechargePaymentMethodId)
             const isRechargeRetiroMethod = isCodigosRetiroMethodId(
               rechargePaymentMethods,
@@ -6949,6 +6983,8 @@ function ClientPortalPageInner() {
                         value={selectedRechargePaymentMethodId}
                         onChange={(mid) => {
                           rechargePaymentMethodUserPickRef.current[frId] = mid
+                          clearRechargeHotmartLinksOptimistic(frId, mid)
+                          setRechargeHotmartBlocksLoadingById((p) => ({ ...p, [frId]: true }))
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
                           setRechargeForm({ method: mid, account: '', error: null })
                           setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
@@ -6964,7 +7000,11 @@ function ClientPortalPageInner() {
                       : null}
                     </PortalPaymentSectionShell>
 
-                    {showRechargeHotmartLinks ? (
+                    {rechargeHotmartBlocksLoading ? (
+                      <PortalHotmartLinksLoadingShell
+                        key={`recharge-hotmart-loading-${frId}-${selectedRechargePaymentMethodId}`}
+                      />
+                    ) : showRechargeHotmartLinks ? (
                       <PortalHotmartLinksPanel
                         key={`recharge-hotmart-${frId}-${selectedRechargePaymentMethodId}`}
                         links={rechargeHotmartLinks}
@@ -7326,6 +7366,12 @@ function ClientPortalPageInner() {
                 const showSaleHotmartLinks =
                   Boolean(selectedSalePaymentMethodId)
                   && saleHotmartLinks.some(paymentLinkBlockHasPortalContent)
+                const saleHotmartBlocksLoading =
+                  Boolean(selectedSalePaymentMethodId)
+                  && (
+                    Boolean(saleHotmartBlocksLoadingById[sid])
+                    || Boolean(saleHotmartLinksFetchingById[sid])
+                  )
                 const salePayTree = buildPortalPaymentTree(
                   data,
                   sale?.allowed_payment_methods,
@@ -7573,6 +7619,8 @@ function ClientPortalPageInner() {
                               value={selectedSalePaymentMethodId}
                               onChange={(nextMethod) => {
                                 salePaymentMethodUserPickRef.current[sid] = nextMethod
+                                setSaleHotmartLinksById((p) => ({ ...p, [sid]: [] }))
+                                setSaleHotmartBlocksLoadingById((p) => ({ ...p, [sid]: true }))
                                 setPayMethodBySale((p) => ({ ...p, [sid]: nextMethod }))
                                 setPayAccountBySale((p) => {
                                   const n = { ...p }
@@ -7595,7 +7643,11 @@ function ClientPortalPageInner() {
                           </PortalPaymentSectionShell>
                         )}
 
-                        {showSaleHotmartLinks ? (
+                        {saleHotmartBlocksLoading ? (
+                          <PortalHotmartLinksLoadingShell
+                            key={`sale-hotmart-loading-${sid}-${selectedSalePaymentMethodId}`}
+                          />
+                        ) : showSaleHotmartLinks ? (
                           <PortalHotmartLinksPanel
                             key={`sale-hotmart-${sid}-${selectedSalePaymentMethodId}`}
                             links={saleHotmartLinks}

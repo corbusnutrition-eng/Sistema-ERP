@@ -1,3 +1,4 @@
+import { Loader2 } from 'lucide-react'
 import {
   formatPaymentLinkAmount,
   inferPaymentLinkMediaType,
@@ -7,6 +8,23 @@ import {
 
 function formatMoney(amount, currency) {
   return formatPaymentLinkAmount(amount, currency)
+}
+
+/**
+ * Placeholder mientras se resuelven bloques multimedia/links tras cambiar método de pago.
+ */
+export function PortalHotmartLinksLoadingShell({ className = '' }) {
+  return (
+    <div className={`portal-order-summary-glow-wrap w-full min-w-0 ${className}`.trim()} style={{ marginBottom: 14 }}>
+      <section className="portal-order-summary-card portal-order-summary-card--overflow-visible w-full min-w-0 rounded-[18px] p-4">
+        <div className="flex flex-col items-center justify-center gap-3 py-5" aria-live="polite" aria-busy="true">
+          <Loader2 className="h-5 w-5 animate-spin text-cyan-300/80" aria-hidden />
+          <p className="m-0 text-[13px] leading-snug text-cyan-100/65">Cargando opciones de pago…</p>
+          <div className="mt-1 h-10 w-full max-w-xs animate-pulse rounded-xl bg-slate-800/60" />
+        </div>
+      </section>
+    </div>
+  )
 }
 
 /**
