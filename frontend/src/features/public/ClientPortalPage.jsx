@@ -6343,7 +6343,7 @@ function ClientPortalPageInner() {
           </button>
         </div>
 
-        {showNewOrderForms && newOrderWalletRecharges.length > 0 ? (
+        {newOrderWalletRecharges.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginBottom: 28 }}>
           {newOrderWalletRecharges.map((fr) => {
             const frId = Number(fr.id)

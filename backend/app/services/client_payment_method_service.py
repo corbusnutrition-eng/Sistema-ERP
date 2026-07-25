@@ -717,10 +717,10 @@ def _recalculate_recharge_hotmart_links_after_crm(
     if resolved_pm is None and len(pm_ids) == 1:
         resolved_pm = pm_ids[0]
 
-    req.payment_method_id = resolved_pm
+    req.payment_method_id = resolved_pm if len(pm_ids) == 1 else None
     req.hotmart_links = resolve_baas_hotmart_links_for_recharge_create(
         db,
-        payment_method_id=resolved_pm,
+        payment_method_id=resolved_pm if len(pm_ids) == 1 else None,
         allowed_payment_method_ids=pm_ids,
     )
 

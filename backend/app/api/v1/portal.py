@@ -1045,7 +1045,7 @@ def _portal_hotmart_links_for_recharge_display(
     db: Session,
     req: WalletRechargeRequest,
     pm_picks: list[PortalPaymentMethodPick],
-) -> Optional[list]:
+) -> list:
     """Links Hotmart para portal según métodos CRM vigentes y selección persistida."""
     allowed_pm_ids = {int(p.id) for p in (pm_picks or [])}
     stored_pm = getattr(req, "payment_method_id", None)
@@ -1063,14 +1063,14 @@ def _portal_hotmart_links_for_recharge_display(
         links = _portal_baas_hotmart_links_for_payment_method(db, only_pm)
         if links:
             return hotmart_links_from_model(links)
-    return None
+    return hotmart_links_from_model(getattr(req, "hotmart_links", None))
 
 
 def _portal_hotmart_links_for_sale_display(
     db: Session,
     sale: Sale,
     pm_picks: list[PortalPaymentMethodPick],
-) -> Optional[list]:
+) -> list:
     allowed_pm_ids = {int(p.id) for p in (pm_picks or [])}
     stored_pm = getattr(sale, "payment_method_id", None)
     if stored_pm is not None:
@@ -1091,10 +1091,9 @@ def _portal_hotmart_links_for_sale_display(
     if stored:
         pm_names_allowed = {(p.name or "").strip().lower() for p in pm_picks}
         raw_pm = sale.allowed_payment_methods if isinstance(sale.allowed_payment_methods, list) else []
-        for name in raw_pm:
-            if str(name).strip().lower() in pm_names_allowed:
-                return stored
-    return None
+        if any(str(x).strip().lower() in pm_names_allowed for x in raw_pm if str(x).strip()):
+            return stored
+    return []
 
 
 def _portal_wallet_recharge_deposit_pick_ids_ordered(db: Session, req: WalletRechargeRequest) -> list[int]:
@@ -1582,6 +1581,37 @@ def _portal_sync_recharge_allowed_payment_lists(
         req.allowed_deposit_account_ids = sorted({int(d.id) for d in dep_picks})
 
 
+def _portal_wallet_recharge_item_fallback(
+    db: Session,
+    client: Client,
+    req: WalletRechargeRequest,
+) -> PortalWalletRechargeItem:
+    """Respuesta mínima si falla la resolución enriquecida de métodos/cuentas."""
+    ts = req.created_at
+    pre_raw = getattr(req, "admin_precheck_receipt_url", None)
+    pre_out = str(pre_raw).strip() if pre_raw else None
+    return PortalWalletRechargeItem(
+        id=int(req.id),
+        amount_requested=float(getattr(req, "amount_requested", 0) or 0),
+        amount_paid=float(getattr(req, "amount_paid", 0) or 0),
+        balance_pending=float(getattr(req, "balance_pending", 0) or 0),
+        surplus_credited=float(getattr(req, "surplus_credited", 0) or 0),
+        receipt_url=req.receipt_url or None,
+        status=str(req.status or REQ_STATUS_PENDING),
+        created_at=ts if isinstance(ts, datetime) else now_ecuador(),
+        recharge_currency=normalize_currency_code(getattr(req, "recharge_currency", None), "USD"),
+        recharge_exchange_rate=float(getattr(req, "recharge_exchange_rate", None) or 1.0),
+        admin_precheck_receipt_url=pre_out,
+        allowed_payment_methods=[],
+        allowed_deposit_accounts=[],
+        payment_methods_tree=[],
+        payment_methods_display=None,
+        is_client_initiated=bool(getattr(req, "is_client_initiated", False)),
+        payment_method_id=None,
+        hotmart_links=[],
+    )
+
+
 def _portal_wallet_recharge_item_from_request(
     db: Session,
     client: Client,
@@ -1636,7 +1666,25 @@ def _portal_wallet_recharge_items_for_client(db: Session, client: Client) -> lis
         .order_by(WalletRechargeRequest.created_at.desc())
         .all()
     )
-    return [_portal_wallet_recharge_item_from_request(db, client, r) for r in rows]
+    out: list[PortalWalletRechargeItem] = []
+    for row in rows:
+        try:
+            out.append(_portal_wallet_recharge_item_from_request(db, client, row))
+        except Exception:
+            logger.exception(
+                "portal wallet recharge item skipped client_id=%s request_id=%s",
+                client.id,
+                getattr(row, "id", "?"),
+            )
+            try:
+                out.append(_portal_wallet_recharge_item_fallback(db, client, row))
+            except Exception:
+                logger.exception(
+                    "portal wallet recharge fallback failed client_id=%s request_id=%s",
+                    client.id,
+                    getattr(row, "id", "?"),
+                )
+    return out
 
 
 _PORTAL_RECHARGE_MUTATION_EPS = 1e-6
