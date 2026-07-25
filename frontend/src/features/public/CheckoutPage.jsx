@@ -587,6 +587,53 @@ export default function CheckoutPage() {
                       options={depositAccountOptions}
                       placeholder="Seleccionar cuenta…"
                     />
+                    {(() => {
+                      const selected = depositsForSelectedMethod.find(
+                        (d) => String(d.id) === String(depositAccountId),
+                      )
+                      if (!selected) return null
+                      const methodName = (detail.payment_methods || []).find(
+                        (m) => String(m.id) === String(methodId),
+                      )?.name
+                      const isCrypto = isPortalCryptoDepositAccount(selected, methodName)
+                      const networkLabel = formatCryptoNetworkLabel(selected.crypto_network)
+                      const cedulaRuc = String(selected.cedula_ruc ?? '').trim()
+                      return (
+                        <div
+                          style={{
+                            marginTop: 12,
+                            padding: '14px',
+                            borderRadius: 14,
+                            background: 'rgba(255,255,255,0.06)',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            fontSize: 14,
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          <p style={{ margin: 0, fontWeight: 700 }}>{selected.bank_name}</p>
+                          {selected.account_holder_hint ? (
+                            <p style={{ margin: '8px 0 0', opacity: 0.78 }}>{selected.account_holder_hint}</p>
+                          ) : null}
+                          {selected.account_number ? (
+                            <p style={{ margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', opacity: 0.92 }}>
+                              {isCrypto ? 'Dirección de billetera' : 'Nº cuenta / referencia'}:{' '}
+                              <strong>{selected.account_number}</strong>
+                            </p>
+                          ) : null}
+                          {!isCrypto && cedulaRuc ? (
+                            <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
+                              Cédula/RUC: <strong>{cedulaRuc}</strong>
+                            </p>
+                          ) : null}
+                          {isCrypto && networkLabel ? (
+                            <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
+                              Red: <strong>{networkLabel}</strong>
+                            </p>
+                          ) : null}
+                          <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {selected.currency}</p>
+                        </div>
+                      )
+                    })()}
                   </>
                 )}
                 </section>

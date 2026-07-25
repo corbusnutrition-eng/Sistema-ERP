@@ -480,11 +480,10 @@ function PortalScreenCredentialRow({ label, value, flashKey, copyFlashKey, onCop
   )
 }
 
-function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / referencia', isCrypto = false }) {
+function PortalDepositCopyValueRow({ value, label, copyTitle, copyAriaLabel }) {
   const [isCopied, setIsCopied] = useState(false)
   const copyTimeoutRef = useRef(null)
-  const val = String(accountNumber ?? '').trim()
-  const resolvedLabel = isCrypto ? 'Dirección de billetera' : label
+  const val = String(value ?? '').trim()
 
   useEffect(
     () => () => {
@@ -493,7 +492,7 @@ function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / re
     [],
   )
 
-  const handleCopyAccount = useCallback(async () => {
+  const handleCopy = useCallback(async () => {
     if (!val) return
     const ok = await copyPortalText(val)
     if (!ok) return
@@ -513,14 +512,14 @@ function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / re
       style={{ margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', opacity: 0.92 }}
     >
       <span style={{ margin: 0, fontSize: 14, lineHeight: 1.55 }}>
-        {resolvedLabel}: <strong>{val}</strong>
+        {label}: <strong>{val}</strong>
       </span>
       <button
         type="button"
-        onClick={() => void handleCopyAccount()}
+        onClick={() => void handleCopy()}
         className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-white/40 transition hover:bg-white/10 hover:text-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-        title={isCopied ? '¡Copiado!' : isCrypto ? 'Copiar dirección de billetera' : 'Copiar número de cuenta'}
-        aria-label={isCopied ? 'Copiado' : isCrypto ? 'Copiar dirección de billetera' : 'Copiar número de cuenta'}
+        title={isCopied ? '¡Copiado!' : copyTitle}
+        aria-label={isCopied ? 'Copiado' : copyAriaLabel}
       >
         {isCopied ? (
           <Check size={16} className="text-green-400" strokeWidth={2.25} aria-hidden />
@@ -529,6 +528,18 @@ function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / re
         )}
       </button>
     </div>
+  )
+}
+
+function PortalDepositAccountNumberRow({ accountNumber, label = 'Nº cuenta / referencia', isCrypto = false }) {
+  const resolvedLabel = isCrypto ? 'Dirección de billetera' : label
+  return (
+    <PortalDepositCopyValueRow
+      value={accountNumber}
+      label={resolvedLabel}
+      copyTitle={isCrypto ? 'Copiar dirección de billetera' : 'Copiar número de cuenta'}
+      copyAriaLabel={isCrypto ? 'Copiar dirección de billetera' : 'Copiar número de cuenta'}
+    />
   )
 }
 
@@ -542,9 +553,12 @@ function PortalDepositAccountDetails({ account, paymentMethodName }) {
     <>
       <PortalDepositAccountNumberRow accountNumber={account.account_number} isCrypto={isCrypto} />
       {!isCrypto && cedulaRuc ? (
-        <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
-          Cédula/RUC: <strong>{cedulaRuc}</strong>
-        </p>
+        <PortalDepositCopyValueRow
+          value={cedulaRuc}
+          label="Cédula/RUC"
+          copyTitle="Copiar cédula o RUC"
+          copyAriaLabel="Copiar cédula o RUC"
+        />
       ) : null}
       {isCrypto && networkLabel ? (
         <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
@@ -552,6 +566,27 @@ function PortalDepositAccountDetails({ account, paymentMethodName }) {
         </p>
       ) : null}
     </>
+  )
+}
+
+const PORTAL_SELECTED_DEPOSIT_ACCOUNT_CARD_STYLE = {
+  marginTop: 12,
+  padding: '14px',
+  borderRadius: 14,
+  background: 'rgba(255,255,255,0.06)',
+  border: '1px solid rgba(255,255,255,0.1)',
+  fontSize: 14,
+  lineHeight: 1.55,
+}
+
+function PortalSelectedDepositAccountPanel({ account, paymentMethodName }) {
+  if (!account) return null
+  return (
+    <div style={PORTAL_SELECTED_DEPOSIT_ACCOUNT_CARD_STYLE}>
+      <p style={{ margin: 0, fontWeight: 700 }}>{account.bank_name}</p>
+      <PortalDepositAccountDetails account={account} paymentMethodName={paymentMethodName} />
+      <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {account.currency}</p>
+    </div>
   )
 }
 
@@ -5819,6 +5854,10 @@ function ClientPortalPageInner() {
             placeholder="Seleccionar cuenta…"
             className="mb-3"
           />
+          <PortalSelectedDepositAccountPanel
+            account={debtPaymentAccounts.find((d) => String(d.id) === String(debtForm.account))}
+            paymentMethodName={debtPaymentMethods.find((m) => String(m.id) === String(debtForm.method))?.name}
+          />
         </>
       )}
       {debtPaymentAccounts.length === 1 && (
@@ -6559,28 +6598,15 @@ function ClientPortalPageInner() {
                           </p>
                         : rechargeDepositAccounts.length === 1 ?
                           rechargeDepositAccounts.map((d) => (
-                            <div
+                            <PortalSelectedDepositAccountPanel
                               key={d.id}
-                              style={{
-                                padding: '14px',
-                                borderRadius: 14,
-                                background: 'rgba(255,255,255,0.06)',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                fontSize: 14,
-                                lineHeight: 1.55,
-                              }}
-                            >
-                              <p style={{ margin: 0, fontWeight: 700 }}>{d.bank_name}</p>
-                              <PortalDepositAccountDetails
-                                account={d}
-                                paymentMethodName={
-                                  rechargePaymentMethods.find(
-                                    (m) => String(m.id) === String(selectedRechargePaymentMethodId),
-                                  )?.name
-                                }
-                              />
-                              <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {d.currency}</p>
-                            </div>
+                              account={d}
+                              paymentMethodName={
+                                rechargePaymentMethods.find(
+                                  (m) => String(m.id) === String(selectedRechargePaymentMethodId),
+                                )?.name
+                              }
+                            />
                           ))
                         : (
                           <>
@@ -6613,6 +6639,14 @@ function ClientPortalPageInner() {
                               }}
                               options={portalDepositAccountOptions(rechargeDepositAccounts)}
                               placeholder="Seleccionar cuenta…"
+                            />
+                            <PortalSelectedDepositAccountPanel
+                              account={selectedRechargeAcc}
+                              paymentMethodName={
+                                rechargePaymentMethods.find(
+                                  (m) => String(m.id) === String(selectedRechargePaymentMethodId),
+                                )?.name
+                              }
                             />
                           </>
                         )}
@@ -6905,6 +6939,8 @@ function ClientPortalPageInner() {
                 const isSaleRetiro = isCodigosRetiroMethodId(pmList, selectedSalePaymentMethodId)
                 const depList = portalAccountsForMethod(salePayTree, selectedSalePaymentMethodId)
                 const needsDepositPick = depList.length > 0
+                const selectedSaleDepositAccount =
+                  depList.find((d) => String(d.id) === String(depositAccountId)) || null
                 const showSaleDepositSection =
                   Boolean(selectedSalePaymentMethodId) && !isSaleRetiro && !paysOnlyWithCredit
                 const canShowPayForm = portalCanShowPayFormForSale(sale)
@@ -7175,26 +7211,13 @@ function ClientPortalPageInner() {
                               </p>
                             ) : depList.length === 1 ? (
                               depList.map((d) => (
-                                <div
+                                <PortalSelectedDepositAccountPanel
                                   key={d.id}
-                                  style={{
-                                    padding: '14px',
-                                    borderRadius: 14,
-                                    background: 'rgba(255,255,255,0.06)',
-                                    border: '1px solid rgba(255,255,255,0.1)',
-                                    fontSize: 14,
-                                    lineHeight: 1.55,
-                                  }}
-                                >
-                                  <p style={{ margin: 0, fontWeight: 700 }}>{d.bank_name}</p>
-                                  <PortalDepositAccountDetails
-                                    account={d}
-                                    paymentMethodName={
-                                      pmList.find((m) => String(m.id) === String(selectedSalePaymentMethodId))?.name
-                                    }
-                                  />
-                                  <p style={{ margin: '8px 0 0', fontSize: 12, opacity: 0.55 }}>Moneda: {d.currency}</p>
-                                </div>
+                                  account={d}
+                                  paymentMethodName={
+                                    pmList.find((m) => String(m.id) === String(selectedSalePaymentMethodId))?.name
+                                  }
+                                />
                               ))
                             ) : (
                               <>
@@ -7220,6 +7243,12 @@ function ClientPortalPageInner() {
                                   }}
                                   options={portalDepositAccountOptions(depList)}
                                   placeholder="Seleccionar cuenta…"
+                                />
+                                <PortalSelectedDepositAccountPanel
+                                  account={selectedSaleDepositAccount}
+                                  paymentMethodName={
+                                    pmList.find((m) => String(m.id) === String(selectedSalePaymentMethodId))?.name
+                                  }
                                 />
                               </>
                             )}
