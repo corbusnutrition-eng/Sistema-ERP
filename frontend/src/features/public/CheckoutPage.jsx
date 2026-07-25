@@ -198,7 +198,8 @@ export default function CheckoutPage() {
       const list = depositsForSelectedMethod
       if (!list.length) return ''
       if (prev && list.some((d) => String(d.id) === String(prev))) return prev
-      return String(list[0].id)
+      if (list.length === 1) return String(list[0].id)
+      return ''
     })
   }, [detail, depositsForSelectedMethod, needsDepositPick, sent])
 

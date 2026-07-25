@@ -5854,10 +5854,12 @@ function ClientPortalPageInner() {
             placeholder="Seleccionar cuenta…"
             className="mb-3"
           />
-          <PortalSelectedDepositAccountPanel
-            account={debtPaymentAccounts.find((d) => String(d.id) === String(debtForm.account))}
-            paymentMethodName={debtPaymentMethods.find((m) => String(m.id) === String(debtForm.method))?.name}
-          />
+          {String(debtForm.account || '').trim() ? (
+            <PortalSelectedDepositAccountPanel
+              account={debtPaymentAccounts.find((d) => String(d.id) === String(debtForm.account))}
+              paymentMethodName={debtPaymentMethods.find((m) => String(m.id) === String(debtForm.method))?.name}
+            />
+          ) : null}
         </>
       )}
       {debtPaymentAccounts.length === 1 && (
@@ -6337,8 +6339,19 @@ function ClientPortalPageInner() {
             const rechargeDepResolved =
               rechargeForm.account ||
               payAccountByRecharge[frId] ||
-              (rechargeDepositAccounts[0]?.id != null ? String(rechargeDepositAccounts[0].id) : '')
-            const selectedRechargeAcc = rechargeDepositAccounts.find((d) => String(d.id) === String(rechargeDepResolved))
+              (rechargeDepositAccounts.length === 1 && rechargeDepositAccounts[0]?.id != null
+                ? String(rechargeDepositAccounts[0].id)
+                : '')
+            const selectedRechargeAccountId = String(
+              rechargeForm.account || payAccountByRecharge[frId] || '',
+            ).trim()
+            const selectedRechargeAccForPanel =
+              selectedRechargeAccountId ?
+                rechargeDepositAccounts.find((d) => String(d.id) === selectedRechargeAccountId) || null
+              : null
+            const selectedRechargeAcc =
+              selectedRechargeAccForPanel ||
+              (rechargeDepositAccounts.length === 1 ? rechargeDepositAccounts[0] : null)
             const needsDepositPickFeat = rechargeDepositAccounts.length > 0
             const featMismatchMsg = portalCurrencyMismatchMessage(
               rechargeForm.aiResult?.extracted_currency,
@@ -6619,7 +6632,7 @@ function ClientPortalPageInner() {
                             <PortalCustomSelect
                               id={`recharge-baas-dep-${frId}`}
                               required
-                              value={rechargeForm.account}
+                              value={selectedRechargeAccountId}
                               onChange={(depVal) => {
                                 setRechargeForm({ account: depVal, error: null })
                                 setPayAccountByRecharge((p) => ({ ...p, [frId]: depVal }))
@@ -6640,14 +6653,16 @@ function ClientPortalPageInner() {
                               options={portalDepositAccountOptions(rechargeDepositAccounts)}
                               placeholder="Seleccionar cuenta…"
                             />
-                            <PortalSelectedDepositAccountPanel
-                              account={selectedRechargeAcc}
-                              paymentMethodName={
-                                rechargePaymentMethods.find(
-                                  (m) => String(m.id) === String(selectedRechargePaymentMethodId),
-                                )?.name
-                              }
-                            />
+                            {selectedRechargeAccForPanel ? (
+                              <PortalSelectedDepositAccountPanel
+                                account={selectedRechargeAccForPanel}
+                                paymentMethodName={
+                                  rechargePaymentMethods.find(
+                                    (m) => String(m.id) === String(selectedRechargePaymentMethodId),
+                                  )?.name
+                                }
+                              />
+                            ) : null}
                           </>
                         )}
                       </PortalPaymentSectionShell>
@@ -6939,8 +6954,11 @@ function ClientPortalPageInner() {
                 const isSaleRetiro = isCodigosRetiroMethodId(pmList, selectedSalePaymentMethodId)
                 const depList = portalAccountsForMethod(salePayTree, selectedSalePaymentMethodId)
                 const needsDepositPick = depList.length > 0
+                const selectedSaleAccountId = String(depositAccountId || '').trim()
                 const selectedSaleDepositAccount =
-                  depList.find((d) => String(d.id) === String(depositAccountId)) || null
+                  selectedSaleAccountId ?
+                    depList.find((d) => String(d.id) === selectedSaleAccountId) || null
+                  : null
                 const showSaleDepositSection =
                   Boolean(selectedSalePaymentMethodId) && !isSaleRetiro && !paysOnlyWithCredit
                 const canShowPayForm = portalCanShowPayFormForSale(sale)
@@ -7244,12 +7262,14 @@ function ClientPortalPageInner() {
                                   options={portalDepositAccountOptions(depList)}
                                   placeholder="Seleccionar cuenta…"
                                 />
-                                <PortalSelectedDepositAccountPanel
-                                  account={selectedSaleDepositAccount}
-                                  paymentMethodName={
-                                    pmList.find((m) => String(m.id) === String(selectedSalePaymentMethodId))?.name
-                                  }
-                                />
+                                {selectedSaleDepositAccount ? (
+                                  <PortalSelectedDepositAccountPanel
+                                    account={selectedSaleDepositAccount}
+                                    paymentMethodName={
+                                      pmList.find((m) => String(m.id) === String(selectedSalePaymentMethodId))?.name
+                                    }
+                                  />
+                                ) : null}
                               </>
                             )}
                           </PortalPaymentSectionShell>
