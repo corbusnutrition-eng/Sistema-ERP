@@ -36,6 +36,10 @@ class CheckoutDepositAccountPublic(BaseModel):
         default=None,
         description="Red blockchain (TRC20, ERC20, …) para cuentas cripto.",
     )
+    cedula_ruc: Optional[str] = Field(
+        default=None,
+        description="Cédula o RUC del titular (cuentas bancarias tradicionales).",
+    )
     linked_payment_method: str = Field(
         default="",
         description="Nombre del método de cobro enlazado (minúsculas), para filtrar en el cliente.",

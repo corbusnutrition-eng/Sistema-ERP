@@ -82,6 +82,10 @@ class PortalDepositPick(BaseModel):
         default=None,
         description="Red blockchain (TRC20, ERC20, …) para cuentas cripto.",
     )
+    cedula_ruc: Optional[str] = Field(
+        default=None,
+        description="Cédula o RUC del titular (cuentas bancarias tradicionales).",
+    )
     payment_method_id: Optional[int] = Field(
         default=None,
         description="Método de pago padre al que pertenece la cuenta (filtrado en cascada portal).",

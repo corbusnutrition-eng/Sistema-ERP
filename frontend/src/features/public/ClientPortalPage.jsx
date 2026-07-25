@@ -536,10 +536,16 @@ function PortalDepositAccountDetails({ account, paymentMethodName }) {
   if (!account) return null
   const isCrypto = isPortalCryptoDepositAccount(account, paymentMethodName)
   const networkLabel = formatCryptoNetworkLabel(account.crypto_network)
+  const cedulaRuc = String(account.cedula_ruc ?? '').trim()
 
   return (
     <>
       <PortalDepositAccountNumberRow accountNumber={account.account_number} isCrypto={isCrypto} />
+      {!isCrypto && cedulaRuc ? (
+        <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
+          Cédula/RUC: <strong>{cedulaRuc}</strong>
+        </p>
+      ) : null}
       {isCrypto && networkLabel ? (
         <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
           Red: <strong>{networkLabel}</strong>

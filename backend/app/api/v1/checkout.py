@@ -129,6 +129,7 @@ def _checkout_deposit_accounts_public(db: Session, ids: list[int]) -> list[Check
                 or None,
                 currency=cur,
                 crypto_network=(getattr(a, "crypto_network", None) or "").strip() or None,
+                cedula_ruc=(getattr(a, "cedula_ruc", None) or "").strip() or None,
                 linked_payment_method=_effective_linked_pm_lower(db, a),
             )
         )

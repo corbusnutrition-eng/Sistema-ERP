@@ -83,6 +83,7 @@ function buildInitialFormState(tipoValue, paymentMethodsList = []) {
     account_number: '',
     detail_type: getFirstDetalleForTipoCuenta(tipoValue, pmNames),
     crypto_network: '',
+    cedula_ruc: '',
     description: '',
     is_subaccount: false,
     parent_id: '',
@@ -274,6 +275,7 @@ export default function NuevaCuentaModal({
         account_number: editAccount.account_number ?? '',
         detail_type: safeDetail,
         crypto_network: editAccount.crypto_network ?? '',
+        cedula_ruc: editAccount.cedula_ruc ?? '',
         description: editAccount.description ?? '',
         is_subaccount: Boolean(editAccount.parent_id),
         parent_id: editAccount.parent_id ? String(editAccount.parent_id) : '',
@@ -328,8 +330,11 @@ export default function NuevaCuentaModal({
         next.opening_balance = ''
         next.opening_balance_date = todayISO()
         next.crypto_network = ''
+        next.cedula_ruc = ''
       } else if (!isCryptoWalletPaymentMethod(primero)) {
         next.crypto_network = ''
+      } else {
+        next.cedula_ruc = ''
       }
       return next
     })
@@ -373,6 +378,7 @@ export default function NuevaCuentaModal({
         ...p,
         detail_type: value,
         crypto_network: isCryptoWalletPaymentMethod(value) ? p.crypto_network : '',
+        cedula_ruc: isCryptoWalletPaymentMethod(value) ? '' : p.cedula_ruc,
       }))
       return
     }
@@ -432,6 +438,8 @@ export default function NuevaCuentaModal({
       detail_type,
       linked_payment_method: efectivo ? pmName : null,
       crypto_network: isCrypto ? String(form.crypto_network ?? '').trim() || null : null,
+      cedula_ruc:
+        efectivo && !isCrypto ? String(form.cedula_ruc ?? '').trim() || null : null,
       description: form.description.trim() || null,
       is_subaccount: form.is_subaccount,
       parent_id: form.is_subaccount ? Number(form.parent_id) : null,
@@ -568,6 +576,23 @@ export default function NuevaCuentaModal({
               <p className="text-[11px] text-gray-500 mt-1">
                 Red blockchain de la dirección de billetera (opcional).
               </p>
+            </div>
+          )}
+
+          {usingPaymentMethodsAsDetail && !isCryptoWallet && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="account-cedula-ruc">
+                Número de cédula o RUC (Opcional)
+              </label>
+              <input
+                id="account-cedula-ruc"
+                name="cedula_ruc"
+                value={form.cedula_ruc}
+                onChange={handleChange}
+                className={inputCls}
+                placeholder="Ej. 1234567890"
+                disabled={saving}
+              />
             </div>
           )}
 

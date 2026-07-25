@@ -39,6 +39,11 @@ class ChartAccountCreate(BaseModel):
         max_length=64,
         description="Red blockchain (TRC20, ERC20, etc.) cuando el método vinculado es billetera cripto.",
     )
+    cedula_ruc: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        description="Cédula o RUC del titular (cuentas bancarias tradicionales).",
+    )
     description: Optional[str] = Field(default=None, max_length=4000)
     is_subaccount: bool = False
     parent_id: Optional[int] = Field(default=None, ge=1)
@@ -46,14 +51,14 @@ class ChartAccountCreate(BaseModel):
     opening_balance: Optional[Decimal] = Field(default=None, ge=0)
     opening_balance_date: Optional[date] = None
 
-    @field_validator("detail_type", "account_number", "linked_payment_method", "crypto_network", mode="before")
+    @field_validator("detail_type", "account_number", "linked_payment_method", "crypto_network", "cedula_ruc", mode="before")
     @classmethod
     def _empty_str_none(cls, v):
         if v == "":
             return None
         return v
 
-    @field_validator("linked_payment_method", "crypto_network", mode="after")
+    @field_validator("linked_payment_method", "crypto_network", "cedula_ruc", mode="after")
     @classmethod
     def _strip_optional_str(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -116,6 +121,7 @@ class ChartAccountResponse(BaseModel):
     detail_type: Optional[str] = None
     linked_payment_method: Optional[str] = None
     crypto_network: Optional[str] = None
+    cedula_ruc: Optional[str] = None
     description: Optional[str] = None
     parent_id: Optional[int] = None
     parent_name: Optional[str] = None

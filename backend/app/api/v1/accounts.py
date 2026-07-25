@@ -1255,6 +1255,19 @@ def _normalize_crypto_network(
     return s if s else None
 
 
+def _normalize_cedula_ruc(
+    payload: ChartAccountCreate | ChartAccountUpdate,
+    linked_pm: Optional[str],
+) -> Optional[str]:
+    if _is_crypto_wallet_payment_method(linked_pm):
+        return None
+    raw = getattr(payload, "cedula_ruc", None)
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s if s else None
+
+
 def _resolve_payment_method_fields(
     db: Session,
     payload: ChartAccountCreate | ChartAccountUpdate,
@@ -1313,6 +1326,7 @@ def _build_response(
         detail_type=acc.detail_type,
         linked_payment_method=getattr(acc, "linked_payment_method", None),
         crypto_network=getattr(acc, "crypto_network", None),
+        cedula_ruc=getattr(acc, "cedula_ruc", None),
         description=acc.description,
         parent_id=acc.parent_id,
         parent_name=parent_name,
@@ -1544,6 +1558,7 @@ def create_chart_account(payload: ChartAccountCreate, db: DbDep, _: ChartCreateD
 
     linked_pm, detail_type = _resolve_payment_method_fields(db, payload)
     crypto_network = _normalize_crypto_network(payload, linked_pm)
+    cedula_ruc = _normalize_cedula_ruc(payload, linked_pm)
 
     acc = Account(
         code=code,
@@ -1553,6 +1568,7 @@ def create_chart_account(payload: ChartAccountCreate, db: DbDep, _: ChartCreateD
         detail_type=detail_type,
         linked_payment_method=linked_pm,
         crypto_network=crypto_network,
+        cedula_ruc=cedula_ruc,
         description=(payload.description or "").strip() or None,
         parent_id=payload.parent_id,
         currency=payload.currency,
@@ -1611,6 +1627,7 @@ def update_chart_account(
 
     linked_pm, detail_type = _resolve_payment_method_fields(db, payload)
     crypto_network = _normalize_crypto_network(payload, linked_pm)
+    cedula_ruc = _normalize_cedula_ruc(payload, linked_pm)
 
     acc.name = payload.name.strip()
     acc.account_number = (payload.account_number or "").strip() or None
@@ -1618,6 +1635,7 @@ def update_chart_account(
     acc.detail_type = detail_type
     acc.linked_payment_method = linked_pm
     acc.crypto_network = crypto_network
+    acc.cedula_ruc = cedula_ruc
     acc.description = (payload.description or "").strip() or None
     acc.parent_id = parent_id
     acc.currency = normalize_currency_code(payload.currency)

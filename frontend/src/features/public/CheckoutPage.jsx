@@ -537,6 +537,7 @@ export default function CheckoutPage() {
                     const methodName = (detail.payment_methods || []).find((m) => String(m.id) === String(methodId))?.name
                     const isCrypto = isPortalCryptoDepositAccount(d, methodName)
                     const networkLabel = formatCryptoNetworkLabel(d.crypto_network)
+                    const cedulaRuc = String(d.cedula_ruc ?? '').trim()
                     return (
                     <div
                       key={d.id}
@@ -557,6 +558,11 @@ export default function CheckoutPage() {
                         <p style={{ margin: '8px 0 0', fontVariantNumeric: 'tabular-nums', opacity: 0.92 }}>
                           {isCrypto ? 'Dirección de billetera' : 'Nº cuenta / referencia'}:{' '}
                           <strong>{d.account_number}</strong>
+                        </p>
+                      ) : null}
+                      {!isCrypto && cedulaRuc ? (
+                        <p style={{ margin: '8px 0 0', fontSize: 14, lineHeight: 1.55, opacity: 0.92 }}>
+                          Cédula/RUC: <strong>{cedulaRuc}</strong>
                         </p>
                       ) : null}
                       {isCrypto && networkLabel ? (

@@ -41,6 +41,8 @@ class Account(Base):
     linked_payment_method: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     #: Red blockchain (p. ej. TRC20, ERC20) cuando el método vinculado es billetera cripto.
     crypto_network: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    #: Cédula o RUC del titular (cuentas bancarias tradicionales; no aplica a cripto).
+    cedula_ruc: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     #: Pasarela / método de pago vinculado (FK ``payment_methods.id``) para cuentas ACTIVOS de cobro.
     linked_wallet_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("payment_methods.id", ondelete="SET NULL"),
