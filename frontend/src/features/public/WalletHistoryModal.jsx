@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
+import { portalRechargeGross } from './portalRechargeMoney'
 
 function formatShortDate(value) {
   if (!value) return '—'
@@ -126,7 +127,7 @@ export default function WalletHistoryModal({ open, onClose, token, api }) {
                         </p>
                       </div>
                       <p className="m-0 shrink-0 text-right text-[14px] font-bold tabular-nums text-slate-100">
-                        {formatMoney(row?.amount_requested, row?.currency)}
+                        {formatMoney(portalRechargeGross(row), row?.currency)}
                       </p>
                     </div>
                   </li>

@@ -1590,6 +1590,12 @@ def _portal_sync_recharge_allowed_payment_lists(
         req.allowed_deposit_account_ids = sorted({int(d.id) for d in dep_picks})
 
 
+def _portal_wallet_recharge_gross_amount(req: WalletRechargeRequest) -> float:
+    net = round(float(getattr(req, "amount_requested", 0) or 0), 2)
+    disc = round(float(getattr(req, "discount", 0) or 0), 2)
+    return round(net + disc, 2)
+
+
 def _portal_wallet_recharge_item_fallback(
     db: Session,
     client: Client,
@@ -1603,6 +1609,7 @@ def _portal_wallet_recharge_item_fallback(
         id=int(req.id),
         amount_requested=float(getattr(req, "amount_requested", 0) or 0),
         discount=float(getattr(req, "discount", 0) or 0),
+        gross_amount=_portal_wallet_recharge_gross_amount(req),
         amount_paid=float(getattr(req, "amount_paid", 0) or 0),
         balance_pending=float(getattr(req, "balance_pending", 0) or 0),
         surplus_credited=float(getattr(req, "surplus_credited", 0) or 0),
@@ -1635,6 +1642,7 @@ def _portal_wallet_recharge_item_from_request(
         id=int(req.id),
         amount_requested=float(req.amount_requested),
         discount=float(getattr(req, "discount", 0) or 0),
+        gross_amount=_portal_wallet_recharge_gross_amount(req),
         amount_paid=float(getattr(req, "amount_paid", 0) or 0),
         balance_pending=float(getattr(req, "balance_pending", 0) or 0),
         surplus_credited=float(getattr(req, "surplus_credited", 0) or 0),
@@ -3478,11 +3486,16 @@ def _portal_wallet_recharge_history_item(
     ts = getattr(req, "created_at", None)
     if not isinstance(ts, datetime):
         ts = now_ecuador()
+    net = round(float(getattr(req, "amount_requested", 0) or 0), 2)
+    disc = round(float(getattr(req, "discount", 0) or 0), 2)
+    gross = round(net + disc, 2)
     return PortalWalletRechargeHistoryItem(
         id=int(req.id),
         reference=wallet_recharge_ref_number(int(req.id)),
         created_at=ts,
-        amount_requested=round(float(getattr(req, "amount_requested", 0) or 0), 2),
+        amount_requested=net,
+        discount=disc,
+        gross_amount=gross,
         currency=cur,
         status=st,
         status_label=_wallet_recharge_status_label_es(st),

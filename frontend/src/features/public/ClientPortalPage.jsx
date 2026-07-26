@@ -47,6 +47,7 @@ import {
   isPortalCryptoDepositAccount,
 } from '../accounting/accountStructure'
 import WalletHistoryModal from './WalletHistoryModal'
+import { portalRechargeDiscount, portalRechargeGross, portalRechargeNet } from './portalRechargeMoney'
 import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
 
@@ -1667,7 +1668,8 @@ function syntheticRechargeLedgerRows(row) {
     row?.recharge_currency != null && String(row.recharge_currency).trim().length >= 3
       ? String(row.recharge_currency).trim().toUpperCase().slice(0, 10)
       : 'USD'
-  const total = Math.round(parseMoneyNum(row?.amount_requested) * 100) / 100
+  const gross = portalRechargeGross(row)
+  const net = portalRechargeNet(row)
   const iso = row?.created_at ? String(row.created_at) : null
   const st = String(row?.status || '').toLowerCase()
   let statusLabel = 'Estado pendiente'
@@ -1684,11 +1686,11 @@ function syntheticRechargeLedgerRows(row) {
       type: 'invoice',
       date: iso,
       description:
-        total > 0
-          ? `Recarga de saldo BaaS (importe total de la solicitud: ${total} ${cur}).`
+        gross > 0
+          ? `Recarga de saldo BaaS (importe bruto solicitado: ${gross} ${cur}; neto a pagar: ${net} ${cur}).`
           : 'Recarga de saldo BaaS.',
       reference: refStr,
-      amount: total,
+      amount: net,
       currency: cur,
       status: statusLabel,
       sale_id: null,
@@ -6733,12 +6735,9 @@ function ClientPortalPageInner() {
             const showRechargeDepositSection =
               Boolean(selectedRechargePaymentMethodId) && !isRechargeRetiroMethod
             const retiroScope = `recharge:${frId}`
-            const amountReq = parseMoneyNum(fr.amount_requested)
-            const rechargeDisc = Math.max(0, parseMoneyNum(fr?.discount))
-            const rechargeGross =
-              rechargeDisc > 1e-9 ?
-                Math.round((amountReq + rechargeDisc) * 100) / 100
-              : amountReq
+            const amountReq = portalRechargeNet(fr)
+            const rechargeDisc = portalRechargeDiscount(fr)
+            const rechargeGross = portalRechargeGross(fr)
             const pend = parseMoneyNum(fr.balance_pending)
             const featPaid = Math.max(0, parseMoneyNum(fr?.amount_paid) || 0)
             const isFeatPartial = featPaid > 1e-9 && pend > 1e-9
@@ -6928,10 +6927,7 @@ function ClientPortalPageInner() {
                               <p className="mt-1 text-xs leading-relaxed text-slate-500">Referencia #{refStr}</p>
                             </div>
                             <p className="pt-0.5 text-right text-[15px] font-semibold tabular-nums text-slate-100">
-                              {formatMoney(
-                                isFeatPartial && Number.isFinite(amountReq) ? amountReq : rechargeGross,
-                                cur,
-                              )}
+                              {formatMoney(rechargeGross, cur)}
                             </p>
                           </div>
                           {rechargeDisc > 1e-9 ? (

@@ -270,7 +270,12 @@ class PortalWalletRechargeItem(BaseModel):
     discount: float = Field(
         default=0.0,
         ge=0,
-        description="Descuento por comisiones de pasarela (Hotmart, etc.); el total neto a pagar es amount_requested.",
+        description="Descuento por comisiones de pasarela (Hotmart, etc.); el neto CxC es amount_requested.",
+    )
+    gross_amount: float = Field(
+        default=0.0,
+        ge=0,
+        description="Importe bruto solicitado (amount_requested + discount).",
     )
     receipt_url: Optional[str] = None
     status: str
@@ -735,7 +740,21 @@ class PortalWalletRechargeHistoryItem(BaseModel):
     id: int
     reference: str = Field(description="Referencia legible, ej. REC-00059.")
     created_at: datetime.datetime
-    amount_requested: float = Field(..., ge=0)
+    amount_requested: float = Field(
+        ...,
+        ge=0,
+        description="Neto CxC a pagar tras descuentos de pasarela.",
+    )
+    discount: float = Field(
+        default=0.0,
+        ge=0,
+        description="Descuento aplicado; el bruto solicitado es amount_requested + discount.",
+    )
+    gross_amount: float = Field(
+        default=0.0,
+        ge=0,
+        description="Importe bruto de la solicitud (amount_requested + discount).",
+    )
     currency: str = Field(default="USD", max_length=10)
     status: str
     status_label: str
