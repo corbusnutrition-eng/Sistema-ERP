@@ -267,6 +267,11 @@ class PortalWalletRechargeItem(BaseModel):
 
     id: int
     amount_requested: float
+    discount: float = Field(
+        default=0.0,
+        ge=0,
+        description="Descuento por comisiones de pasarela (Hotmart, etc.); el total neto a pagar es amount_requested.",
+    )
     receipt_url: Optional[str] = None
     status: str
     created_at: datetime.datetime

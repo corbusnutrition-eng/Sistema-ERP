@@ -196,6 +196,32 @@ function rechargeLinesHydrateFromAdminRow(row) {
   const raw = row?.recharge_detail_lines
   const rid = row?.id != null ? String(row.id) : 'new'
   const reqCurrency = normalizeCurrencyCode(row?.recharge_currency ?? 'USD', 'USD')
+  const disc = Number(row?.discount)
+  const netAmt = Number(row?.amount_requested)
+  const grossFallback =
+    Number.isFinite(netAmt) && netAmt > 0 ?
+      Math.round((netAmt + (Number.isFinite(disc) && disc > 0 ? disc : 0)) * 100) / 100
+    : 0
+
+  const resolveLineCharge = (r) => {
+    const qtyNum = Number(r?.qty)
+    const rateNum = Number(r?.rate)
+    let charge = Number(r?.importe ?? r?.line_amount ?? r?.monto_linea)
+    if (!Number.isFinite(charge) || charge <= 0) {
+      charge = Number(r?.saldo_recargar ?? r?.balance_to_recharge ?? r?.virtual_balance)
+    }
+    if (!Number.isFinite(charge) || charge <= 0) {
+      if (
+        Number.isFinite(qtyNum) &&
+        qtyNum > 0 &&
+        Number.isFinite(rateNum) &&
+        rateNum > 0
+      ) {
+        charge = Math.round(qtyNum * rateNum * 100) / 100
+      }
+    }
+    return Number.isFinite(charge) && charge > 0 ? charge : NaN
+  }
 
   const withTableCurrency = (lines) =>
     lines.map((li) => ({
@@ -205,39 +231,20 @@ function rechargeLinesHydrateFromAdminRow(row) {
 
   if (Array.isArray(raw) && raw.length > 0) {
     const mapped = raw.map((r, idx) => {
-      const qtyNum = Number(r?.qty)
-      const rateNum = Number(r?.rate)
-      // Migración líneas viejas / API (subtotal efectivo derivado sólo si falta saldo_recargar)
-      let legacyLineCharge = Number(r?.line_amount ?? r?.monto_linea)
-      if (!Number.isFinite(legacyLineCharge) || legacyLineCharge <= 0) {
-        legacyLineCharge =
-          Number.isFinite(qtyNum) &&
-          qtyNum > 0 &&
-          Number.isFinite(rateNum) &&
-          rateNum > 0 ?
-            Math.round(qtyNum * rateNum * 100) / 100
-          : NaN
-      }
-      let saldoNum = Number(r?.saldo_recargar ?? r?.balance_to_recharge ?? r?.virtual_balance)
-      if (!Number.isFinite(saldoNum) || saldoNum <= 0) {
-        saldoNum = Number.isFinite(qtyNum) && qtyNum > 0 ? qtyNum : NaN
-      }
-      if (!Number.isFinite(saldoNum) || saldoNum <= 0) {
-        saldoNum = Number.isFinite(legacyLineCharge) ? legacyLineCharge : NaN
-      }
-      const saldoStr = Number.isFinite(saldoNum) && saldoNum > 0 ? String(saldoNum) : ''
+      const chargeNum = resolveLineCharge(r)
+      const saldoStr = Number.isFinite(chargeNum) ? String(chargeNum) : ''
 
       return {
         id: `rli-e-${rid}-${idx}`,
-        producto: String(r.producto ?? r.product_name ?? r.product ?? 'BaaS Balance'),
+        producto: String(r?.producto ?? r?.product_name ?? r?.product ?? 'BaaS Balance'),
         saldo_recargar: saldoStr,
       }
     })
-    return withTableCurrency(mapped)
+    const hasAnyAmount = mapped.some((li) => String(li?.saldo_recargar ?? '').trim() !== '')
+    if (hasAnyAmount) return withTableCurrency(mapped)
   }
-  const amt = row?.amount_requested
-  const amtStr =
-    amt != null && Number.isFinite(Number(amt)) && Number(amt) > 0 ? String(Number(amt)) : ''
+
+  const amtStr = grossFallback > 0 ? String(grossFallback) : ''
   return withTableCurrency([
     {
       id: `rli-single-${rid}`,
@@ -537,8 +544,20 @@ export default function DistributorsBaaSPage() {
           setApproveRow(hydrated)
           setApproveReceived(defaultReceivedAmountForApprove(hydrated))
           setApproveModalOpen(true)
-        } else {
-          setEditRechargeRow(row)
+        } else if (
+          ['pending', 'partially_paid', 'approved'].includes(status)
+          && (status !== 'approved' || rechargeHasOpenCxcBalance(row))
+        ) {
+          let hydrated = row
+          try {
+            const { data: detail } = await api.get(`/api/v1/distributors/recharge-requests/${row.id}`)
+            if (detail && typeof detail === 'object') hydrated = { ...row, ...detail }
+          } catch {
+            hydrated = row
+          }
+          applyRechargeRowToLinkModal(hydrated)
+          setEditRechargeRow(hydrated)
+          setLinkModalOpen(true)
         }
 
         setSearchParams({}, { replace: true })
@@ -1391,6 +1410,44 @@ export default function DistributorsBaaSPage() {
     }
   }
 
+  function applyRechargeRowToLinkModal(hydrated) {
+    if (!hydrated || typeof hydrated !== 'object') return
+    setLinkLineItems(rechargeLinesHydrateFromAdminRow(hydrated))
+    setLinkDepositUsd(declaredDepositInputValueFromReview(hydrated))
+    setLinkDiscount(
+      hydrated.discount != null && Number(hydrated.discount) > 0 ?
+        String(hydrated.discount)
+      : '',
+    )
+    setLinkComment(typeof hydrated.admin_note === 'string' ? hydrated.admin_note : '')
+    const clientId = Number(hydrated.client_id)
+    const email = String(hydrated.client_email ?? '').trim()
+    setLinkClientId(
+      Number.isFinite(clientId) && clientId > 0 ? String(clientId) : email,
+    )
+    setSelectedPaymentMethodIds(
+      Array.isArray(hydrated.allowed_payment_methods) ?
+        hydrated.allowed_payment_methods.map((id) => String(id))
+      : [],
+    )
+    setSelectedDepositAccountIds(() => {
+      const depIds =
+        Array.isArray(hydrated.allowed_deposit_account_ids) ?
+          hydrated.allowed_deposit_account_ids.map((id) => String(id))
+        : []
+      const submitted = hydrated.portal_submitted_deposit_account_id
+      if (submitted != null && !depIds.includes(String(submitted))) {
+        depIds.push(String(submitted))
+      }
+      return depIds
+    })
+    setLinkReceiptFile(null)
+    setHotmartLinkRows(hydrateHotmartLinkRows(hydrated.hotmart_links, { all: true }))
+    hotmartUserEditedRef.current = Boolean(
+      Array.isArray(hydrated.hotmart_links) && hydrated.hotmart_links.length,
+    )
+  }
+
   async function openEditRechargeModal(row) {
     if (
       !row
@@ -1411,33 +1468,7 @@ export default function DistributorsBaaSPage() {
     } catch {
       hydrated = row
     }
-    setLinkLineItems(rechargeLinesHydrateFromAdminRow(hydrated))
-    setLinkDepositUsd(declaredDepositInputValueFromReview(hydrated))
-    setLinkDiscount(
-      hydrated.discount != null && Number(hydrated.discount) > 0 ? String(hydrated.discount) : '',
-    )
-    setLinkComment(typeof hydrated.admin_note === 'string' ? hydrated.admin_note : '')
-    setLinkClientId(email)
-    setSelectedPaymentMethodIds(
-      Array.isArray(hydrated.allowed_payment_methods)
-        ? hydrated.allowed_payment_methods.map((id) => String(id))
-        : [],
-    )
-    setSelectedDepositAccountIds(() => {
-      const depIds = Array.isArray(hydrated.allowed_deposit_account_ids)
-        ? hydrated.allowed_deposit_account_ids.map((id) => String(id))
-        : []
-      const submitted = hydrated.portal_submitted_deposit_account_id
-      if (submitted != null && !depIds.includes(String(submitted))) {
-        depIds.push(String(submitted))
-      }
-      return depIds
-    })
-    setLinkReceiptFile(null)
-    setHotmartLinkRows(hydrateHotmartLinkRows(hydrated.hotmart_links, { all: true }))
-    hotmartUserEditedRef.current = Boolean(
-      Array.isArray(hydrated.hotmart_links) && hydrated.hotmart_links.length,
-    )
+    applyRechargeRowToLinkModal(hydrated)
     setEditRechargeRow(hydrated)
     setLinkModalOpen(true)
   }
@@ -1672,7 +1703,7 @@ export default function DistributorsBaaSPage() {
     const em = String(editRechargeRow.client_email ?? '').trim()
     const clientId = Number(editRechargeRow.client_id)
     return {
-      id: em,
+      id: Number.isFinite(clientId) && clientId > 0 ? clientId : em,
       client_id: Number.isFinite(clientId) && clientId > 0 ? clientId : undefined,
       email: em,
       nombre: editRechargeRow.client_name,
@@ -2465,6 +2496,7 @@ export default function DistributorsBaaSPage() {
       />
 
       <NewRechargeModal
+        key={editRechargeRow?.id != null ? `edit-wr-${editRechargeRow.id}` : 'new-wr'}
         open={linkModalOpen}
         onClose={closeLinkModal}
         clientes={clientes}

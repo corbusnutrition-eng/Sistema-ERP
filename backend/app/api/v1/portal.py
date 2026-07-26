@@ -1602,6 +1602,7 @@ def _portal_wallet_recharge_item_fallback(
     return PortalWalletRechargeItem(
         id=int(req.id),
         amount_requested=float(getattr(req, "amount_requested", 0) or 0),
+        discount=float(getattr(req, "discount", 0) or 0),
         amount_paid=float(getattr(req, "amount_paid", 0) or 0),
         balance_pending=float(getattr(req, "balance_pending", 0) or 0),
         surplus_credited=float(getattr(req, "surplus_credited", 0) or 0),
@@ -1633,6 +1634,7 @@ def _portal_wallet_recharge_item_from_request(
     return PortalWalletRechargeItem(
         id=int(req.id),
         amount_requested=float(req.amount_requested),
+        discount=float(getattr(req, "discount", 0) or 0),
         amount_paid=float(getattr(req, "amount_paid", 0) or 0),
         balance_pending=float(getattr(req, "balance_pending", 0) or 0),
         surplus_credited=float(getattr(req, "surplus_credited", 0) or 0),

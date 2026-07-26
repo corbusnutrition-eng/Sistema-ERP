@@ -6734,6 +6734,11 @@ function ClientPortalPageInner() {
               Boolean(selectedRechargePaymentMethodId) && !isRechargeRetiroMethod
             const retiroScope = `recharge:${frId}`
             const amountReq = parseMoneyNum(fr.amount_requested)
+            const rechargeDisc = Math.max(0, parseMoneyNum(fr?.discount))
+            const rechargeGross =
+              rechargeDisc > 1e-9 ?
+                Math.round((amountReq + rechargeDisc) * 100) / 100
+              : amountReq
             const pend = parseMoneyNum(fr.balance_pending)
             const featPaid = Math.max(0, parseMoneyNum(fr?.amount_paid) || 0)
             const isFeatPartial = featPaid > 1e-9 && pend > 1e-9
@@ -6923,9 +6928,28 @@ function ClientPortalPageInner() {
                               <p className="mt-1 text-xs leading-relaxed text-slate-500">Referencia #{refStr}</p>
                             </div>
                             <p className="pt-0.5 text-right text-[15px] font-semibold tabular-nums text-slate-100">
-                              {formatMoney(isFeatPartial && Number.isFinite(amountReq) ? amountReq : headlineAmt, cur)}
+                              {formatMoney(
+                                isFeatPartial && Number.isFinite(amountReq) ? amountReq : rechargeGross,
+                                cur,
+                              )}
                             </p>
                           </div>
+                          {rechargeDisc > 1e-9 ? (
+                            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-5 py-3 text-sm">
+                              <span className="text-slate-400">Descuento (pasarela)</span>
+                              <span className="tabular-nums font-medium text-rose-300">
+                                −{formatMoney(rechargeDisc, cur)}
+                              </span>
+                            </div>
+                          ) : null}
+                          {rechargeDisc > 1e-9 ? (
+                            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-5 py-3 text-sm">
+                              <span className="font-medium text-slate-200">Total a pagar</span>
+                              <span className="tabular-nums font-semibold text-white">
+                                {formatMoney(amountReq, cur)}
+                              </span>
+                            </div>
+                          ) : null}
                           {isFeatPartial ? (
                             <>
                               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-5 py-3 text-sm">
