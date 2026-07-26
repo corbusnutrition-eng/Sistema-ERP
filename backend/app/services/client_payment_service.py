@@ -2133,7 +2133,7 @@ def sync_wallet_recharge_submitted_deposit_from_allowlist(
 
 
 def resolve_client_payment_deposit_account_id(db: Session, payment: ClientPayment) -> Optional[int]:
-    """Cuenta bancaria del cobro: la del pago o, si falta, la de la venta vinculada."""
+    """Cuenta bancaria del cobro: la del pago o, si falta, la de la venta/recarga vinculada."""
     dep_id = getattr(payment, "deposit_account_id", None)
     if dep_id is not None:
         return int(dep_id)
@@ -2144,10 +2144,33 @@ def resolve_client_payment_deposit_account_id(db: Session, payment: ClientPaymen
         if sale is not None and sale.deposit_account_id is not None:
             return int(sale.deposit_account_id)
 
+    from app.services.wallet_recharge_client_payment import parse_notes_meta_wallet_recharge_id
+
+    meta_wr_id = parse_notes_meta_wallet_recharge_id(payment.notes)
+    if meta_wr_id is not None:
+        req = db.get(WalletRechargeRequest, int(meta_wr_id))
+        if req is not None:
+            raw_dep = getattr(req, "portal_submitted_deposit_account_id", None)
+            if raw_dep is not None:
+                try:
+                    return int(raw_dep)
+                except (TypeError, ValueError):
+                    pass
+
     for alloc in db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == int(payment.id)).all():
-        sale = db.get(Sale, int(alloc.sale_id))
-        if sale is not None and sale.deposit_account_id is not None:
-            return int(sale.deposit_account_id)
+        if alloc.sale_id is not None:
+            sale = db.get(Sale, int(alloc.sale_id))
+            if sale is not None and sale.deposit_account_id is not None:
+                return int(sale.deposit_account_id)
+        if alloc.wallet_recharge_id is not None:
+            req = db.get(WalletRechargeRequest, int(alloc.wallet_recharge_id))
+            if req is not None:
+                raw_dep = getattr(req, "portal_submitted_deposit_account_id", None)
+                if raw_dep is not None:
+                    try:
+                        return int(raw_dep)
+                    except (TypeError, ValueError):
+                        pass
 
     return None
 
@@ -2288,8 +2311,10 @@ def finalize_client_payment_approval(
     _deduct_reserved_credit_on_payment_approval(db, payment)
 
     resolved_dep = resolve_client_payment_deposit_account_id(db, payment)
-    if resolved_dep is not None and payment.deposit_account_id is None:
-        payment.deposit_account_id = int(resolved_dep)
+    if resolved_dep is not None:
+        validated = resolve_liquid_deposit_account_id(db, int(resolved_dep))
+        if validated is not None:
+            payment.deposit_account_id = int(validated)
 
     confirmed, pool, session_allocated, session_allocated_wr = _confirm_existing_payment_allocations(
         db, payment
@@ -2361,6 +2386,39 @@ def finalize_client_payment_approval(
         touched_wr_ids.add(int(meta_wr_id))
 
     db.flush()
+
+    from app.services.accounting_engine import (
+        client_payment_cash_portion,
+        is_baas_wallet_settlement_payment,
+        is_credit_only_client_payment,
+    )
+
+    applied_total = _payment_applied_total(db, payment)
+    if meta_wr_id is not None and applied_total <= _FP_EPS:
+        linked_wr = db.get(WalletRechargeRequest, int(meta_wr_id))
+        if linked_wr is not None:
+            open_wr = _effective_open_balance_for_wallet_recharge_apply(db, linked_wr, payment)
+            applied_est = float(min(_q_amt(payment.amount), open_wr))
+            if applied_est > _FP_EPS:
+                payment.notes = _stamp_wallet_recharge_cxc_applied_notes(
+                    payment.notes,
+                    applied_to_cxc=applied_est,
+                    received_amount=float(client_payment_cash_portion(payment) or payment.amount),
+                    currency=normalize_currency_code(str(payment.currency or "USD")),
+                )
+                db.flush()
+
+    if not is_credit_only_client_payment(payment) and not is_baas_wallet_settlement_payment(payment):
+        if payment.deposit_account_id is None:
+            from fastapi import HTTPException, status
+
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "El cobro no tiene cuenta bancaria de depósito; "
+                    "seleccione la cuenta en el portal o en la solicitud antes de aprobar."
+                ),
+            )
 
     now = now_ecuador()
     payment.status = ClientPaymentStatus.approved
@@ -3134,7 +3192,7 @@ def infer_client_payment_applied_to_ar(db: Session, payment: ClientPayment) -> D
     if applied_alloc > _FP_EPS:
         return min(applied_alloc, amt)
 
-    wr_inferred = _infer_ar_from_wallet_recharge_payment_notes(payment, amt)
+    wr_inferred = _infer_ar_from_wallet_recharge_payment_notes(db, payment, amt)
     if wr_inferred > _FP_EPS:
         return min(wr_inferred, amt)
 
@@ -3234,13 +3292,15 @@ def compute_client_credit_from_payment_ledger(
 
 
 def _infer_ar_from_wallet_recharge_payment_notes(
+    db: Session,
     payment: ClientPayment,
     amt: Decimal,
 ) -> Decimal:
     """Monto del cobro que reduce CxC de una solicitud BaaS (``META_WALLET_RECHARGE_ID``)."""
     from app.services.wallet_recharge_client_payment import parse_notes_meta_wallet_recharge_id
 
-    if parse_notes_meta_wallet_recharge_id(payment.notes) is None:
+    wr_id = parse_notes_meta_wallet_recharge_id(payment.notes)
+    if wr_id is None:
         return Decimal("0")
     notes = str(payment.notes or "")
     for pat in (_RE_META_WR_CXC_APPLIED, _RE_PARTE_EFECTIVO):
@@ -3253,6 +3313,11 @@ def _infer_ar_from_wallet_recharge_payment_notes(
                 return min(applied, amt)
         except Exception:
             continue
+    req = db.get(WalletRechargeRequest, int(wr_id))
+    if req is not None and int(req.client_id) == int(payment.client_id):
+        open_bal = _effective_open_balance_for_wallet_recharge_apply(db, req, payment)
+        if open_bal > _FP_EPS:
+            return min(amt, open_bal)
     return Decimal("0")
 
 
@@ -4240,6 +4305,8 @@ def finalize_wallet_recharge_payment_approval(
         wallet_to_add = credit_wallet_recharge_product_if_pending(db, req, client, wr_cur)
 
     ensure_wallet_recharge_accrual_journal(db, req, strict=strict_accounting)
+
+    sync_pending_payments_deposit_for_wallet_recharge(db, req)
 
     cp = finalize_wallet_recharge_client_payment_on_approval(
         db,

@@ -178,6 +178,10 @@ def ensure_pending_client_payment_for_wallet_recharge(
                 dep_id = int(raw_dep)
             except (TypeError, ValueError):
                 dep_id = None
+    if dep_id is not None:
+        from app.services.client_payment_service import resolve_liquid_deposit_account_id
+
+        dep_id = resolve_liquid_deposit_account_id(db, int(dep_id))
 
     existing = None if always_create_new else find_pending_client_payment_for_wallet_recharge(db, req)
     notes = build_wallet_recharge_payment_notes(

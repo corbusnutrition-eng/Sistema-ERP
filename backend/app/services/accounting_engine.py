@@ -8,6 +8,7 @@ TICKETS (ingresos operativos) y GASTOS según ``detail_type`` del plan contable.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -187,34 +188,33 @@ def find_tickets_income_account(db: Session, detail_type: str, currency: str) ->
     )
 
 
-def find_discount_account(db: Session, currency: str = "USD") -> Account:
-    """Cuenta de descuentos (cost_of_sales / detail Descuentos) para comisiones de pasarela."""
-    cur = normalize_currency_code(currency)
-    row = (
+def _discount_account_query(db: Session, *, currency: str):
+    """Busca la cuenta canónica «Descuentos» (sin crear duplicados)."""
+    from sqlalchemy import or_
+
+    return (
         db.query(Account)
         .filter(
             Account.is_active.is_(True),
             Account.account_type == LedgerAccountType.cost_of_sales.value,
-            Account.detail_type == "Descuentos",
-            Account.currency == cur,
+            Account.currency == currency,
+            or_(
+                Account.detail_type.in_(("Descuentos", "descuentos")),
+                Account.name == "Descuentos",
+            ),
         )
         .order_by(Account.id.asc())
-        .first()
     )
+
+
+def find_discount_account(db: Session, currency: str = "USD") -> Account:
+    """Cuenta de descuentos (cost_of_sales / detail Descuentos) para comisiones de pasarela."""
+    cur = normalize_currency_code(currency)
+    row = _discount_account_query(db, currency=cur).first()
     if row is not None:
         return row
     if cur != "USD":
-        row = (
-            db.query(Account)
-            .filter(
-                Account.is_active.is_(True),
-                Account.account_type == LedgerAccountType.cost_of_sales.value,
-                Account.detail_type == "Descuentos",
-                Account.currency == "USD",
-            )
-            .order_by(Account.id.asc())
-            .first()
-        )
+        row = _discount_account_query(db, currency="USD").first()
         if row is not None:
             return row
     raise HTTPException(
@@ -1529,15 +1529,48 @@ def is_baas_wallet_settlement_payment(payment) -> bool:
     return "BAAS_WALLET_AUTO_PURCHASE=1" in notes
 
 
+def client_payment_cash_portion(payment) -> Decimal:
+    """
+    Importe del cobro en efectivo/transferencia (excluye saldo a favor del cliente).
+
+    Un pago mixto (``PARTE_SALDO_FAVOR`` + ``PARTE_EFECTIVO``) tiene porción bancaria > 0.
+    """
+    notes = str(getattr(payment, "notes", None) or "")
+    m_cash = re.search(r"PARTE_EFECTIVO=([\d.]+)", notes, re.IGNORECASE)
+    if m_cash is not None:
+        try:
+            cash = _q4(m_cash.group(1))
+            if cash > _q4(Decimal("0.0001")):
+                return cash
+        except (TypeError, ValueError):
+            pass
+    if getattr(payment, "deposit_account_id", None) is not None:
+        return _q4(getattr(payment, "amount", 0) or 0)
+    pm = (getattr(payment, "payment_method", None) or "").strip().lower()
+    if pm == "saldo a favor":
+        return Decimal("0")
+    m_credit = re.search(r"PARTE_SALDO_FAVOR=([\d.]+)", notes, re.IGNORECASE)
+    if m_credit is not None:
+        try:
+            credit = _q4(m_credit.group(1))
+            total = _q4(getattr(payment, "amount", 0) or 0)
+            return max(Decimal("0"), _q4(total - credit))
+        except (TypeError, ValueError):
+            pass
+    return _q4(getattr(payment, "amount", 0) or 0)
+
+
 def is_credit_only_client_payment(payment) -> bool:
     """Pagos con saldo a favor del cliente: no hay movimiento bancario."""
-    pm = (getattr(payment, "payment_method", None) or "").strip().lower()
     notes = str(getattr(payment, "notes", None) or "")
-    return (
-        pm == "saldo a favor"
-        or "PARTE_SALDO_FAVOR=" in notes
-        or "credit_auto_portal" in notes
-    )
+    if client_payment_cash_portion(payment) > _q4(Decimal("0.0001")):
+        return False
+    pm = (getattr(payment, "payment_method", None) or "").strip().lower()
+    if pm == "saldo a favor":
+        return True
+    if "credit_auto_portal" in notes:
+        return True
+    return "PARTE_SALDO_FAVOR=" in notes
 
 
 def _client_payment_applied_to_ar_amount(db: Session, payment) -> Decimal:
@@ -1765,10 +1798,46 @@ def sync_client_payment_journal(db: Session, payment, *, strict: bool = True) ->
 
     xr = payment_exchange_rate(payment, db)
 
-    journal_lines: list[JournalLineDraft] = [
-        JournalLineDraft(bank.id, debit=amt, credit=Decimal("0"), exchange_rate=xr),
-    ]
-    touched_accounts: set[int] = {int(bank.id)}
+    cash_amt = client_payment_cash_portion(payment)
+    if cash_amt > amt:
+        cash_amt = amt
+    credit_from_balance = _q4(amt - cash_amt)
+    if credit_from_balance < Decimal("0"):
+        credit_from_balance = Decimal("0")
+
+    journal_lines: list[JournalLineDraft] = []
+    touched_accounts: set[int] = set()
+
+    if cash_amt > _q4(Decimal("0.0001")):
+        journal_lines.append(
+            JournalLineDraft(bank.id, debit=cash_amt, credit=Decimal("0"), exchange_rate=xr),
+        )
+        touched_accounts.add(int(bank.id))
+
+    if credit_from_balance > _q4(Decimal("0.0001")):
+        advance_src = ensure_customer_advance_liability(db, cur)
+        if normalize_currency_code(str(getattr(advance_src, "currency", "") or cur)) != cur:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"La cuenta de anticipos no coincide con la moneda del pago ({cur}).",
+            )
+        journal_lines.append(
+            JournalLineDraft(
+                advance_src.id,
+                debit=credit_from_balance,
+                credit=Decimal("0"),
+                exchange_rate=xr,
+            ),
+        )
+        touched_accounts.add(int(advance_src.id))
+
+    if not journal_lines:
+        msg = f"El pago {payment.payment_number} no tiene porción bancaria ni de saldo a favor registrable."
+        if strict:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
+        logger.warning(msg)
+        _refresh_accounts_balance_cache(db, old_touch)
+        return None
 
     if applied_to_ar > 0:
         journal_lines.append(
