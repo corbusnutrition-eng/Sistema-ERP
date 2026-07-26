@@ -6,7 +6,7 @@ import SaleLineProductSelect from './SaleLineProductSelect'
 import { SALES_CURRENCIES } from '../salesCurrencies'
 import { invoiceLineCredentialKind } from '../invoiceLineCredentials'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
-import IllegibleReceiptAlert from '../../../components/ui/IllegibleReceiptAlert'
+import { IllegibleReceiptAlert } from '../../../components/OcrSecurityBadges'
 import PaymentMethodsDepositCheckboxes from './PaymentMethodsDepositCheckboxes'
 import HotmartLinksEditor from './HotmartLinksEditor'
 import {
