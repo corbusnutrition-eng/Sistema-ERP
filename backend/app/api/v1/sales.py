@@ -71,6 +71,7 @@ from app.schemas.sales import (
 )
 from app.services.client_payment_service import (
     approve_pending_linked_client_payments_for_sale,
+    client_payment_review_destination_brief,
     is_client_payment_credit_only,
     linked_payments_for_sale,
     parse_notes_meta_sale_id,
@@ -5457,13 +5458,18 @@ def _build_response(
                 appl = amt_pay
             if appl > Decimal("0"):
                 pending_alloc_total += appl
+            dest = client_payment_review_destination_brief(db, pr)
             pending_review_raw.append(
                 PendingReviewPaymentOut(
                     payment_id=int(pr.id),
                     payment_number=pr.payment_number or "",
                     amount=float(Decimal(str(pr.amount or 0)).quantize(Decimal("0.01"))),
                     currency=str(pr.currency or "USD"),
-                    payment_method=str(pr.payment_method or "").strip() or None,
+                    payment_method=str(pr.payment_method or "").strip() or dest.get("payment_method_name"),
+                    deposit_account_id=dest.get("deposit_account_id"),
+                    deposit_account_name=dest.get("deposit_account_name"),
+                    payment_method_id=dest.get("payment_method_id"),
+                    payment_method_name=dest.get("payment_method_name"),
                     receipt_file_url=str(pr.receipt_file_url or "").strip() or None,
                     created_at=pr.created_at,
                     amount_applied_to_sale=float(appl.quantize(Decimal("0.01"))),

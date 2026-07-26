@@ -411,6 +411,22 @@ class WalletRechargeLinkedPaymentAdmin(BaseModel):
         default=None,
         description="Importe declarado como depósito bancario (pendiente de aprobación).",
     )
+    deposit_account_id: Optional[int] = Field(
+        default=None,
+        description="Cuenta bancaria elegida por el cliente al subir el comprobante.",
+    )
+    deposit_account_name: Optional[str] = Field(
+        default=None,
+        description="Nombre legible de la cuenta destino del depósito.",
+    )
+    payment_method_id: Optional[int] = Field(
+        default=None,
+        description="Id del método de pago vinculado al comprobante en revisión.",
+    )
+    payment_method_name: Optional[str] = Field(
+        default=None,
+        description="Nombre del método de pago reportado por el cliente.",
+    )
     is_manually_edited: bool = Field(default=False)
     ai_confidence_score: Optional[int] = Field(default=None, ge=0, le=100)
 
@@ -453,6 +469,18 @@ class WalletRechargeRequestAdminRow(BaseModel):
     portal_declared_payment_amount: Optional[float] = Field(
         default=None,
         description="Importe que el cliente declaró en el portal al subir el comprobante.",
+    )
+    portal_submitted_deposit_account_id: Optional[int] = Field(
+        default=None,
+        description="Id de la cuenta bancaria que el cliente eligió al subir el comprobante.",
+    )
+    portal_submitted_deposit_account_name: Optional[str] = Field(
+        default=None,
+        description="Nombre legible de la cuenta destino del depósito reportado.",
+    )
+    portal_submitted_payment_method_name: Optional[str] = Field(
+        default=None,
+        description="Método de pago asociado al comprobante en revisión.",
     )
     is_manually_edited: bool = Field(default=False)
     ai_confidence_score: Optional[int] = Field(default=None, ge=0, le=100)

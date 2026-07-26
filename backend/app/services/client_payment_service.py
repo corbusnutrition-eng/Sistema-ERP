@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.currency_utils import normalize_currency_code
 from app.models.client import Client
+from app.models.account import Account
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
 from app.models.sale import Sale, SaleStatus
 from app.models.wallet_recharge_request import WalletRechargeRequest
@@ -2173,6 +2174,108 @@ def resolve_client_payment_deposit_account_id(db: Session, payment: ClientPaymen
                         pass
 
     return None
+
+
+def _deposit_account_display_label(db: Session, acc: Account) -> str:
+    """Etiqueta legible para panel admin (incluye subcuenta bajo cuenta agrupadora)."""
+    name = (acc.name or "").strip() or f"Cuenta #{int(acc.id)}"
+    pid = getattr(acc, "parent_id", None)
+    if pid is not None:
+        try:
+            parent = db.get(Account, int(pid))
+        except (TypeError, ValueError):
+            parent = None
+        if parent is not None:
+            pname = (parent.name or "").strip()
+            if pname:
+                return f"{pname} - {name}"
+    return name
+
+
+def client_payment_review_destination_brief(
+    db: Session,
+    payment: ClientPayment,
+) -> dict[str, Optional[int | str]]:
+    """
+    Cuenta bancaria y método que el cliente eligió al subir el comprobante (revisión admin).
+    """
+    from app.models.payment_method import PaymentMethod
+
+    dep_id = resolve_client_payment_deposit_account_id(db, payment)
+    dep_name: Optional[str] = None
+    pm_id_raw = getattr(payment, "payment_method_id", None)
+    pm_id: Optional[int] = int(pm_id_raw) if pm_id_raw is not None else None
+    pm_name = (getattr(payment, "payment_method", None) or "").strip() or None
+
+    if dep_id is not None:
+        acc = db.get(Account, int(dep_id))
+        if acc is not None:
+            dep_name = _deposit_account_display_label(db, acc)
+            if not pm_name:
+                linked = (getattr(acc, "linked_payment_method", None) or "").strip()
+                if linked:
+                    pm_name = linked
+                elif getattr(acc, "linked_wallet_id", None) is not None:
+                    pm_row = db.get(PaymentMethod, int(acc.linked_wallet_id))
+                    if pm_row is not None:
+                        pm_name = (pm_row.name or "").strip() or None
+                        if pm_id is None:
+                            pm_id = int(pm_row.id)
+
+    if pm_id is not None and not pm_name:
+        pm_row = db.get(PaymentMethod, int(pm_id))
+        if pm_row is not None:
+            pm_name = (pm_row.name or "").strip() or None
+
+    return {
+        "deposit_account_id": int(dep_id) if dep_id is not None else None,
+        "deposit_account_name": dep_name,
+        "payment_method_id": pm_id,
+        "payment_method_name": pm_name,
+    }
+
+
+def wallet_recharge_review_destination_brief(
+    db: Session,
+    req: WalletRechargeRequest,
+) -> dict[str, Optional[int | str]]:
+    """Cuenta/método del comprobante en revisión para una recarga BaaS."""
+    from app.models.client_payment import ClientPaymentStatus
+    from app.services.wallet_recharge_client_payment import find_pending_client_payment_for_wallet_recharge
+
+    cp = find_pending_client_payment_for_wallet_recharge(db, req)
+    if cp is not None and cp.status == ClientPaymentStatus.pending_review:
+        return client_payment_review_destination_brief(db, cp)
+
+    dep_id_raw = getattr(req, "portal_submitted_deposit_account_id", None)
+    dep_id: Optional[int] = None
+    dep_name: Optional[str] = None
+    pm_name: Optional[str] = None
+    if dep_id_raw is not None:
+        try:
+            dep_id = int(dep_id_raw)
+        except (TypeError, ValueError):
+            dep_id = None
+    if dep_id is not None:
+        acc = db.get(Account, int(dep_id))
+        if acc is not None:
+            dep_name = _deposit_account_display_label(db, acc)
+            linked = (getattr(acc, "linked_payment_method", None) or "").strip()
+            if linked:
+                pm_name = linked
+            elif getattr(acc, "linked_wallet_id", None) is not None:
+                from app.models.payment_method import PaymentMethod
+
+                pm_row = db.get(PaymentMethod, int(acc.linked_wallet_id))
+                if pm_row is not None:
+                    pm_name = (pm_row.name or "").strip() or None
+
+    return {
+        "deposit_account_id": dep_id,
+        "deposit_account_name": dep_name,
+        "payment_method_id": None,
+        "payment_method_name": pm_name,
+    }
 
 
 def _confirm_existing_payment_allocations(

@@ -36,6 +36,9 @@ import {
   selectedMethodsIncludeHotmart,
 } from '../../../utils/hotmartLinks'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
+import ReportedDepositDestinationAlert, {
+  pickPendingReviewDepositDestination,
+} from '../../../components/ui/ReportedDepositDestinationAlert'
 import OcrSecurityBadges, {
   pickOcrSecurityFlags,
   IllegibleReceiptAlert,
@@ -1661,6 +1664,13 @@ export default function NuevaVentaModal({
         String(initialSale?.status ?? '').toLowerCase(),
       )) ||
     (isEditing && pendingReviewPayments.length > 0)
+
+  const portalConfigLocked = showDeclaredDepositField
+
+  const reportedDepositDestination = useMemo(() => {
+    if (!showDeclaredDepositField) return null
+    return pickPendingReviewDepositDestination({ pendingReviewPayments })
+  }, [showDeclaredDepositField, pendingReviewPayments])
 
   const amountPaidInvalid =
     localAmount > 0 &&
@@ -4179,6 +4189,8 @@ export default function NuevaVentaModal({
               declaredDepositStr={declaredDepositStr}
               onDeclaredDepositChange={setDeclaredDepositStr}
               showIllegibleDepositAlert={showIllegibleDepositAlert}
+              reportedDepositDestination={reportedDepositDestination}
+              portalConfigLocked={portalConfigLocked}
             />
           )}
 
@@ -4553,6 +4565,13 @@ export default function NuevaVentaModal({
                     }
                   />
                 ) : null}
+                {reportedDepositDestination ? (
+                  <ReportedDepositDestinationAlert
+                    className="mt-3"
+                    depositAccountName={reportedDepositDestination.depositAccountName}
+                    paymentMethodName={reportedDepositDestination.paymentMethodName}
+                  />
+                ) : null}
               </>
             ) : (
               <>
@@ -4594,11 +4613,24 @@ export default function NuevaVentaModal({
 
           {showDepositPaymentFields && (
           <div>
+            {portalConfigLocked ? (
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Configuración del enlace de pago (no confundir con el depósito de este comprobante)
+              </p>
+            ) : null}
             <label className="block text-sm font-medium text-gray-700 mb-1.5">
               Métodos de pago y cuentas de depósito{' '}
-              <span className="text-[10px] text-gray-500 font-normal">(opcional · portal del cliente)</span>
+              <span className="text-[10px] text-gray-500 font-normal">
+                {portalConfigLocked ?
+                  '(solo lectura · configuración del link)'
+                : '(opcional · portal del cliente)'}
+              </span>
             </label>
-            <div className="max-h-[28rem] overflow-y-auto rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
+            <div
+              className={`max-h-[28rem] overflow-y-auto rounded-lg border border-gray-200 bg-white divide-y divide-gray-100 ${
+                portalConfigLocked ? 'opacity-60 pointer-events-none select-none' : ''
+              }`}
+            >
               {salePaymentMethodOptions.length === 0 ? (
                 <p className="text-xs text-gray-500 px-3 py-2">No hay métodos de pago activos.</p>
               ) : (

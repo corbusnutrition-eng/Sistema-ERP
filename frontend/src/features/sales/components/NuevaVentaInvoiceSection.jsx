@@ -7,6 +7,7 @@ import { SALES_CURRENCIES } from '../salesCurrencies'
 import { invoiceLineCredentialKind } from '../invoiceLineCredentials'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
 import { IllegibleReceiptAlert } from '../../../components/OcrSecurityBadges'
+import ReportedDepositDestinationAlert from '../../../components/ui/ReportedDepositDestinationAlert'
 import PaymentMethodsDepositCheckboxes from './PaymentMethodsDepositCheckboxes'
 import HotmartLinksEditor from './HotmartLinksEditor'
 import {
@@ -108,6 +109,8 @@ export default function NuevaVentaInvoiceSection(props) {
     declaredDepositStr = '',
     onDeclaredDepositChange,
     showIllegibleDepositAlert = false,
+    reportedDepositDestination = null,
+    portalConfigLocked = false,
   } = props
 
   const apiOrigin = salesApiOrigin()
@@ -504,6 +507,13 @@ export default function NuevaVentaInvoiceSection(props) {
               Corrija aquí si la lectura automática del comprobante fue incorrecta. Al guardar, el monto se aplicará al
               cobro en revisión.
             </p>
+            {reportedDepositDestination ? (
+              <ReportedDepositDestinationAlert
+                className="mt-3"
+                depositAccountName={reportedDepositDestination.depositAccountName}
+                paymentMethodName={reportedDepositDestination.paymentMethodName}
+              />
+            ) : null}
           </div>
         ) : null}
         <div>
@@ -529,18 +539,35 @@ export default function NuevaVentaInvoiceSection(props) {
           </div>
         </div>
         {showDepositPaymentFields && (
-          <PaymentMethodsDepositCheckboxes
-            disabled={submitting}
-            salePaymentMethodOptions={salePaymentMethodOptions}
-            depositAccountOptionsByMethodId={depositAccountOptionsByMethodId}
-            selectedPaymentMethodIds={selectedPaymentMethodIds}
-            togglePaymentMethodId={togglePaymentMethodId}
-            selectedDepositAccountIds={selectedDepositAccountIds}
-            toggleDepositAccountId={toggleDepositAccountId}
-            depositCurrencyMismatch={depositCurrencyMismatch}
-            depositAccountCurrencyCode={depositAccountCurrencyCode}
-            saleCurrencyCode={saleCurrencyCode}
-          />
+          <>
+            {portalConfigLocked ? (
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Configuración del enlace de pago (no confundir con el depósito de este comprobante)
+              </p>
+            ) : null}
+            <PaymentMethodsDepositCheckboxes
+              disabled={submitting || portalConfigLocked}
+              salePaymentMethodOptions={salePaymentMethodOptions}
+              depositAccountOptionsByMethodId={depositAccountOptionsByMethodId}
+              selectedPaymentMethodIds={selectedPaymentMethodIds}
+              togglePaymentMethodId={togglePaymentMethodId}
+              selectedDepositAccountIds={selectedDepositAccountIds}
+              toggleDepositAccountId={toggleDepositAccountId}
+              depositCurrencyMismatch={depositCurrencyMismatch}
+              depositAccountCurrencyCode={depositAccountCurrencyCode}
+              saleCurrencyCode={saleCurrencyCode}
+              titleHint={
+                portalConfigLocked ?
+                  '(solo lectura · configuración del link)'
+                : '(opcional · portal del cliente)'
+              }
+              footerNote={
+                portalConfigLocked ?
+                  'Estas opciones definen qué verá el cliente en futuros enlaces; la cuenta del depósito actual está arriba.'
+                : undefined
+              }
+            />
+          </>
         )}
         {showHotmartLinksEditor ? (
           <HotmartLinksEditor

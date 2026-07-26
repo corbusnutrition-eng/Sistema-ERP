@@ -2566,6 +2566,8 @@ export default function DistributorsBaaSPage() {
           editRechargeRow?.portal_declared_payment_amount ??
           null
         }
+        rechargeInReview={editRechargeRow?.status === 'in_review'}
+        reviewDestinationRechargeRow={editRechargeRow ?? null}
       />
 
     </div>

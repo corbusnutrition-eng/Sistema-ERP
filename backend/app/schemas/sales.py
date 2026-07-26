@@ -790,6 +790,22 @@ class PendingReviewPaymentOut(BaseModel):
     amount: float
     currency: str
     payment_method: Optional[str] = None
+    deposit_account_id: Optional[int] = Field(
+        default=None,
+        description="Cuenta bancaria elegida por el cliente al subir el comprobante.",
+    )
+    deposit_account_name: Optional[str] = Field(
+        default=None,
+        description="Nombre legible de la cuenta destino del depósito (p. ej. «Banco Pichincha - Titular»).",
+    )
+    payment_method_id: Optional[int] = Field(
+        default=None,
+        description="Id del método de pago vinculado al comprobante en revisión.",
+    )
+    payment_method_name: Optional[str] = Field(
+        default=None,
+        description="Nombre del método de pago reportado por el cliente.",
+    )
     receipt_file_url: Optional[str] = None
     created_at: Optional[datetime.datetime] = None
     amount_applied_to_sale: Optional[float] = Field(

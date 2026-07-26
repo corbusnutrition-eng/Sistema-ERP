@@ -217,12 +217,16 @@ def _linked_wallet_payments_admin(db: Session, req: WalletRechargeRequest) -> li
         cpid = row.get("payment_id")
         cp_manual = False
         cp_confidence: Optional[int] = None
+        dest: dict[str, Optional[int | str]] = {}
         if cpid is not None:
             cp_row = db.get(ClientPayment, int(cpid))
             if cp_row is not None:
                 notes_raw = str(cp_row.notes or "")
                 cp_manual = bool(getattr(cp_row, "is_manually_edited", False))
                 cp_confidence = getattr(cp_row, "ai_confidence_score", None)
+                from app.services.client_payment_service import client_payment_review_destination_brief
+
+                dest = client_payment_review_destination_brief(db, cp_row)
         from app.services.client_payment_service import credit_reserved_restore_from_notes
 
         credit_part = float(credit_reserved_restore_from_notes(notes_raw))
@@ -250,6 +254,26 @@ def _linked_wallet_payments_admin(db: Session, req: WalletRechargeRequest) -> li
                 wallet_transaction_id=None,
                 credit_portion=round(credit_part, 2) if credit_part > 1e-9 else None,
                 cash_portion=round(cash_part, 2) if cash_part > 1e-9 else None,
+                deposit_account_id=(
+                    int(dest["deposit_account_id"])
+                    if dest.get("deposit_account_id") is not None
+                    else None
+                ),
+                deposit_account_name=(
+                    str(dest["deposit_account_name"]).strip()
+                    if dest.get("deposit_account_name")
+                    else None
+                ),
+                payment_method_id=(
+                    int(dest["payment_method_id"])
+                    if dest.get("payment_method_id") is not None
+                    else None
+                ),
+                payment_method_name=(
+                    str(dest["payment_method_name"]).strip()
+                    if dest.get("payment_method_name")
+                    else None
+                ),
                 is_manually_edited=cp_manual,
                 ai_confidence_score=cp_confidence,
             )
@@ -927,6 +951,9 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
         except (TypeError, ValueError):
             dep_ids = None
     precheck = getattr(r, "admin_precheck_receipt_url", None)
+    from app.services.client_payment_service import wallet_recharge_review_destination_brief
+
+    wr_dest = wallet_recharge_review_destination_brief(db, r)
     return WalletRechargeRequestAdminRow(
         id=r.id,
         client_id=r.client_id,
@@ -966,6 +993,13 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
             and float(x) > 1e-9
             else None
         ),
+        portal_submitted_deposit_account_id=(
+            int(x)
+            if (x := getattr(r, "portal_submitted_deposit_account_id", None)) is not None
+            else None
+        ),
+        portal_submitted_deposit_account_name=wr_dest.get("deposit_account_name"),
+        portal_submitted_payment_method_name=wr_dest.get("payment_method_name"),
         is_manually_edited=bool(getattr(r, "is_manually_edited", False)),
         ai_confidence_score=getattr(r, "ai_confidence_score", None),
         linked_payments=_linked_wallet_payments_admin(db, r),

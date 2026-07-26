@@ -14,6 +14,9 @@ import { salesApiOrigin } from '../sales/saleTableHelpers'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import PaymentMethodsDepositCheckboxes from '../sales/components/PaymentMethodsDepositCheckboxes'
 import HotmartLinksEditor from '../sales/components/HotmartLinksEditor'
+import ReportedDepositDestinationAlert, {
+  pickPendingReviewDepositDestination,
+} from '../../components/ui/ReportedDepositDestinationAlert'
 import { SALES_CURRENCIES, salesCurrencyDefaultRate } from '../sales/salesCurrencies'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
 /** Fila nueva para la tabla multilinea (recarga BaaS; moneda unificada). */
@@ -179,6 +182,8 @@ export default function NewRechargeModal({
   ocrAiConfidenceScore = null,
   ocrPortalDeclaredAmount = null,
   assignedPackagePricesPrefill = null,
+  rechargeInReview = false,
+  reviewDestinationRechargeRow = null,
 }) {
   const { openNewClient } = useModal()
   const [clientSearchMode, setClientSearchMode] = useState('nombre')
@@ -740,6 +745,14 @@ export default function NewRechargeModal({
     [financialLinkedRaw],
   )
 
+  const reportedDepositDestination = useMemo(() => {
+    if (!editMode || !rechargeInReview) return null
+    return pickPendingReviewDepositDestination({
+      linkedPayments: financialLinkedRaw,
+      rechargeRow: reviewDestinationRechargeRow,
+    })
+  }, [editMode, rechargeInReview, financialLinkedRaw, reviewDestinationRechargeRow])
+
   const lateralBalancePendingDisplay = useMemo(() => {
     if (isReadOnly && Number.isFinite(balOv)) {
       return Math.max(0, Math.round(balOv * 100) / 100)
@@ -795,6 +808,8 @@ export default function NewRechargeModal({
   ])
 
   const showFinancialSummary = isReadOnly || editMode
+
+  const portalConfigLocked = editMode && rechargeInReview
 
   function marginBelowLocalCostMessage(localCost) {
     const c = Number(localCost)
@@ -1522,10 +1537,23 @@ export default function NewRechargeModal({
                             </span>
                           </label>
                         ) : null}
+                        {reportedDepositDestination ? (
+                          <ReportedDepositDestinationAlert
+                            className="mt-3 mb-1"
+                            depositAccountName={reportedDepositDestination.depositAccountName}
+                            paymentMethodName={reportedDepositDestination.paymentMethodName}
+                          />
+                        ) : null}
                       </div>
 
+                      {portalConfigLocked ? (
+                        <p className="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          Configuración del enlace de pago (no confundir con el depósito de este comprobante)
+                        </p>
+                      ) : null}
+
                       <PaymentMethodsDepositCheckboxes
-                        disabled={generatingLink}
+                        disabled={generatingLink || portalConfigLocked}
                         salePaymentMethodOptions={safePmOptions}
                         depositAccountOptionsByMethodId={safeDepositByPm}
                         selectedPaymentMethodIds={selectedPaymentMethodIds}
@@ -1535,8 +1563,16 @@ export default function NewRechargeModal({
                         depositCurrencyMismatch={depositCurrencyMismatch}
                         depositAccountCurrencyCode={depositAccountCurrencyCode}
                         saleCurrencyCode={billingCode}
-                        titleHint="(obligatorio · portal)"
-                        footerNote={`Solo se muestran cuentas en ${billingCode}, alineadas con la moneda de la tabla.`}
+                        titleHint={
+                          portalConfigLocked ?
+                            '(solo lectura · configuración del link)'
+                          : '(obligatorio · portal)'
+                        }
+                        footerNote={
+                          portalConfigLocked ?
+                            'Estas opciones definen qué verá el cliente en futuros enlaces; la cuenta del depósito actual está arriba.'
+                          : `Solo se muestran cuentas en ${billingCode}, alineadas con la moneda de la tabla.`
+                        }
                       />
                       {showHotmartLinksEditor ? (
                         <HotmartLinksEditor
