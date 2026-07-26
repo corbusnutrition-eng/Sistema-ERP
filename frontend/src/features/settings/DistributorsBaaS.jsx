@@ -1751,7 +1751,7 @@ export default function DistributorsBaaSPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
-          {tab === 'users' && canCreateRecharge && (
+          {canCreateRecharge && (
             <button
               type="button"
               onClick={() => openLinkModal()}
