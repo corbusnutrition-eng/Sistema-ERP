@@ -474,14 +474,36 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
         setPaidBySale(paid)
         paymentLoadedRef.current = true
         setExistingPaymentLoaded(true)
-      } catch {
+      } catch (err) {
+        paymentLoadedRef.current = true
+        setExistingPaymentLoaded(true)
+        console.error(
+          '[ReceivePaymentModal] GET /api/v1/payments/{id} failed:',
+          err?.response?.status,
+          err?.response?.data ?? err?.message ?? err,
+        )
+        const fallbackClient = prefill?.clientId ?? clientId
+        const fallbackAmt = Number(prefill?.amount ?? amountStr)
+        if (fallbackClient) {
+          try {
+            await loadUnpaidInvoices(String(fallbackClient), {
+              autoFifoAmount:
+                Number.isFinite(fallbackAmt) && fallbackAmt > 0 ? fallbackAmt : undefined,
+            })
+          } catch (loadErr) {
+            console.error(
+              '[ReceivePaymentModal] unpaid-invoices fallback failed:',
+              loadErr?.response?.status,
+              loadErr?.response?.data ?? loadErr?.message ?? loadErr,
+            )
+          }
+        }
         onToast?.('No se pudo cargar el detalle del pago.', 'error')
-        setExistingPaymentLoaded(false)
       } finally {
         setLoadingPaymentView(false)
       }
     },
-    [onToast, loadUnpaidInvoices],
+    [onToast, loadUnpaidInvoices, prefill?.clientId, prefill?.amount],
   )
 
   useEffect(() => {

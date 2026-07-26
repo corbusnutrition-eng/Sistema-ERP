@@ -433,20 +433,29 @@ def list_payments(
 
 @router.get("/{payment_id}", response_model=ClientPaymentOut)
 def get_payment(payment_id: int, db: DbDep, _: ReceivablesViewDep) -> ClientPaymentOut:
-    p = (
-        db.query(ClientPayment)
-        .options(
-            joinedload(ClientPayment.client),
-            joinedload(ClientPayment.allocations).joinedload(PaymentAllocation.sale),
-            joinedload(ClientPayment.allocations).joinedload(PaymentAllocation.wallet_recharge),
+    try:
+        p = (
+            db.query(ClientPayment)
+            .options(
+                joinedload(ClientPayment.client),
+                joinedload(ClientPayment.allocations).joinedload(PaymentAllocation.sale),
+                joinedload(ClientPayment.allocations).joinedload(PaymentAllocation.wallet_recharge),
+            )
+            .filter(ClientPayment.id == payment_id)
+            .first()
         )
-        .filter(ClientPayment.id == payment_id)
-        .first()
-    )
-    if p is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado.")
-    name = p.client.display_name() if p.client else ""
-    return _payment_to_out(p, name, db=db)
+        if p is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado.")
+        name = p.client.display_name() if p.client else ""
+        return _payment_to_out(p, name, db=db)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("GET /payments/%s — error serializando pago", payment_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al cargar el detalle del pago.",
+        ) from None
 
 
 @router.patch("/{payment_id}/approve", response_model=ClientPaymentOut)

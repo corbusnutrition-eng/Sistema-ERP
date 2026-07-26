@@ -1948,6 +1948,8 @@ def payment_encapsulated_in_open_sale_review(db: Session, payment: ClientPayment
     cid = int(payment.client_id)
 
     for alloc in list(payment.allocations or []):
+        if alloc.sale_id is None:
+            continue
         sale = db.get(Sale, int(alloc.sale_id))
         if sale is not None and sale.status in _OPEN_SALE_REVIEW_STATUSES:
             return True
@@ -2664,6 +2666,8 @@ def void_client_payment(
     allocs = db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == pid).all()
     touched_sales: list[Sale] = []
     for alloc in allocs:
+        if alloc.sale_id is None:
+            continue
         sale = db.get(Sale, int(alloc.sale_id))
         if sale is None:
             continue
