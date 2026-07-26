@@ -62,6 +62,8 @@ class Sale(Base):
     exchange_rate: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     # Monto en la moneda local cobrada al cliente
     local_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 4), nullable=True)
+    #: Descuento en moneda de la venta (comisiones pasarela / Hotmart absorbidas por el proveedor).
+    discount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=Decimal("0"), server_default="0")
     #: Cobrado efectivamente en la misma moneda que ``local_amount`` (pagos parciales → saldo por cobrar).
     amount_paid: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     status: Mapped[SaleStatus] = mapped_column(

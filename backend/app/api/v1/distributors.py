@@ -15,7 +15,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from app.account_constants import is_liquid_deposit_account
+from app.services.transaction_discount_helpers import normalize_discount_triplet
 from app.currency_utils import normalize_currency_code
 from app.schemas.hotmart_links import hotmart_links_from_model, normalize_hotmart_links_list
 from app.api.v1.dependencies import require_any_permission, require_permission
@@ -933,6 +933,7 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
         client_email=c.email if c else "",
         client_username=c.username if c else "",
         amount_requested=float(r.amount_requested),
+        discount=float(getattr(r, "discount", 0) or 0),
         amount_paid=float(getattr(r, "amount_paid", 0) or 0),
         balance_pending=float(getattr(r, "balance_pending", float(r.amount_requested)) or 0),
         surplus_credited=float(getattr(r, "surplus_credited", 0) or 0),
@@ -1164,13 +1165,19 @@ def patch_wallet_recharge_request_fields(
 
     if payload.line_items is not None:
         lis = payload.line_items
-        new_amt_calc = round(sum(x.line_charge_amount() for x in lis), 2)
-        if payload.amount is not None and abs(float(payload.amount) - new_amt_calc) > 0.02:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El monto solicitado no coincide con la suma de importes de las líneas.",
+        subtotal_calc = round(sum(x.line_charge_amount() for x in lis), 2)
+        disc_val = float(payload.discount) if payload.discount is not None else float(getattr(req, "discount", 0) or 0)
+        if payload.amount is not None:
+            _, disc_norm, new_amt_eff = normalize_discount_triplet(
+                subtotal=subtotal_calc,
+                discount=disc_val,
+                net_total=payload.amount,
             )
-        new_amt_eff = float(payload.amount) if payload.amount is not None else new_amt_calc
+        else:
+            _, disc_norm, new_amt_eff = normalize_discount_triplet(
+                subtotal=subtotal_calc,
+                discount=disc_val,
+            )
         paid_so_far = float(getattr(req, "amount_paid", 0) or 0)
         if new_amt_eff + 1e-6 < paid_so_far:
             raise HTTPException(
@@ -1178,10 +1185,32 @@ def patch_wallet_recharge_request_fields(
                 detail="El importe solicitado no puede ser menor al ya abonado acumulado.",
             )
         req.amount_requested = new_amt_eff
+        req.discount = disc_norm
         req.balance_pending = max(0.0, new_amt_eff - paid_so_far)
         req.recharge_detail_lines = [x.model_dump(mode="json") for x in lis]
-    elif payload.amount is not None:
-        new_amt = float(payload.amount)
+    elif payload.amount is not None or payload.discount is not None:
+        subtotal_gross = float(req.amount_requested or 0) + float(getattr(req, "discount", 0) or 0)
+        if payload.line_items is None and isinstance(req.recharge_detail_lines, list) and req.recharge_detail_lines:
+            subtotal_gross = round(
+                sum(
+                    float(x.get("importe") or x.get("saldo_recargar") or 0)
+                    for x in req.recharge_detail_lines
+                    if isinstance(x, dict)
+                ),
+                2,
+            )
+        disc_val = float(payload.discount) if payload.discount is not None else float(getattr(req, "discount", 0) or 0)
+        if payload.amount is not None:
+            _, disc_norm, new_amt = normalize_discount_triplet(
+                subtotal=subtotal_gross,
+                discount=disc_val,
+                net_total=payload.amount,
+            )
+        else:
+            _, disc_norm, new_amt = normalize_discount_triplet(
+                subtotal=subtotal_gross,
+                discount=disc_val,
+            )
         paid_so_far = float(getattr(req, "amount_paid", 0) or 0)
         if new_amt + 1e-6 < paid_so_far:
             raise HTTPException(
@@ -1189,6 +1218,7 @@ def patch_wallet_recharge_request_fields(
                 detail="El importe solicitado no puede ser menor al ya abonado acumulado.",
             )
         req.amount_requested = new_amt
+        req.discount = disc_norm
         req.balance_pending = max(0.0, new_amt - paid_so_far)
 
     if payload.allowed_payment_methods is not None:
@@ -1285,6 +1315,12 @@ def patch_wallet_recharge_request_fields(
     from app.services.client_payment_method_service import sync_client_payment_prefs_from_recharge
 
     sync_client_payment_prefs_from_recharge(db, req)
+
+    if payload.line_items is not None or payload.amount is not None or payload.discount is not None:
+        from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
+
+        ensure_wallet_recharge_accrual_journal(db, req, strict=True)
+
     db.commit()
     db.refresh(req)
 
@@ -1665,7 +1701,17 @@ def generate_wallet_recharge_link(
 
         li_payload = payload.line_items
         if li_payload:
-            aq = round(sum(x.line_charge_amount() for x in li_payload), 2)
+            subtotal = round(sum(x.line_charge_amount() for x in li_payload), 2)
+            _, disc_norm, aq = normalize_discount_triplet(
+                subtotal=subtotal,
+                discount=getattr(payload, "discount", 0),
+                net_total=payload.amount if payload.amount is not None else None,
+            )
+            if payload.amount is not None and abs(float(payload.amount) - aq) > 0.02:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="El total neto no coincide con subtotal − descuento.",
+                )
             lines_json = []
             for x in li_payload:
                 try:
@@ -1675,7 +1721,15 @@ def generate_wallet_recharge_link(
                         "No se pudo serializar las líneas de recarga para almacenar en BD.",
                     ) from dumpe
         else:
+            if payload.amount is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Indica el monto o las líneas de detalle.",
+                )
+            disc_norm = round(float(getattr(payload, "discount", 0) or 0), 2)
             aq = round(float(payload.amount), 2)
+            if aq <= 0:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El total debe ser mayor que cero.")
             lines_json = None
 
         dep_raw = payload.deposit_amount_usd
@@ -1709,6 +1763,7 @@ def generate_wallet_recharge_link(
         req = WalletRechargeRequest(
             client_id=client.id,
             amount_requested=aq,
+            discount=disc_norm,
             receipt_url=None,
             status=REQ_STATUS_PENDING,
             allowed_payment_methods=[pm.id for pm in pm_sorted],

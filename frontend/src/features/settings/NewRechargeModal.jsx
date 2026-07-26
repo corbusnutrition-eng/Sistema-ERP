@@ -142,6 +142,8 @@ export default function NewRechargeModal({
   onRechargeLineItemsChange,
   depositUsd,
   onDepositUsdChange,
+  discountBilling = '',
+  onDiscountBillingChange,
   rechargeComment,
   onRechargeCommentChange,
   salePaymentMethodOptions = [],
@@ -607,6 +609,16 @@ export default function NewRechargeModal({
     return Math.round(sum * 100) / 100
   }, [rechargeLineItems])
 
+  const discountBillingNum = useMemo(() => {
+    const n = parseLineNum(discountBilling)
+    if (!Number.isFinite(n) || n <= 0) return 0
+    return Math.round(n * 100) / 100
+  }, [discountBilling])
+
+  const netLinesTotal = useMemo(() => {
+    return Math.max(0, Math.round((linesSubtotal - discountBillingNum) * 100) / 100)
+  }, [linesSubtotal, discountBillingNum])
+
   const depositDeclaredNum = useMemo(() => {
     const raw = String(depositUsd ?? '').trim().replace(',', '.')
     if (!raw) return 0
@@ -622,8 +634,8 @@ export default function NewRechargeModal({
     if (isReadOnly || editMode) return 0
     const avail = Number(clientCreditAvail)
     if (!Number.isFinite(avail) || avail <= 0) return 0
-    return Math.min(avail, linesSubtotal)
-  }, [isReadOnly, editMode, clientCreditAvail, linesSubtotal])
+    return Math.min(avail, netLinesTotal)
+  }, [isReadOnly, editMode, clientCreditAvail, netLinesTotal])
 
   const balanceRemainingInfo = useMemo(() => {
     if (isReadOnly && summaryBalancePendingOverride != null) {
@@ -634,14 +646,14 @@ export default function NewRechargeModal({
       const bal = Number(summaryBalancePendingOverride)
       return Number.isFinite(bal) ? Math.max(0, Math.round(bal * 100) / 100) : 0
     }
-    const afterCredit = Math.max(0, linesSubtotal - creditAutoApplied)
+    const afterCredit = Math.max(0, netLinesTotal - creditAutoApplied)
     const afterDeposit = Math.max(0, Math.round((afterCredit - depositInBilling) * 100) / 100)
     return afterDeposit
   }, [
     isReadOnly,
     editMode,
     summaryBalancePendingOverride,
-    linesSubtotal,
+    netLinesTotal,
     creditAutoApplied,
     depositInBilling,
   ])
@@ -682,8 +694,12 @@ export default function NewRechargeModal({
   const balOv = summaryBalancePendingOverride != null ? Number(summaryBalancePendingOverride) : NaN
   const lateralSubtotalDisplay =
     (isReadOnly || editMode) && Number.isFinite(subOv) ?
-      Math.round(subOv * 100) / 100
+      Math.round((subOv + discountBillingNum) * 100) / 100
     : linesSubtotal
+  const lateralTotalDisplay =
+    (isReadOnly || editMode) && Number.isFinite(subOv) ?
+      Math.max(0, Math.round(subOv * 100) / 100)
+    : netLinesTotal
   const lateralBalancePendingDisplay =
     (isReadOnly || editMode) && Number.isFinite(balOv) ?
       Math.max(0, Math.round(balOv * 100) / 100)
@@ -1353,6 +1369,8 @@ export default function NewRechargeModal({
                   {showFinancialSummary ?
                     <FinancialSummarySidebar
                       subtotal={lateralSubtotalDisplay}
+                      discount={discountBillingNum}
+                      total={lateralTotalDisplay}
                       currency={billingCode}
                       linkedPayments={financialApproved}
                       pendingReviewPayments={financialPending}
@@ -1365,6 +1383,8 @@ export default function NewRechargeModal({
                     <>
                       <FinancialSummarySidebar
                         subtotal={lateralSubtotalDisplay}
+                        discount={discountBillingNum}
+                        total={lateralTotalDisplay}
                         currency={billingCode}
                         linkedPayments={[]}
                         pendingReviewPayments={[]}
@@ -1374,6 +1394,29 @@ export default function NewRechargeModal({
                         subtotalSize="sm"
                         apiOrigin={apiOrigin}
                       />
+                      {!isReadOnly ? (
+                        <div>
+                          <label
+                            className="block text-[11px] font-medium text-gray-600 mb-1"
+                            htmlFor="recharge-discount-ref"
+                          >
+                            Descuento ({billingCode})
+                          </label>
+                          <input
+                            id="recharge-discount-ref"
+                            type="text"
+                            inputMode="decimal"
+                            value={discountBilling}
+                            onChange={(e) => onDiscountBillingChange?.(e.target.value)}
+                            placeholder="0.00"
+                            disabled={generatingLink}
+                            className={icls}
+                          />
+                          <p className="mt-1 text-[10px] text-gray-500 leading-snug">
+                            Comisiones de pasarela absorbidas. Total = Subtotal − Descuento.
+                          </p>
+                        </div>
+                      ) : null}
                       {clientCreditLoading ?
                         <p className="text-[10px] text-gray-400">Consultando saldo a favor…</p>
                       : null}

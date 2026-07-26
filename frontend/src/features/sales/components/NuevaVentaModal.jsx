@@ -784,6 +784,7 @@ export default function NuevaVentaModal({
       currency: 'USD',
       exchange_rate: '1',
       local_amount: '',
+      discount: '',
       transaction_class_id: '',
       payment_method_id: '',
       deposit_account_id: '',
@@ -1223,22 +1224,32 @@ export default function NuevaVentaModal({
     return Math.round(t * 100) / 100
   }, [lineItems])
 
-  /** Totales de factura sincronizan `local_amount`. El depósito (`amount_paid`) solo se autocompleta al crear venta nueva — nunca en edición. */
+  const discountAmount = useMemo(() => {
+    const n = parseFloat(String(form.discount ?? '').replace(',', '.'))
+    if (!Number.isFinite(n) || n <= 0) return 0
+    return Math.round(n * 100) / 100
+  }, [form.discount])
+
+  const netLinesTotal = useMemo(() => {
+    return Math.max(0, Math.round((linesSubtotal - discountAmount) * 100) / 100)
+  }, [linesSubtotal, discountAmount])
+
+  /** Totales de factura sincronizan `local_amount` (neto = subtotal − descuento). */
   useEffect(() => {
     if (saleIsViewOnly || isLegacyPending || !showInvoiceLayout) return
     setForm((prev) => {
-      const la = linesSubtotal > 0 ? linesSubtotal.toFixed(2) : ''
+      const la = netLinesTotal > 0 ? netLinesTotal.toFixed(2) : ''
       const next = { ...prev, local_amount: la }
       if (
         !isEditing &&
         !amountPaidDirtyRef.current &&
-        linesSubtotal > 0
+        netLinesTotal > 0
       ) {
-        next.amount_paid = linesSubtotal.toFixed(2)
+        next.amount_paid = netLinesTotal.toFixed(2)
       }
       return next
     })
-  }, [linesSubtotal, isLegacyPending, showInvoiceLayout, saleIsViewOnly, isEditing])
+  }, [netLinesTotal, isLegacyPending, showInvoiceLayout, saleIsViewOnly, isEditing])
 
   const invoiceProductOptions = useMemo(() => {
     if (!showInvoiceLayout) return []
@@ -2269,6 +2280,10 @@ export default function NuevaVentaModal({
         cur.local_amount != null && cur.local_amount !== ''
           ? String(cur.local_amount)
           : String(cur.amount ?? ''),
+      discount:
+        cur.discount != null && cur.discount !== ''
+          ? String(cur.discount)
+          : '',
       transaction_class_id: cur.class_id != null ? String(cur.class_id) : '',
       payment_method_id: cur.payment_method_id != null ? String(cur.payment_method_id) : '',
       deposit_account_id: cur.deposit_account_id != null ? String(cur.deposit_account_id) : '',
@@ -2681,6 +2696,10 @@ export default function NuevaVentaModal({
       setError('Ingresa un monto válido.')
       return
     }
+    if (showInvoiceLayout && discountAmount > linesSubtotal + 1e-9) {
+      setError('El descuento no puede superar el subtotal.')
+      return
+    }
     if (exchangeRate <= 0) {
       setError('La tasa de cambio debe ser mayor a 0.')
       return
@@ -2860,6 +2879,7 @@ export default function NuevaVentaModal({
         currency: normalizeCurrencyCode(form.currency || 'USD', 'USD'),
         exchange_rate: exchangeRate,
         local_amount: String(form.local_amount),
+        discount: String(discountAmount || 0),
         amount_paid: String(amountPaidSubmit),
         class_id: classFk,
         payment_method_id: pmFk,
@@ -3098,6 +3118,7 @@ export default function NuevaVentaModal({
         currency: normalizeCurrencyCode(form.currency || 'USD', 'USD'),
         exchange_rate: exchangeRate,
         local_amount: String(form.local_amount),
+        discount: String(discountAmount || 0),
         amount_paid: String(amountPaidSubmit),
         tag_ids: Array.isArray(form.tag_ids) ? form.tag_ids : [],
       }
@@ -3275,6 +3296,7 @@ export default function NuevaVentaModal({
       currency: normalizeCurrencyCode(form.currency || 'USD', 'USD'),
       exchange_rate: exchangeRate,
       local_amount: String(form.local_amount),
+      discount: String(discountAmount || 0),
       amount_paid: String(amountPaidSubmit),
     }
     if (classFk !== null) bodyBase.class_id = classFk
@@ -4105,6 +4127,8 @@ export default function NuevaVentaModal({
               }}
               cobroCurrencyOptions={cobroCurrencyOptions}
               linesSubtotal={linesSubtotal}
+              discountAmount={discountAmount}
+              netLinesTotal={netLinesTotal}
               saleCurrencyCode={saleCurrencyCode}
               balanceDueReceivable={balanceDueReceivable}
               showDepositPaymentFields={showDepositPaymentFields}
@@ -4394,9 +4418,53 @@ export default function NuevaVentaModal({
             </div>
           </div>
 
-          {isEditing && (
+          {!showInvoiceLayout && !saleIsViewOnly ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Descuento ({form.currency})
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
+                  <CurrencyFlag code={form.currency} />
+                </span>
+                <input
+                  type="number"
+                  name="discount"
+                  value={form.discount ?? ''}
+                  onChange={handleChange}
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  className={`${inputCls} pl-8`}
+                />
+              </div>
+              <p className="mt-1 text-xs text-gray-500 leading-snug">
+                Comisiones de pasarela (Hotmart, etc.) absorbidas por ti. Total = Subtotal − Descuento.
+              </p>
+            </div>
+          ) : null}
+
+          {!showInvoiceLayout && (isEditing || discountAmount > 0) ? (
             <FinancialSummarySidebar
-              subtotal={localAmount}
+              subtotal={localAmount + discountAmount}
+              discount={discountAmount}
+              total={localAmount}
+              currency={saleCurrencyCode}
+              linkedPayments={linkedPayments}
+              pendingReviewPayments={pendingReviewPayments}
+              balanceDue={balanceDueReceivable}
+              autoAppliedCredit={autoAppliedFromCredit}
+              apiOrigin={apiOrigin}
+              onOpenLinkedPayment={handleOpenLinkedPayment}
+              onOpenPendingReviewPayment={handleOpenPendingReviewPayment}
+            />
+          ) : null}
+
+          {isEditing && showInvoiceLayout && (
+            <FinancialSummarySidebar
+              subtotal={localAmount + discountAmount}
+              discount={discountAmount}
+              total={localAmount}
               currency={saleCurrencyCode}
               linkedPayments={linkedPayments}
               pendingReviewPayments={pendingReviewPayments}

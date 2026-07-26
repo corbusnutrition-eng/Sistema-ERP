@@ -118,6 +118,13 @@ class SaleInvoiceLineItem(BaseModel):
             return s if s else None
         return v
 
+    def line_charge_amount(self) -> float:
+        """Importe de la línea (importe cerrado o qty × tarifa)."""
+        amt = float(self.amount or 0)
+        if amt > 0:
+            return round(amt, 2)
+        return round(float(self.qty or 0) * float(self.rate or 0), 2)
+
     @model_validator(mode="after")
     def _reject_zero_billable_line(self) -> "SaleInvoiceLineItem":
         qty = float(self.qty or 0)
@@ -239,6 +246,12 @@ class SaleCreate(BaseModel):
     currency: str = Field(default="USD", min_length=3, max_length=10)
     exchange_rate: float = Field(default=1.0, gt=0)
     local_amount: Decimal = Field(..., gt=0, decimal_places=4)
+    discount: Decimal = Field(
+        default=Decimal("0"),
+        ge=0,
+        decimal_places=4,
+        description="Descuento en moneda de la venta (comisiones pasarela). Total neto = local_amount.",
+    )
     amount_paid: Optional[Decimal] = Field(
         default=None,
         decimal_places=4,
@@ -250,7 +263,7 @@ class SaleCreate(BaseModel):
     def _locale_float_create(cls, v: object) -> object:
         return _coerce_locale_float(v)
 
-    @field_validator("local_amount", "amount_paid", mode="before")
+    @field_validator("local_amount", "amount_paid", "discount", mode="before")
     @classmethod
     def _locale_decimal_create(cls, v: object) -> object:
         return _coerce_locale_decimal(v)
@@ -558,6 +571,12 @@ class SaleUpdate(BaseModel):
     currency: Optional[str] = Field(default=None, min_length=3, max_length=10)
     exchange_rate: Optional[float] = Field(default=None, gt=0)
     local_amount: Optional[Decimal] = Field(default=None, gt=0, decimal_places=4)
+    discount: Optional[Decimal] = Field(
+        default=None,
+        ge=0,
+        decimal_places=4,
+        description="Descuento en moneda de la venta (comisiones pasarela).",
+    )
     amount_paid: Optional[Decimal] = Field(
         default=None,
         gt=0,
@@ -698,7 +717,7 @@ class SaleUpdate(BaseModel):
             return None
         return fv if fv > 0 else None
 
-    @field_validator("local_amount", "amount_paid", mode="before")
+    @field_validator("local_amount", "amount_paid", "discount", mode="before")
     @classmethod
     def _locale_decimal_patch(cls, v: object) -> object:
         if v is None:
@@ -801,6 +820,10 @@ class SaleResponse(BaseModel):
     currency: str
     exchange_rate: float
     local_amount: Optional[Decimal] = None
+    discount: Decimal = Field(
+        default=Decimal("0"),
+        description="Descuento en moneda de la venta (comisiones pasarela).",
+    )
     amount_paid: Decimal = Field(..., description="Importe cobrado en moneda de venta (< local_amount ⇒ saldo pendiente).")
     balance_due: Decimal = Field(..., description="Saldo pendiente (cuentas por cobrar) en moneda de venta.")
     staff_review_action: str = Field(

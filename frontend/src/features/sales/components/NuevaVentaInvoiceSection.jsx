@@ -81,6 +81,8 @@ export default function NuevaVentaInvoiceSection(props) {
     onOpenNewClassForLine,
     cobroCurrencyOptions,
     linesSubtotal,
+    discountAmount = 0,
+    netLinesTotal = 0,
     saleCurrencyCode,
     balanceDueReceivable,
     showDepositPaymentFields,
@@ -434,6 +436,8 @@ export default function NuevaVentaInvoiceSection(props) {
       <aside className="space-y-4 xl:sticky xl:top-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm self-start w-full max-w-full">
         <FinancialSummarySidebar
           subtotal={linesSubtotal}
+          discount={discountAmount}
+          total={netLinesTotal}
           currency={saleCurrencyCode}
           linkedPayments={linkedPayments}
           pendingReviewPayments={pendingReviewPayments}
@@ -442,6 +446,31 @@ export default function NuevaVentaInvoiceSection(props) {
           onOpenLinkedPayment={onOpenLinkedPayment}
           onOpenPendingReviewPayment={onOpenPendingReviewPayment}
         />
+        {!saleIsViewOnly ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Descuento ({saleCurrencyCode})
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
+                <CurrencyFlag code={form.currency} />
+              </span>
+              <input
+                type="number"
+                name="discount"
+                value={form.discount ?? ''}
+                onChange={handleChange}
+                min="0"
+                step="0.01"
+                placeholder="0.00"
+                className={`${inputCls} pl-8`}
+              />
+            </div>
+            <p className="mt-1 text-[11px] text-gray-500 leading-snug">
+              Comisiones de pasarela (Hotmart, etc.) absorbidas por ti. Total = Subtotal − Descuento.
+            </p>
+          </div>
+        ) : null}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">
             Importe del depósito ({saleCurrencyCode})

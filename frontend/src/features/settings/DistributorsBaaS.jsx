@@ -341,6 +341,7 @@ export default function DistributorsBaaSPage() {
   const [linkClientId, setLinkClientId] = useState('')
   const [linkLineItems, setLinkLineItems] = useState(() => [newRechargeLineRow()])
   const [linkDepositUsd, setLinkDepositUsd] = useState('')
+  const [linkDiscount, setLinkDiscount] = useState('')
   const [linkComment, setLinkComment] = useState('')
   const [generatingLink, setGeneratingLink] = useState(false)
   const [linkReceiptFile, setLinkReceiptFile] = useState(null)
@@ -894,6 +895,7 @@ export default function DistributorsBaaSPage() {
   function resetLinkModalForm() {
     setLinkLineItems([newRechargeLineRow()])
     setLinkDepositUsd('')
+    setLinkDiscount('')
     setLinkComment('')
     setLinkClientId('')
     setSelectedPaymentMethodIds([])
@@ -1128,6 +1130,19 @@ export default function DistributorsBaaSPage() {
       }
     }
 
+    const discountNum = Number(String(linkDiscount ?? '').trim().replace(',', '.'))
+    const disc =
+      Number.isFinite(discountNum) && discountNum > 0 ? Math.round(discountNum * 100) / 100 : 0
+    if (disc > subtotal + 1e-9) {
+      showToast('El descuento no puede superar el subtotal.')
+      return
+    }
+    const netTotal = Math.round((subtotal - disc) * 100) / 100
+    if (netTotal <= 0) {
+      showToast('El total neto tras descuento debe ser mayor que cero.')
+      return
+    }
+
     setGeneratingLink(true)
     try {
       let admin_precheck_receipt_url
@@ -1149,7 +1164,8 @@ export default function DistributorsBaaSPage() {
       const noteTrim = String(linkComment ?? '').trim()
       const body = {
         distributor_email: email,
-        amount: subtotal,
+        amount: netTotal,
+        discount: disc,
         line_items: linePayload,
         allowed_payment_methods: pmIds,
         allowed_deposit_account_ids: depSel.length ? depSel : undefined,
@@ -1397,6 +1413,9 @@ export default function DistributorsBaaSPage() {
     }
     setLinkLineItems(rechargeLinesHydrateFromAdminRow(hydrated))
     setLinkDepositUsd(declaredDepositInputValueFromReview(hydrated))
+    setLinkDiscount(
+      hydrated.discount != null && Number(hydrated.discount) > 0 ? String(hydrated.discount) : '',
+    )
     setLinkComment(typeof hydrated.admin_note === 'string' ? hydrated.admin_note : '')
     setLinkClientId(email)
     setSelectedPaymentMethodIds(
@@ -1488,6 +1507,21 @@ export default function DistributorsBaaSPage() {
       }
     }
 
+    const discountNumUpd = Number(String(linkDiscount ?? '').trim().replace(',', '.'))
+    const discUpd =
+      Number.isFinite(discountNumUpd) && discountNumUpd > 0 ?
+        Math.round(discountNumUpd * 100) / 100
+      : 0
+    if (discUpd > subtotal + 1e-9) {
+      showToast('El descuento no puede superar el subtotal.')
+      return
+    }
+    const netTotalUpd = Math.round((subtotal - discUpd) * 100) / 100
+    if (netTotalUpd <= 0) {
+      showToast('El total neto tras descuento debe ser mayor que cero.')
+      return
+    }
+
     setGeneratingLink(true)
     try {
       let admin_precheck_receipt_url
@@ -1514,7 +1548,8 @@ export default function DistributorsBaaSPage() {
       const markOcrWithoutAmount = Boolean(extra?.ocrWithoutAmount)
 
       const body = {
-        amount: subtotal,
+        amount: netTotalUpd,
+        discount: discUpd,
         line_items: linePayload,
         allowed_payment_methods: pmIds,
         allowed_deposit_account_ids: depSel.length ? depSel : undefined,
@@ -2442,6 +2477,8 @@ export default function DistributorsBaaSPage() {
         onRechargeLineItemsChange={setLinkLineItems}
         depositUsd={linkDepositUsd}
         onDepositUsdChange={setLinkDepositUsd}
+        discountBilling={linkDiscount}
+        onDiscountBillingChange={setLinkDiscount}
         rechargeComment={linkComment}
         onRechargeCommentChange={setLinkComment}
         salePaymentMethodOptions={filteredSalePaymentMethodOptions}

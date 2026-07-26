@@ -21,6 +21,8 @@ class WalletRechargeRequest(Base):
         index=True,
     )
     amount_requested: Mapped[float] = mapped_column(Float, nullable=False)
+    #: Descuento en moneda de la recarga (comisiones pasarela absorbidas; ``amount_requested`` = subtotal − discount).
+    discount: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"), default=0.0)
     receipt_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
     status: Mapped[str] = mapped_column(
         String(32),

@@ -70,6 +70,9 @@ export default function VerRecargaModal({ open, detail, onClose }) {
       readOnlyAuditRequestId={detail.id}
       summarySubtotalOverride={detail.amount_requested}
       summaryBalancePendingOverride={detail.balance_pending}
+      discountBilling={
+        detail.discount != null && Number(detail.discount) > 0 ? String(detail.discount) : ''
+      }
       rechargeLineItems={lineItems}
       onRechargeLineItemsChange={noop}
       depositUsd=""

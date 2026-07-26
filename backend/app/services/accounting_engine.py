@@ -187,6 +187,42 @@ def find_tickets_income_account(db: Session, detail_type: str, currency: str) ->
     )
 
 
+def find_discount_account(db: Session, currency: str = "USD") -> Account:
+    """Cuenta de descuentos (cost_of_sales / detail Descuentos) para comisiones de pasarela."""
+    cur = normalize_currency_code(currency)
+    row = (
+        db.query(Account)
+        .filter(
+            Account.is_active.is_(True),
+            Account.account_type == LedgerAccountType.cost_of_sales.value,
+            Account.detail_type == "Descuentos",
+            Account.currency == cur,
+        )
+        .order_by(Account.id.asc())
+        .first()
+    )
+    if row is not None:
+        return row
+    if cur != "USD":
+        row = (
+            db.query(Account)
+            .filter(
+                Account.is_active.is_(True),
+                Account.account_type == LedgerAccountType.cost_of_sales.value,
+                Account.detail_type == "Descuentos",
+                Account.currency == "USD",
+            )
+            .order_by(Account.id.asc())
+            .first()
+        )
+        if row is not None:
+            return row
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Cuenta contable «Descuentos» no encontrada. Ejecute seed_accounts o créela en el plan de cuentas.",
+    )
+
+
 def find_account_by_detail(
     db: Session,
     *,
@@ -320,6 +356,25 @@ def _sale_invoice_total_local(sale: Sale) -> Decimal:
     return _q4(sale.amount)
 
 
+def _sale_discount_local(sale: Sale) -> Decimal:
+    return _q4(getattr(sale, "discount", 0) or 0)
+
+
+def _sale_gross_subtotal_local(sale: Sale) -> Decimal:
+    """Subtotal bruto (antes de descuento) en moneda de la venta."""
+    net = _sale_invoice_total_local(sale)
+    return net + _sale_discount_local(sale)
+
+
+def _wallet_recharge_discount(req: WalletRechargeRequest) -> Decimal:
+    return _q4(getattr(req, "discount", 0) or 0)
+
+
+def _wallet_recharge_gross_subtotal(req: WalletRechargeRequest) -> Decimal:
+    net = _wallet_recharge_invoice_total(req)
+    return net + _wallet_recharge_discount(req)
+
+
 def sync_sale_accrual_journal(db: Session, sale: Sale, *, strict: bool = False) -> Optional[JournalEntry]:
     """
     Devengo de la venta (causación): DR Cuentas por cobrar / CR ingresos operativos.
@@ -339,8 +394,10 @@ def sync_sale_accrual_journal(db: Session, sale: Sale, *, strict: bool = False) 
     ):
         return None
 
-    total = _sale_invoice_total_local(sale)
-    if total <= 0:
+    net = _sale_invoice_total_local(sale)
+    discount = _sale_discount_local(sale)
+    gross = net + discount
+    if net <= 0 and discount <= 0:
         return None
 
     cur = normalize_currency_code(sale.currency)
@@ -360,6 +417,13 @@ def sync_sale_accrual_journal(db: Session, sale: Sale, *, strict: bool = False) 
     except HTTPException as exc:
         errors.append(str(exc.detail))
 
+    discount_acc: Optional[Account] = None
+    if discount > 0:
+        try:
+            discount_acc = find_discount_account(db, cur)
+        except HTTPException as exc:
+            errors.append(str(exc.detail))
+
     if errors:
         msg = " ".join(errors)
         if strict:
@@ -369,10 +433,23 @@ def sync_sale_accrual_journal(db: Session, sale: Sale, *, strict: bool = False) 
 
     assert ar_acc is not None
 
-    desc = f"Venta #{sale.id} devengo {total} {cur}"
+    desc = f"Venta #{sale.id} devengo {gross} {cur}"
+    if discount > 0:
+        desc += f" (desc. {discount} {cur}, neto CxC {net} {cur})"
     from app.services.currency_consolidation import sale_exchange_rate
 
     xr = sale_exchange_rate(sale)
+
+    line_drafts: list[JournalLineDraft] = [
+        JournalLineDraft(ar_acc.id, debit=net, credit=Decimal("0"), exchange_rate=xr),
+    ]
+    if discount > 0 and discount_acc is not None:
+        line_drafts.append(
+            JournalLineDraft(discount_acc.id, debit=discount, credit=Decimal("0"), exchange_rate=xr),
+        )
+    line_drafts.append(
+        JournalLineDraft(income_acc.id, debit=Decimal("0"), credit=gross, exchange_rate=xr),
+    )
 
     entry = _post_journal_atomic(
         db,
@@ -380,14 +457,14 @@ def sync_sale_accrual_journal(db: Session, sale: Sale, *, strict: bool = False) 
         reference_type=JournalReferenceType.venta.value,
         reference_id=int(sale.id),
         description=desc,
-        lines=[
-            JournalLineDraft(ar_acc.id, debit=total, credit=Decimal("0"), exchange_rate=xr),
-            JournalLineDraft(income_acc.id, debit=Decimal("0"), credit=total, exchange_rate=xr),
-        ],
+        lines=line_drafts,
         fx_weighted=xr != Decimal("1"),
     )
 
-    _refresh_accounts_balance_cache(db, {int(ar_acc.id), int(income_acc.id)})
+    refresh_ids = {int(ar_acc.id), int(income_acc.id)}
+    if discount_acc is not None:
+        refresh_ids.add(int(discount_acc.id))
+    _refresh_accounts_balance_cache(db, refresh_ids)
     return entry
 
 
@@ -437,8 +514,10 @@ def sync_wallet_recharge_accrual_journal(
     ):
         return None
 
-    total = _wallet_recharge_invoice_total(req)
-    if total <= 0:
+    net = _wallet_recharge_invoice_total(req)
+    discount = _wallet_recharge_discount(req)
+    gross = net + discount
+    if net <= 0 and discount <= 0:
         return None
 
     cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
@@ -452,17 +531,41 @@ def sync_wallet_recharge_accrual_journal(
         logger.warning("Asiento devengo recarga id=%s omitido: %s", req.id, msg)
         return None
 
+    errors: list[str] = []
     try:
         income_acc = find_tickets_income_account(db, income_detail, cur)
     except HTTPException as exc:
-        msg = str(exc.detail)
+        errors.append(str(exc.detail))
+
+    discount_acc: Optional[Account] = None
+    if discount > 0:
+        try:
+            discount_acc = find_discount_account(db, cur)
+        except HTTPException as exc:
+            errors.append(str(exc.detail))
+
+    if errors:
+        msg = " ".join(errors)
         if strict:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg) from exc
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)
         logger.warning("Asiento devengo recarga id=%s omitido: %s", req.id, msg)
         return None
 
     xr = Decimal(str(getattr(req, "recharge_exchange_rate", None) or 1))
-    desc = f"Recarga BaaS #{req.id} devengo {total} {cur}"
+    desc = f"Recarga BaaS #{req.id} devengo {gross} {cur}"
+    if discount > 0:
+        desc += f" (desc. {discount} {cur}, neto CxC {net} {cur})"
+
+    line_drafts: list[JournalLineDraft] = [
+        JournalLineDraft(ar_acc.id, debit=net, credit=Decimal("0"), exchange_rate=xr),
+    ]
+    if discount > 0 and discount_acc is not None:
+        line_drafts.append(
+            JournalLineDraft(discount_acc.id, debit=discount, credit=Decimal("0"), exchange_rate=xr),
+        )
+    line_drafts.append(
+        JournalLineDraft(income_acc.id, debit=Decimal("0"), credit=gross, exchange_rate=xr),
+    )
 
     entry = _post_journal_atomic(
         db,
@@ -470,14 +573,14 @@ def sync_wallet_recharge_accrual_journal(
         reference_type=JournalReferenceType.recarga.value,
         reference_id=int(req.id),
         description=desc,
-        lines=[
-            JournalLineDraft(ar_acc.id, debit=total, credit=Decimal("0"), exchange_rate=xr),
-            JournalLineDraft(income_acc.id, debit=Decimal("0"), credit=total, exchange_rate=xr),
-        ],
+        lines=line_drafts,
         fx_weighted=xr != Decimal("1"),
     )
 
-    _refresh_accounts_balance_cache(db, {int(ar_acc.id), int(income_acc.id)})
+    refresh_ids = {int(ar_acc.id), int(income_acc.id)}
+    if discount_acc is not None:
+        refresh_ids.add(int(discount_acc.id))
+    _refresh_accounts_balance_cache(db, refresh_ids)
     return entry
 
 

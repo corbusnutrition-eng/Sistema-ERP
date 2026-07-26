@@ -86,6 +86,7 @@ from app.services.catalog_vip_sync import notify_catalog_vip_sale_pending_paymen
 from app.services.sale_web_credit_sync import sync_web_credit_sales_from_vip_catalog
 from app.services.client_sale_picker import search_active_clients_for_sale_picker
 from app.services.currency_consolidation import get_last_exchange_rate
+from app.services.transaction_discount_helpers import validate_sale_discount_coherence
 from app.timezone_utils import ensure_aware, now_ecuador
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -2472,6 +2473,7 @@ def _parse_sale_create_form(db: Session, form_data: Any) -> SaleCreate:
         "currency",
         "exchange_rate",
         "local_amount",
+        "discount",
         "amount_paid",
         "product_id",
         "package",
@@ -2503,6 +2505,8 @@ def _parse_sale_create_form(db: Session, form_data: Any) -> SaleCreate:
         elif key == "exchange_rate":
             flat[key] = float(v)
         elif key == "local_amount":
+            flat[key] = Decimal(str(v))
+        elif key == "discount":
             flat[key] = Decimal(str(v))
         elif key == "amount_paid":
             flat[key] = Decimal(str(v))
@@ -2751,6 +2755,12 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
             )
 
     resolved_provider = (payload.provider or "").strip()
+    sale_discount = Decimal(str(getattr(payload, "discount", 0) or 0))
+    validate_sale_discount_coherence(
+        local_amount=payload.local_amount,
+        discount=sale_discount,
+        invoice_lines=payload.invoice_lines,
+    )
     amount_usd = Decimal(str(round(float(payload.local_amount) / float(payload.exchange_rate), 4)))
     # Las ventas creadas desde el ERP quedan SIEMPRE en ``pending``: el cliente aún no ha
     # pagado nada aunque el payload traiga un valor en ``amount_paid``.
@@ -2935,6 +2945,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
             currency=payload.currency,
             exchange_rate=payload.exchange_rate,
             local_amount=payload.local_amount,
+            discount=sale_discount,
             amount_paid=amount_paid_norm,
             status=SaleStatus.pending,
             payment_token=uuid.uuid4(),
@@ -3093,6 +3104,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
             currency=payload.currency,
             exchange_rate=payload.exchange_rate,
             local_amount=payload.local_amount,
+            discount=sale_discount,
             amount_paid=amount_paid_norm,
             status=SaleStatus.pending,
             payment_token=uuid.uuid4(),
@@ -3183,6 +3195,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
         currency=payload.currency,
         exchange_rate=payload.exchange_rate,
         local_amount=payload.local_amount,
+        discount=sale_discount,
         amount_paid=amount_paid_norm,
         status=SaleStatus.pending,
         payment_token=uuid.uuid4(),
@@ -3806,6 +3819,7 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
             "currency",
             "exchange_rate",
             "local_amount",
+            "discount",
             "amount_paid",
             "payment_method_id",
             "deposit_account_id",
@@ -3897,6 +3911,9 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
 
         if "local_amount" in raw_preview:
             sale.local_amount = raw_preview["local_amount"]
+
+        if "discount" in raw_preview:
+            sale.discount = Decimal(str(raw_preview["discount"] or 0))
 
         if {"currency", "exchange_rate", "local_amount"} & raw_preview.keys():
             la = sale.local_amount
@@ -3999,6 +4016,13 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
         # Re-evaluar CxC: si amount_paid cambia, sincronizar approved ↔ partially_paid.
         if "amount_paid" in raw_preview:
             _maybe_set_partially_paid(sale)
+
+        if {"local_amount", "discount", "invoice_lines"} & raw_preview.keys():
+            validate_sale_discount_coherence(
+                local_amount=sale.local_amount,
+                discount=sale.discount,
+                invoice_lines=sale.invoice_lines,
+            )
 
         _assert_sale_deposit_currency(db, sale)
         _sync_sale_accounting_after_panel_patch(db, sale, strict=True)
@@ -4147,6 +4171,9 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
     if "local_amount" in explicit_keys:
         sale.local_amount = raw["local_amount"]
 
+    if "discount" in explicit_keys:
+        sale.discount = Decimal(str(raw["discount"] or 0))
+
     if "local_amount" in explicit_keys or "exchange_rate" in explicit_keys:
         la = sale.local_amount
         er = sale.exchange_rate
@@ -4194,6 +4221,13 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
         amount_usd=sale.amount,
         inventory_cost_usd=inv_cost,
     )
+
+    if explicit_keys & {"local_amount", "discount", "invoice_lines"}:
+        validate_sale_discount_coherence(
+            local_amount=sale.local_amount,
+            discount=sale.discount,
+            invoice_lines=sale.invoice_lines,
+        )
 
     if receipt_uploaded_url is not None:
         sale.receipt_url = receipt_uploaded_url
@@ -5421,6 +5455,7 @@ def _build_response(
         currency=sale.currency,
         exchange_rate=sale.exchange_rate,
         local_amount=sale.local_amount,
+        discount=Decimal(str(getattr(sale, "discount", 0) or 0)),
         amount_paid=amount_paid_out,
         balance_due=balance_due_out,
         status=sale.status.value,

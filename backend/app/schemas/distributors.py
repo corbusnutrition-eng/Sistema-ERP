@@ -424,6 +424,7 @@ class WalletRechargeRequestAdminRow(BaseModel):
     client_email: str = ""
     client_username: str = ""
     amount_requested: float
+    discount: float = 0.0
     receipt_url: Optional[str] = None
     payment_methods_display: Optional[str] = Field(
         default=None,
@@ -567,6 +568,11 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     amount: Optional[float] = Field(default=None, gt=0, validation_alias=AliasChoices("amount", "amount_requested", "monto"))
+    discount: Optional[float] = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("discount", "descuento", "discount_amount"),
+    )
     allowed_payment_methods: Optional[list[int]] = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -780,7 +786,13 @@ class GenerateRechargeLinkPayload(BaseModel):
     amount: Optional[float] = Field(
         default=None,
         validation_alias=AliasChoices("amount", "amount_requested", "monto", "total"),
-        description="Total a recargar. Opcional si se envían line_items; en ese caso se toma Σ importe por línea.",
+        description="Total neto a recargar (subtotal − descuento). Opcional si se envían line_items.",
+    )
+    discount: float = Field(
+        default=0.0,
+        ge=0,
+        validation_alias=AliasChoices("discount", "descuento", "discount_amount"),
+        description="Descuento en moneda de cobro (comisiones pasarela).",
     )
     allowed_payment_methods: list[int] = Field(
         ...,

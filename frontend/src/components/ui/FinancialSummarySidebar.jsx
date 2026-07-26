@@ -6,10 +6,12 @@ import { financialReceiptHref } from '../../lib/financialSummaryUtils'
 
 /**
  * Panel derecho «Resumen financiero» compartido entre Ventas y BaaS.
- * Subtotal → desglose de pagos → (opcional) auto-aplicado → saldo pendiente.
+ * Subtotal → descuento → total → desglose de pagos → (opcional) auto-aplicado → saldo pendiente.
  */
 export default function FinancialSummarySidebar({
   subtotal = 0,
+  discount = 0,
+  total = null,
   currency = 'USD',
   linkedPayments = [],
   pendingReviewPayments = [],
@@ -26,18 +28,28 @@ export default function FinancialSummarySidebar({
   const pending = Array.isArray(pendingReviewPayments) ? pendingReviewPayments : []
   const subNum = Number(subtotal)
   const subDisplay = Number.isFinite(subNum) ? subNum : 0
+  const discNum = Number(discount)
+  const discDisplay = Number.isFinite(discNum) ? Math.max(0, discNum) : 0
+  const totalDisplay =
+    total != null && Number.isFinite(Number(total))
+      ? Math.max(0, Number(total))
+      : Math.max(0, Math.round((subDisplay - discDisplay) * 100) / 100)
   const balance =
     balanceDue != null && Number.isFinite(Number(balanceDue)) ?
       Math.max(0, Number(balanceDue))
-    : Math.max(0, subDisplay)
+    : Math.max(0, totalDisplay)
 
   const autoCredit = Number(autoAppliedCredit)
   const showAutoCredit = Number.isFinite(autoCredit) && autoCredit > 1e-9
+  const showDiscount = discDisplay > 1e-9
 
   const subtotalCls =
     subtotalSize === 'sm' ? 'text-sm font-bold' : 'text-lg font-semibold'
 
   const origin = String(apiOrigin || '').replace(/\/$/, '')
+
+  const fmt = (n) =>
+    n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   return (
     <div className={`rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 ${className}`.trim()}>
@@ -46,8 +58,27 @@ export default function FinancialSummarySidebar({
           {subtotalLabel}
         </span>
         <span className={`${subtotalCls} text-slate-900 tabular-nums text-right`}>
-          {subDisplay.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
-          {currency}
+          {fmt(subDisplay)} {currency}
+        </span>
+      </div>
+
+      {showDiscount ? (
+        <div className="flex items-baseline justify-between gap-3 mt-2">
+          <span className="text-[11px] font-semibold text-rose-700 uppercase tracking-wide shrink-0">
+            Descuento
+          </span>
+          <span className="text-sm font-bold text-rose-800 tabular-nums text-right">
+            −{fmt(discDisplay)} {currency}
+          </span>
+        </div>
+      ) : null}
+
+      <div className="flex items-baseline justify-between gap-3 mt-2 pt-2 border-t border-slate-200/80">
+        <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide shrink-0">
+          Total
+        </span>
+        <span className={`${subtotalCls} text-slate-900 tabular-nums text-right`}>
+          {fmt(totalDisplay)} {currency}
         </span>
       </div>
 
@@ -121,12 +152,7 @@ export default function FinancialSummarySidebar({
                     {pr.payment_number || `Pago #${pr.payment_id}`} — en revisión
                   </button>
                   <span className="font-semibold tabular-nums text-sky-900 shrink-0">
-                    −
-                    {appliedRaw.toLocaleString('es-ES', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}{' '}
-                    {currency}
+                    −{fmt(appliedRaw)} {currency}
                   </span>
                   {href ?
                     <a
@@ -151,12 +177,7 @@ export default function FinancialSummarySidebar({
             Pago auto-aplicado
           </span>
           <span className="text-base font-bold text-emerald-900 tabular-nums">
-            −
-            {autoCredit.toLocaleString('es-ES', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}{' '}
-            {currency}
+            −{fmt(autoCredit)} {currency}
           </span>
         </div>
       : null}
@@ -166,8 +187,7 @@ export default function FinancialSummarySidebar({
           Saldo pendiente
         </span>
         <span className="text-base font-bold text-amber-900 tabular-nums">
-          {balance.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
-          {currency}
+          {fmt(balance)} {currency}
         </span>
       </div>
     </div>
