@@ -676,7 +676,7 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
             return float(s) if s else None
         return v
 
-    @field_validator("amount", "exchange_rate", mode="before")
+    @field_validator("amount", "exchange_rate", "discount", mode="before")
     @classmethod
     def _coerce_opt_float(cls, v: object) -> object:
         if v is None or v == "":
@@ -724,15 +724,28 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
             return self
         if len(lis) < 1:
             raise ValueError("Si envías líneas, incluye al menos una fila.")
-        total = round(sum(li.line_charge_amount() for li in lis), 2)
-        if self.amount is not None and abs(total - round(float(self.amount), 2)) > 0.02:
-            raise ValueError("El monto solicitado no coincide con la suma de importes de las líneas.")
+        subtotal = round(sum(li.line_charge_amount() for li in lis), 2)
+        disc = round(float(self.discount or 0), 2)
+        if disc > subtotal + 1e-9:
+            raise ValueError("El descuento no puede superar el subtotal de las líneas.")
+        expected_net = round(subtotal - disc, 2)
+        if self.amount is not None:
+            net_provided = round(float(self.amount), 2)
+            if abs(expected_net - net_provided) > 0.02:
+                raise ValueError(
+                    "El monto neto no coincide con el subtotal de las líneas menos el descuento.",
+                )
+        elif disc > 0:
+            raise ValueError(
+                "Con descuento y líneas de detalle, indica el monto neto (amount) tras el descuento.",
+            )
         return self
 
     @model_validator(mode="after")
     def _any_field_set(self) -> "WalletRechargeRequestPendingUpdate":
         if (
             self.amount is None
+            and self.discount is None
             and self.allowed_payment_methods is None
             and self.allowed_deposit_account_ids is None
             and self.currency is None
@@ -743,6 +756,8 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
             and self.portal_declared_payment_amount is None
             and self.admin_note is None
             and self.ai_confidence_score is None
+            and self.hotmart_links is None
+            and self.client_product_prices is None
         ):
             raise ValueError("Indica al menos un campo a actualizar.")
         return self

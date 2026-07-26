@@ -2906,6 +2906,99 @@ def sync_pending_payment_declared_amount_for_wallet_recharge(
     db.flush()
 
 
+def sync_pending_review_payment_for_wallet_recharge_admin(
+    db: Session,
+    req: WalletRechargeRequest,
+    *,
+    declared_billing: Optional[float] = None,
+) -> None:
+    """
+    Tras PATCH admin: alinea ``ClientPayment`` ``pending_review`` con depósito declarado o total neto.
+
+    Raises:
+        ValueError: si hay cobro en revisión y no se puede actualizar su importe.
+    """
+    from app.services.wallet_recharge_client_payment import find_pending_client_payment_for_wallet_recharge
+
+    cp = find_pending_client_payment_for_wallet_recharge(db, req)
+    if cp is None or cp.status != ClientPaymentStatus.pending_review:
+        return
+
+    cash_f: Optional[float] = None
+    if declared_billing is not None:
+        try:
+            cash_f = float(declared_billing)
+        except (TypeError, ValueError):
+            cash_f = None
+    if cash_f is None or cash_f <= _FP_EPS:
+        pad = getattr(req, "portal_declared_payment_amount", None)
+        if pad is not None:
+            try:
+                cash_f = float(pad)
+            except (TypeError, ValueError):
+                cash_f = None
+    if cash_f is None or cash_f <= _FP_EPS:
+        try:
+            cash_f = float(getattr(req, "amount_requested", 0) or 0)
+        except (TypeError, ValueError):
+            cash_f = None
+    if cash_f is None or cash_f <= _FP_EPS:
+        return
+
+    req.portal_declared_payment_amount = round(cash_f, 2)
+    xr = float(getattr(req, "recharge_exchange_rate", None) or 1.0)
+    req.declared_deposit_usd = round(cash_f / xr, 4) if xr > 0 else None
+    sync_pending_payment_declared_amount_for_wallet_recharge(db, req)
+
+
+def sync_pending_review_payment_for_sale_admin(
+    db: Session,
+    sale: "Sale",
+    *,
+    declared_amount: Optional[float] = None,
+    payment_id: Optional[int] = None,
+) -> None:
+    """
+    Tras PATCH admin: alinea ``ClientPayment`` ``pending_review`` con depósito declarado o total neto.
+
+    Raises:
+        ValueError: si hay cobro en revisión y no se puede actualizar su importe.
+    """
+    from app.models.sale import SaleStatus
+
+    if sale.status not in (SaleStatus.payment_submitted, SaleStatus.partially_paid):
+        return
+
+    cash_f: Optional[float] = None
+    if declared_amount is not None:
+        try:
+            cash_f = float(declared_amount)
+        except (TypeError, ValueError):
+            cash_f = None
+    if cash_f is None or cash_f <= _FP_EPS:
+        try:
+            cash_f = float(getattr(sale, "local_amount", 0) or 0)
+        except (TypeError, ValueError):
+            cash_f = None
+    if cash_f is None or cash_f <= _FP_EPS:
+        return
+
+    pending = collect_pending_payments_for_sale_activation(db, sale)
+    if payment_id is None and not pending:
+        return
+    if payment_id is None and pending and not any(
+        cp.status == ClientPaymentStatus.pending_review for cp in pending
+    ):
+        return
+
+    sync_pending_payment_declared_amount_for_sale(
+        db,
+        sale,
+        cash_f,
+        payment_id=payment_id,
+    )
+
+
 _APPROVAL_REQUIRES_VALID_AMOUNT_MSG = (
     "No se puede aprobar una transacción sin un monto válido. "
     "Por favor, edita el registro e ingresa el monto del comprobante."

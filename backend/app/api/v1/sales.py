@@ -3894,14 +3894,38 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
             sync_pending_payments_deposit_for_sale(db, sale)
 
         if "declared_payment_amount" in raw_preview:
-            from app.services.client_payment_service import sync_pending_payment_declared_amount_for_sale
+            try:
+                from app.services.client_payment_service import sync_pending_review_payment_for_sale_admin
 
-            sync_pending_payment_declared_amount_for_sale(
-                db,
-                sale,
-                float(raw_preview["declared_payment_amount"]),
-                payment_id=raw_preview.get("declared_payment_id"),
-            )
+                sync_pending_review_payment_for_sale_admin(
+                    db,
+                    sale,
+                    declared_amount=float(raw_preview["declared_payment_amount"]),
+                    payment_id=raw_preview.get("declared_payment_id"),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"No se pudo actualizar el cobro en revisión vinculado: {exc}",
+                ) from exc
+        elif raw_preview.keys() & {"local_amount", "discount", "invoice_lines"}:
+            try:
+                from app.services.client_payment_service import sync_pending_review_payment_for_sale_admin
+
+                sync_pending_review_payment_for_sale_admin(
+                    db,
+                    sale,
+                    payment_id=raw_preview.get("declared_payment_id"),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"No se pudo actualizar el cobro en revisión vinculado: {exc}",
+                ) from exc
 
         if "currency" in raw_preview:
             sale.currency = (raw_preview["currency"] or "USD").upper()
@@ -4192,14 +4216,38 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
     # Al cambiar local_amount sin proveer amount_paid explícito NO se reinicia el cobro.
 
     if "declared_payment_amount" in explicit_keys:
-        from app.services.client_payment_service import sync_pending_payment_declared_amount_for_sale
+        try:
+            from app.services.client_payment_service import sync_pending_review_payment_for_sale_admin
 
-        sync_pending_payment_declared_amount_for_sale(
-            db,
-            sale,
-            float(raw["declared_payment_amount"]),
-            payment_id=raw.get("declared_payment_id"),
-        )
+            sync_pending_review_payment_for_sale_admin(
+                db,
+                sale,
+                declared_amount=float(raw["declared_payment_amount"]),
+                payment_id=raw.get("declared_payment_id"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No se pudo actualizar el cobro en revisión vinculado: {exc}",
+            ) from exc
+    elif explicit_keys & {"local_amount", "discount", "invoice_lines"}:
+        try:
+            from app.services.client_payment_service import sync_pending_review_payment_for_sale_admin
+
+            sync_pending_review_payment_for_sale_admin(
+                db,
+                sale,
+                payment_id=raw.get("declared_payment_id"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No se pudo actualizar el cobro en revisión vinculado: {exc}",
+            ) from exc
 
     inv_patch_keys = {
         "inventory_channel",

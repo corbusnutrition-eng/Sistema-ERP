@@ -1302,9 +1302,46 @@ def patch_wallet_recharge_request_fields(
         declared_updated = True
 
     if declared_updated:
-        from app.services.client_payment_service import sync_pending_payment_declared_amount_for_wallet_recharge
+        try:
+            from app.services.client_payment_service import (
+                sync_pending_payment_declared_amount_for_wallet_recharge,
+            )
 
-        sync_pending_payment_declared_amount_for_wallet_recharge(db, req)
+            sync_pending_payment_declared_amount_for_wallet_recharge(db, req)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No se pudo actualizar el cobro en revisión vinculado: {exc}",
+            ) from exc
+    elif (
+        payload.line_items is not None
+        or payload.amount is not None
+        or payload.discount is not None
+    ):
+        try:
+            from app.services.client_payment_service import (
+                sync_pending_review_payment_for_wallet_recharge_admin,
+            )
+
+            declared_pad = (
+                float(payload.portal_declared_payment_amount)
+                if payload.portal_declared_payment_amount is not None
+                else None
+            )
+            sync_pending_review_payment_for_wallet_recharge_admin(
+                db,
+                req,
+                declared_billing=declared_pad,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No se pudo actualizar el cobro en revisión vinculado: {exc}",
+            ) from exc
 
     cli = req.client or db.get(Client, req.client_id)
     if cli is not None:
