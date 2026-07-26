@@ -36,6 +36,7 @@ import {
   selectedMethodsIncludeHotmart,
 } from '../../../utils/hotmartLinks'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
+import { computeDiscountAmount, DISCOUNT_TYPES } from '../../../lib/financialSummaryUtils'
 import ReportedDepositDestinationAlert, {
   pickPendingReviewDepositDestination,
 } from '../../../components/ui/ReportedDepositDestinationAlert'
@@ -803,6 +804,7 @@ export default function NuevaVentaModal({
   const [pendingReviewPayments, setPendingReviewPayments] = useState([])
   const [declaredDepositStr, setDeclaredDepositStr] = useState('')
   const declaredDepositInitializedRef = useRef(false)
+  const [discountType, setDiscountType] = useState(DISCOUNT_TYPES.FIXED)
   const saleDiscountAutoDepositSkipRef = useRef(true)
   const [detailBalanceDue, setDetailBalanceDue] = useState(null)
 
@@ -1229,10 +1231,18 @@ export default function NuevaVentaModal({
   }, [lineItems])
 
   const discountAmount = useMemo(() => {
-    const n = parseFloat(String(form.discount ?? '').replace(',', '.'))
-    if (!Number.isFinite(n) || n <= 0) return 0
-    return Math.round(n * 100) / 100
-  }, [form.discount])
+    if (showInvoiceLayout) {
+      return computeDiscountAmount(linesSubtotal, form.discount, discountType)
+    }
+    const net = parseFloat(String(form.local_amount ?? '').replace(',', '.'))
+    if (discountType === DISCOUNT_TYPES.FIXED) {
+      return computeDiscountAmount(Number.isFinite(net) && net > 0 ? net : 0, form.discount, DISCOUNT_TYPES.FIXED)
+    }
+    const pct = parseFloat(String(form.discount ?? '').replace(',', '.'))
+    if (!Number.isFinite(net) || net <= 0 || !Number.isFinite(pct) || pct <= 0) return 0
+    const gross = net / (1 - Math.min(100, pct) / 100)
+    return Math.round((gross - net) * 100) / 100
+  }, [form.discount, form.local_amount, linesSubtotal, discountType, showInvoiceLayout])
 
   const netLinesTotal = useMemo(() => {
     return Math.max(0, Math.round((linesSubtotal - discountAmount) * 100) / 100)
@@ -2086,6 +2096,7 @@ export default function NuevaVentaModal({
   useEffect(() => {
     declaredDepositInitializedRef.current = false
     setDeclaredDepositStr('')
+    setDiscountType(DISCOUNT_TYPES.FIXED)
     saleDiscountAutoDepositSkipRef.current = true
   }, [initialSale?.id])
 
@@ -2093,24 +2104,12 @@ export default function NuevaVentaModal({
     if (declaredDepositInitializedRef.current) return
     const pr = pendingReviewPayments[0]
     if (!pr) return
-    const raw = pr.amount_applied_to_sale ?? pr.amount
+    const raw = pr.amount ?? pr.amount_applied_to_sale
     if (raw != null && Number.isFinite(Number(raw))) {
       setDeclaredDepositStr(String(Number(raw)))
       declaredDepositInitializedRef.current = true
     }
   }, [pendingReviewPayments])
-
-  useEffect(() => {
-    if (!showDeclaredDepositField || saleIsViewOnly) return undefined
-    if (saleDiscountAutoDepositSkipRef.current) {
-      saleDiscountAutoDepositSkipRef.current = false
-      return undefined
-    }
-    const net = effectiveSaleNetTotal
-    if (!Number.isFinite(net) || net < 0) return undefined
-    setDeclaredDepositStr(net > 0 ? net.toFixed(2) : '')
-    return undefined
-  }, [form.discount, effectiveSaleNetTotal, showDeclaredDepositField, saleIsViewOnly])
 
   const pendingReviewForOcr = pendingReviewPayments[0] ?? null
   const showIllegibleDepositAlert =
@@ -4164,6 +4163,10 @@ export default function NuevaVentaModal({
               cobroCurrencyOptions={cobroCurrencyOptions}
               linesSubtotal={linesSubtotal}
               discountAmount={discountAmount}
+              discountInput={form.discount ?? ''}
+              discountType={discountType}
+              onDiscountInputChange={(v) => setForm((p) => ({ ...p, discount: v }))}
+              onDiscountTypeChange={setDiscountType}
               netLinesTotal={netLinesTotal}
               saleCurrencyCode={saleCurrencyCode}
               balanceDueReceivable={balanceDueReceivable}
@@ -4188,6 +4191,10 @@ export default function NuevaVentaModal({
               showDeclaredDepositField={showDeclaredDepositField}
               declaredDepositStr={declaredDepositStr}
               onDeclaredDepositChange={setDeclaredDepositStr}
+              onDepositAmountChange={(v) => {
+                amountPaidDirtyRef.current = true
+                setForm((p) => ({ ...p, amount_paid: v }))
+              }}
               showIllegibleDepositAlert={showIllegibleDepositAlert}
               reportedDepositDestination={reportedDepositDestination}
               portalConfigLocked={portalConfigLocked}
@@ -4460,33 +4467,7 @@ export default function NuevaVentaModal({
             </div>
           </div>
 
-          {!showInvoiceLayout && !saleIsViewOnly ? (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                Descuento ({form.currency})
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
-                  <CurrencyFlag code={form.currency} />
-                </span>
-                <input
-                  type="number"
-                  name="discount"
-                  value={form.discount ?? ''}
-                  onChange={handleChange}
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  className={`${inputCls} pl-8`}
-                />
-              </div>
-              <p className="mt-1 text-xs text-gray-500 leading-snug">
-                Comisiones de pasarela (Hotmart, etc.) absorbidas por ti. Total = Subtotal − Descuento.
-              </p>
-            </div>
-          ) : null}
-
-          {!showInvoiceLayout && (isEditing || discountAmount > 0) ? (
+          {!showInvoiceLayout ? (
             <FinancialSummarySidebar
               subtotal={localAmount + discountAmount}
               discount={discountAmount}
@@ -4499,117 +4480,59 @@ export default function NuevaVentaModal({
               apiOrigin={apiOrigin}
               onOpenLinkedPayment={handleOpenLinkedPayment}
               onOpenPendingReviewPayment={handleOpenPendingReviewPayment}
+              showDiscountEditor={!saleIsViewOnly}
+              discountInput={form.discount ?? ''}
+              discountType={discountType}
+              onDiscountInputChange={(v) => setForm((p) => ({ ...p, discount: v }))}
+              onDiscountTypeChange={setDiscountType}
+              discountEditorDisabled={submitting}
+              showDepositEditor={!saleIsViewOnly && (showDeclaredDepositField || !depositLocked)}
+              depositValue={showDeclaredDepositField ? declaredDepositStr : form.amount_paid}
+              onDepositChange={
+                showDeclaredDepositField ?
+                  setDeclaredDepositStr
+                : (v) => {
+                    amountPaidDirtyRef.current = true
+                    setForm((p) => ({ ...p, amount_paid: v }))
+                  }
+              }
+              depositEditorDisabled={submitting || (depositLocked && !showDeclaredDepositField)}
+              depositFooter={
+                <>
+                  {showDeclaredDepositField && showIllegibleDepositAlert ?
+                    <div className="w-full text-right">
+                      <IllegibleReceiptAlert className="inline-block max-w-md ml-auto" layout="block" />
+                    </div>
+                  : null}
+                  {showDeclaredDepositField &&
+                  Array.isArray(pendingReviewPayments) &&
+                  pendingReviewPayments.length > 0 ?
+                    <OcrSecurityBadges
+                      className="mt-2 max-w-md ml-auto"
+                      suppressIllegibleAlert
+                      {...pickOcrSecurityFlags(
+                        pendingReviewPayments.find((p) => p?.receipt_file_url) ||
+                          pendingReviewPayments[0],
+                      )}
+                      portal_declared_payment_amount={
+                        pendingReviewPayments[0]?.amount ?? pendingReviewPayments[0]?.amount_applied_to_sale
+                      }
+                      amount={
+                        pendingReviewPayments[0]?.amount ?? pendingReviewPayments[0]?.amount_applied_to_sale
+                      }
+                    />
+                  : null}
+                  {showDeclaredDepositField && reportedDepositDestination ?
+                    <ReportedDepositDestinationAlert
+                      className="mt-3 max-w-md ml-auto"
+                      depositAccountName={reportedDepositDestination.depositAccountName}
+                      paymentMethodName={reportedDepositDestination.paymentMethodName}
+                    />
+                  : null}
+                </>
+              }
             />
           ) : null}
-
-          {isEditing && showInvoiceLayout && (
-            <FinancialSummarySidebar
-              subtotal={localAmount + discountAmount}
-              discount={discountAmount}
-              total={localAmount}
-              currency={saleCurrencyCode}
-              linkedPayments={linkedPayments}
-              pendingReviewPayments={pendingReviewPayments}
-              balanceDue={balanceDueReceivable}
-              autoAppliedCredit={autoAppliedFromCredit}
-              apiOrigin={apiOrigin}
-              onOpenLinkedPayment={handleOpenLinkedPayment}
-              onOpenPendingReviewPayment={handleOpenPendingReviewPayment}
-            />
-          )}
-
-          <div>
-            {showDeclaredDepositField && !showInvoiceLayout ? (
-              <>
-                {showIllegibleDepositAlert ? (
-                  <div className="mb-2.5">
-                    <IllegibleReceiptAlert className="w-full" layout="block" />
-                  </div>
-                ) : null}
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Depósito declarado ({form.currency})
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
-                    <CurrencyFlag code={form.currency} />
-                  </span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={declaredDepositStr}
-                    onChange={(e) => setDeclaredDepositStr(e.target.value)}
-                    disabled={submitting}
-                    placeholder="0.00"
-                    className={`${inputCls} pl-8`}
-                  />
-                </div>
-                <p className="mt-1 text-xs text-gray-600 leading-snug">
-                  Corrija aquí si la lectura automática del comprobante fue incorrecta. Al guardar, el monto se
-                  aplicará al cobro en revisión.
-                </p>
-                {Array.isArray(pendingReviewPayments) && pendingReviewPayments.length > 0 ? (
-                  <OcrSecurityBadges
-                    className="mt-2"
-                    suppressIllegibleAlert
-                    {...pickOcrSecurityFlags(
-                      pendingReviewPayments.find((p) => p?.receipt_file_url) ||
-                        pendingReviewPayments[0],
-                    )}
-                    portal_declared_payment_amount={
-                      pendingReviewPayments[0]?.amount_applied_to_sale ??
-                      pendingReviewPayments[0]?.amount
-                    }
-                    amount={
-                      pendingReviewPayments[0]?.amount_applied_to_sale ??
-                      pendingReviewPayments[0]?.amount
-                    }
-                  />
-                ) : null}
-                {reportedDepositDestination ? (
-                  <ReportedDepositDestinationAlert
-                    className="mt-3"
-                    depositAccountName={reportedDepositDestination.depositAccountName}
-                    paymentMethodName={reportedDepositDestination.paymentMethodName}
-                  />
-                ) : null}
-              </>
-            ) : (
-              <>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Importe del depósito ({form.currency})
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
-                    <CurrencyFlag code={form.currency} />
-                  </span>
-                  <input
-                    type="number"
-                    name="amount_paid"
-                    value={form.amount_paid}
-                    onChange={handleChange}
-                    min="0"
-                    step="0.01"
-                    readOnly={depositLocked}
-                    disabled={depositLocked}
-                    placeholder={form.local_amount ? String(form.local_amount) : '0.00'}
-                    className={`${inputCls} pl-8 ${depositLocked ? 'bg-gray-50 text-gray-700 cursor-not-allowed' : ''}`}
-                  />
-                </div>
-                {!isEditing && (
-                  <p className="mt-1 text-xs text-gray-600 leading-snug">
-                    Saldo pendiente (CxC):{' '}
-                    <span className="font-semibold tabular-nums">
-                      {balanceDueReceivable.toLocaleString('es-ES', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}{' '}
-                      {saleCurrencyCode}
-                    </span>
-                  </p>
-                )}
-              </>
-            )}
-          </div>
 
           {showDepositPaymentFields && (
           <div>

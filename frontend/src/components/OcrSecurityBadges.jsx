@@ -49,7 +49,7 @@ export function declaredDepositInputValueFromReview(source) {
   const pending =
     source.payment_id != null ? source : pickPendingReviewLinkedPayment(source.linked_payments)
   if (pending) {
-    const raw = pending.amount_applied ?? pending.amount
+    const raw = pending.amount ?? pending.amount_applied
     if (raw != null && Number.isFinite(Number(raw))) return String(Number(raw))
   }
   const declared = source.portal_declared_payment_amount

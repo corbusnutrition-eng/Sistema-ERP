@@ -2,6 +2,23 @@ import { normalizeCurrencyCode } from './currencyCode'
 
 const DEFAULT_API_ORIGIN = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
+export const DISCOUNT_TYPES = {
+  PERCENT: 'PERCENT',
+  FIXED: 'FIXED',
+}
+
+/** Convierte el valor del input (% o monto fijo) al descuento absoluto en moneda de la transacción. */
+export function computeDiscountAmount(subtotal, inputRaw, discountType = DISCOUNT_TYPES.FIXED) {
+  const sub = Number(subtotal)
+  const n = parseFloat(String(inputRaw ?? '').trim().replace(',', '.'))
+  if (!Number.isFinite(sub) || sub <= 0 || !Number.isFinite(n) || n <= 0) return 0
+  if (discountType === DISCOUNT_TYPES.PERCENT) {
+    const pct = Math.min(100, n)
+    return Math.round(((sub * pct) / 100) * 100) / 100
+  }
+  return Math.round(Math.min(sub, n) * 100) / 100
+}
+
 /** URL absoluta de un comprobante (ventas / BaaS / CxC). */
 export function financialReceiptHref(raw, apiOrigin = DEFAULT_API_ORIGIN) {
   const p = String(raw ?? '').trim()

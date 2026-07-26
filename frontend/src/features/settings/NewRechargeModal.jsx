@@ -9,7 +9,7 @@ import OcrSecurityBadges, {
 import PaymentReceiptAttachment from '../../components/ui/PaymentReceiptAttachment'
 import api from '../../api/axios'
 import { useModal } from '../../context/ModalContext'
-import { financialSummaryFromRechargeLinkedPayments } from '../../lib/financialSummaryUtils'
+import { financialSummaryFromRechargeLinkedPayments, computeDiscountAmount, DISCOUNT_TYPES } from '../../lib/financialSummaryUtils'
 import { salesApiOrigin } from '../sales/saleTableHelpers'
 import SearchableSelect from '../../components/ui/SearchableSelect'
 import PaymentMethodsDepositCheckboxes from '../sales/components/PaymentMethodsDepositCheckboxes'
@@ -147,6 +147,8 @@ export default function NewRechargeModal({
   onDepositUsdChange,
   discountBilling = '',
   onDiscountBillingChange,
+  discountType = DISCOUNT_TYPES.FIXED,
+  onDiscountTypeChange,
   rechargeComment,
   onRechargeCommentChange,
   salePaymentMethodOptions = [],
@@ -615,10 +617,8 @@ export default function NewRechargeModal({
   }, [rechargeLineItems])
 
   const discountBillingNum = useMemo(() => {
-    const n = parseLineNum(discountBilling)
-    if (!Number.isFinite(n) || n <= 0) return 0
-    return Math.round(n * 100) / 100
-  }, [discountBilling])
+    return computeDiscountAmount(linesSubtotal, discountBilling, discountType)
+  }, [linesSubtotal, discountBilling, discountType])
 
   const netLinesTotal = useMemo(() => {
     return Math.max(0, Math.round((linesSubtotal - discountBillingNum) * 100) / 100)
@@ -715,6 +715,7 @@ export default function NewRechargeModal({
       return undefined
     }
     if (isReadOnly || typeof onDepositUsdChange !== 'function') return undefined
+    if (editMode && rechargeInReview) return undefined
     if (discountAutoDepositSkipRef.current) {
       discountAutoDepositSkipRef.current = false
       return undefined
@@ -723,7 +724,7 @@ export default function NewRechargeModal({
     if (!Number.isFinite(net) || net < 0) return undefined
     onDepositUsdChange(net > 0 ? net.toFixed(2) : '')
     return undefined
-  }, [open, isReadOnly, discountBilling, netLinesTotal, onDepositUsdChange])
+  }, [open, isReadOnly, editMode, rechargeInReview, discountBilling, netLinesTotal, onDepositUsdChange])
 
   const financialLinkedRaw = useMemo(() => {
     if (isReadOnly && linkedPaymentsForReadOnly != null) return linkedPaymentsForReadOnly
@@ -1418,139 +1419,102 @@ export default function NewRechargeModal({
                         : null}
                       </div>
                     : null}
+
+                    <div className="pt-4 mt-4 border-t border-gray-100 px-3 pb-3">
+                      <FinancialSummarySidebar
+                        subtotal={lateralSubtotalDisplay}
+                        discount={discountBillingNum}
+                        total={lateralTotalDisplay}
+                        currency={billingCode}
+                        linkedPayments={showFinancialSummary ? financialApproved : []}
+                        pendingReviewPayments={showFinancialSummary ? financialPending : []}
+                        balanceDue={lateralBalancePendingDisplay}
+                        autoAppliedCredit={showFinancialSummary ? 0 : creditAutoApplied}
+                        subtotalLabel={isReadOnly ? 'Monto original' : 'Subtotal'}
+                        apiOrigin={apiOrigin}
+                        showDiscountEditor={!isReadOnly}
+                        discountInput={discountBilling}
+                        discountType={discountType}
+                        onDiscountInputChange={onDiscountBillingChange}
+                        onDiscountTypeChange={onDiscountTypeChange}
+                        discountEditorDisabled={generatingLink}
+                        showDepositEditor={!isReadOnly}
+                        depositValue={depositUsd}
+                        onDepositChange={onDepositUsdChange}
+                        depositEditorDisabled={generatingLink}
+                        depositInputId="recharge-deposit-ref"
+                        depositFooter={
+                          <>
+                            {!isReadOnly && !editMode ?
+                              <>
+                                {clientCreditLoading ?
+                                  <p className="text-[10px] text-gray-400 text-right">Consultando saldo a favor…</p>
+                                : null}
+                                {!clientCreditLoading && clientCreditAvail > 1e-9 ?
+                                  <p className="text-[10px] text-gray-600 text-right leading-snug">
+                                    Saldo a favor disponible:{' '}
+                                    <span className="font-semibold tabular-nums">
+                                      {clientCreditAvail.toLocaleString('es-ES', { minimumFractionDigits: 2 })}{' '}
+                                      {billingCode}
+                                    </span>
+                                    {creditAutoApplied > 1e-9 ? ' (se aplicará al crear la solicitud)' : null}
+                                  </p>
+                                : null}
+                              </>
+                            : null}
+                            {editMode && showIllegibleDepositAlert ?
+                              <div className="w-full text-right">
+                                <IllegibleReceiptAlert className="inline-block max-w-md ml-auto" layout="block" />
+                              </div>
+                            : null}
+                            {editMode ?
+                              <OcrSecurityBadges
+                                className="mt-2 max-w-md ml-auto"
+                                suppressIllegibleAlert
+                                is_manually_edited={ocrIsManuallyEdited}
+                                ai_confidence_score={ocrWithoutAmount ? 0 : ocrAiConfidenceScore}
+                                portal_declared_payment_amount={ocrPortalDeclaredAmount}
+                                amount={ocrPortalDeclaredAmount}
+                              />
+                            : null}
+                            {editMode ?
+                              <label className="mt-3 flex items-start gap-2.5 rounded-xl border border-orange-200 bg-orange-50/80 px-3 py-2.5 cursor-pointer max-w-md ml-auto">
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5 h-4 w-4 rounded border-orange-300 text-orange-600 focus:ring-orange-500"
+                                  checked={ocrWithoutAmount}
+                                  onChange={(e) => setOcrWithoutAmount(e.target.checked)}
+                                  disabled={generatingLink}
+                                />
+                                <span className="min-w-0 text-[11px] leading-snug text-orange-950">
+                                  <span className="font-semibold">OCR sin monto</span>
+                                  {' — '}
+                                  Marca si la IA no pudo leer el importe del comprobante.
+                                </span>
+                              </label>
+                            : null}
+                            {reportedDepositDestination ?
+                              <ReportedDepositDestinationAlert
+                                className="mt-3 max-w-md ml-auto"
+                                depositAccountName={reportedDepositDestination.depositAccountName}
+                                paymentMethodName={reportedDepositDestination.paymentMethodName}
+                              />
+                            : null}
+                          </>
+                        }
+                      />
+                    </div>
                   </div>
                 </div>
 
                 <aside className="space-y-3 xl:sticky xl:top-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm self-start w-full max-w-full">
-                  <FinancialSummarySidebar
-                    subtotal={lateralSubtotalDisplay}
-                    discount={discountBillingNum}
-                    total={lateralTotalDisplay}
-                    currency={billingCode}
-                    linkedPayments={showFinancialSummary ? financialApproved : []}
-                    pendingReviewPayments={showFinancialSummary ? financialPending : []}
-                    balanceDue={lateralBalancePendingDisplay}
-                    autoAppliedCredit={showFinancialSummary ? 0 : creditAutoApplied}
-                    subtotalLabel={isReadOnly ? 'Monto original' : 'Subtotal'}
-                    subtotalSize="sm"
-                    apiOrigin={apiOrigin}
-                  />
-                  {!isReadOnly ? (
-                    <div>
-                      <label
-                        className="block text-[11px] font-medium text-gray-600 mb-1"
-                        htmlFor="recharge-discount-ref"
-                      >
-                        Descuento ({billingCode})
-                      </label>
-                      <input
-                        id="recharge-discount-ref"
-                        type="text"
-                        inputMode="decimal"
-                        value={discountBilling}
-                        onChange={(e) => onDiscountBillingChange?.(e.target.value)}
-                        placeholder="0.00"
-                        disabled={generatingLink}
-                        className={icls}
-                      />
-                      <p className="mt-1 text-[10px] text-gray-500 leading-snug">
-                        Comisiones de pasarela absorbidas. Total = Subtotal − Descuento.
-                      </p>
-                    </div>
-                  ) : null}
-                  {!isReadOnly && !editMode ?
-                    <>
-                      {clientCreditLoading ?
-                        <p className="text-[10px] text-gray-400">Consultando saldo a favor…</p>
-                      : null}
-                      {!clientCreditLoading && clientCreditAvail > 1e-9 ?
-                        <p className="text-[10px] text-emerald-800 leading-snug">
-                          Saldo a favor disponible:{' '}
-                          <span className="font-semibold tabular-nums">
-                            {clientCreditAvail.toLocaleString('es-ES', { minimumFractionDigits: 2 })} {billingCode}
-                          </span>
-                          {creditAutoApplied > 1e-9 ? ' (se aplicará al crear la solicitud)' : null}
-                        </p>
-                      : null}
-                    </>
-                  : null}
-
                   {!isReadOnly ?
                     <>
-                      <div>
-                        {editMode && showIllegibleDepositAlert ? (
-                          <div className="mb-2.5">
-                            <IllegibleReceiptAlert className="w-full" layout="block" />
-                          </div>
-                        ) : null}
-                        <label
-                          className="block text-[11px] font-medium text-gray-600 mb-1"
-                          htmlFor="recharge-deposit-ref"
-                        >
-                          Depósito declarado ({billingCode})
-                        </label>
-                        <input
-                          id="recharge-deposit-ref"
-                          type="text"
-                          inputMode="decimal"
-                          value={depositUsd}
-                          onChange={(e) => onDepositUsdChange(e.target.value)}
-                          placeholder={`Opcional · misma moneda que la tabla (${billingCode})`}
-                          disabled={generatingLink}
-                          className={icls}
-                        />
-                        <p className="mt-1 text-[10px] text-gray-500 leading-snug">
-                          {editMode ?
-                            'Corrija aquí si la lectura automática del comprobante fue incorrecta. Al guardar, el monto se aplicará al cobro en revisión.'
-                          : depositDeclaredNum > 0 ?
-                            <>
-                              Comparado contra el subtotal:{' '}
-                              {depositInBilling.toLocaleString('es-ES', { minimumFractionDigits: 2 })} {billingCode}.
-                            </>
-                          : 'Sin depósito declarado hasta que indiques un importe (opcional).'}
-                        </p>
-                        {editMode ? (
-                          <OcrSecurityBadges
-                            className="mt-2"
-                            suppressIllegibleAlert
-                            is_manually_edited={ocrIsManuallyEdited}
-                            ai_confidence_score={ocrWithoutAmount ? 0 : ocrAiConfidenceScore}
-                            portal_declared_payment_amount={ocrPortalDeclaredAmount}
-                            amount={ocrPortalDeclaredAmount}
-                          />
-                        ) : null}
-                        {editMode ? (
-                          <label className="mt-3 flex items-start gap-2.5 rounded-xl border border-orange-200 bg-orange-50/80 px-3 py-2.5 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 h-4 w-4 rounded border-orange-300 text-orange-600 focus:ring-orange-500"
-                              checked={ocrWithoutAmount}
-                              onChange={(e) => setOcrWithoutAmount(e.target.checked)}
-                              disabled={generatingLink}
-                            />
-                            <span className="min-w-0 text-[11px] leading-snug text-orange-950">
-                              <span className="font-semibold">OCR sin monto</span>
-                              {' — '}
-                              Marca si la IA no pudo leer el importe del comprobante. Al guardar, el
-                              cliente podrá enviar el recibo con depósito en $0 mientras un operador
-                              revisa y corrige el monto aquí.
-                            </span>
-                          </label>
-                        ) : null}
-                        {reportedDepositDestination ? (
-                          <ReportedDepositDestinationAlert
-                            className="mt-3 mb-1"
-                            depositAccountName={reportedDepositDestination.depositAccountName}
-                            paymentMethodName={reportedDepositDestination.paymentMethodName}
-                          />
-                        ) : null}
-                      </div>
-
-                      {portalConfigLocked ? (
-                        <p className="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      {portalConfigLocked ?
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                           Configuración del enlace de pago (no confundir con el depósito de este comprobante)
                         </p>
-                      ) : null}
+                      : null}
 
                       <PaymentMethodsDepositCheckboxes
                         disabled={generatingLink || portalConfigLocked}

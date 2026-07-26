@@ -53,6 +53,7 @@ import {
 import UpdateClientPricesModal from './UpdateClientPricesModal'
 import { currencyFromLastSelectedDepositIds } from '../../lib/accountCurrencyCascade'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
+import { computeDiscountAmount, DISCOUNT_TYPES } from '../../lib/financialSummaryUtils'
 import { salesCurrencyExchangeRateString } from '../sales/salesCurrencies'
 import {
   formatSaleTableDate,
@@ -352,6 +353,7 @@ export default function DistributorsBaaSPage() {
   const [linkLineItems, setLinkLineItems] = useState(() => [newRechargeLineRow()])
   const [linkDepositUsd, setLinkDepositUsd] = useState('')
   const [linkDiscount, setLinkDiscount] = useState('')
+  const [linkDiscountType, setLinkDiscountType] = useState(DISCOUNT_TYPES.FIXED)
   const [linkComment, setLinkComment] = useState('')
   const [generatingLink, setGeneratingLink] = useState(false)
   const [linkReceiptFile, setLinkReceiptFile] = useState(null)
@@ -918,6 +920,7 @@ export default function DistributorsBaaSPage() {
     setLinkLineItems([newRechargeLineRow()])
     setLinkDepositUsd('')
     setLinkDiscount('')
+    setLinkDiscountType(DISCOUNT_TYPES.FIXED)
     setLinkComment('')
     setLinkClientId('')
     setSelectedPaymentMethodIds([])
@@ -1152,9 +1155,8 @@ export default function DistributorsBaaSPage() {
       }
     }
 
-    const discountNum = Number(String(linkDiscount ?? '').trim().replace(',', '.'))
-    const disc =
-      Number.isFinite(discountNum) && discountNum > 0 ? Math.round(discountNum * 100) / 100 : 0
+    const discountNum = computeDiscountAmount(subtotal, linkDiscount, linkDiscountType)
+    const disc = discountNum > 0 ? discountNum : 0
     if (disc > subtotal + 1e-9) {
       showToast('El descuento no puede superar el subtotal.')
       return
@@ -1422,6 +1424,7 @@ export default function DistributorsBaaSPage() {
         String(hydrated.discount)
       : '',
     )
+    setLinkDiscountType(DISCOUNT_TYPES.FIXED)
     setLinkComment(typeof hydrated.admin_note === 'string' ? hydrated.admin_note : '')
     const clientId = Number(hydrated.client_id)
     const email = String(hydrated.client_email ?? '').trim()
@@ -1541,11 +1544,7 @@ export default function DistributorsBaaSPage() {
       }
     }
 
-    const discountNumUpd = Number(String(linkDiscount ?? '').trim().replace(',', '.'))
-    const discUpd =
-      Number.isFinite(discountNumUpd) && discountNumUpd > 0 ?
-        Math.round(discountNumUpd * 100) / 100
-      : 0
+    const discUpd = computeDiscountAmount(subtotal, linkDiscount, linkDiscountType)
     if (discUpd > subtotal + 1e-9) {
       showToast('El descuento no puede superar el subtotal.')
       return
@@ -2552,6 +2551,8 @@ export default function DistributorsBaaSPage() {
         onDepositUsdChange={setLinkDepositUsd}
         discountBilling={linkDiscount}
         onDiscountBillingChange={setLinkDiscount}
+        discountType={linkDiscountType}
+        onDiscountTypeChange={setLinkDiscountType}
         rechargeComment={linkComment}
         onRechargeCommentChange={setLinkComment}
         salePaymentMethodOptions={filteredSalePaymentMethodOptions}
@@ -2602,8 +2603,8 @@ export default function DistributorsBaaSPage() {
           null
         }
         ocrPortalDeclaredAmount={
-          pickPendingReviewLinkedPayment(editRechargeRow?.linked_payments)?.amount_applied ??
           pickPendingReviewLinkedPayment(editRechargeRow?.linked_payments)?.amount ??
+          pickPendingReviewLinkedPayment(editRechargeRow?.linked_payments)?.amount_applied ??
           editRechargeRow?.portal_declared_payment_amount ??
           null
         }

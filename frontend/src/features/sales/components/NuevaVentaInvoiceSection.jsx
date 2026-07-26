@@ -6,6 +6,7 @@ import SaleLineProductSelect from './SaleLineProductSelect'
 import { SALES_CURRENCIES } from '../salesCurrencies'
 import { invoiceLineCredentialKind } from '../invoiceLineCredentials'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
+import { DISCOUNT_TYPES } from '../../../lib/financialSummaryUtils'
 import { IllegibleReceiptAlert } from '../../../components/OcrSecurityBadges'
 import ReportedDepositDestinationAlert from '../../../components/ui/ReportedDepositDestinationAlert'
 import PaymentMethodsDepositCheckboxes from './PaymentMethodsDepositCheckboxes'
@@ -84,6 +85,10 @@ export default function NuevaVentaInvoiceSection(props) {
     cobroCurrencyOptions,
     linesSubtotal,
     discountAmount = 0,
+    discountInput = '',
+    discountType = DISCOUNT_TYPES.FIXED,
+    onDiscountInputChange,
+    onDiscountTypeChange,
     netLinesTotal = 0,
     saleCurrencyCode,
     balanceDueReceivable,
@@ -108,6 +113,7 @@ export default function NuevaVentaInvoiceSection(props) {
     showDeclaredDepositField = false,
     declaredDepositStr = '',
     onDeclaredDepositChange,
+    onDepositAmountChange,
     showIllegibleDepositAlert = false,
     reportedDepositDestination = null,
     portalConfigLocked = false,
@@ -440,104 +446,62 @@ export default function NuevaVentaInvoiceSection(props) {
             </button>
           </div>
         </div>
+
+        <div className="pt-4 border-t border-gray-100">
+          <FinancialSummarySidebar
+            subtotal={linesSubtotal}
+            discount={discountAmount}
+            total={netLinesTotal}
+            currency={saleCurrencyCode}
+            linkedPayments={linkedPayments}
+            pendingReviewPayments={pendingReviewPayments}
+            balanceDue={balanceDueReceivable}
+            apiOrigin={apiOrigin}
+            onOpenLinkedPayment={onOpenLinkedPayment}
+            onOpenPendingReviewPayment={onOpenPendingReviewPayment}
+            showDiscountEditor={!saleIsViewOnly}
+            discountInput={discountInput}
+            discountType={discountType}
+            onDiscountInputChange={onDiscountInputChange}
+            onDiscountTypeChange={onDiscountTypeChange}
+            discountEditorDisabled={submitting}
+            showDepositEditor={!saleIsViewOnly && (showDeclaredDepositField || !depositLocked)}
+            depositValue={showDeclaredDepositField ? declaredDepositStr : form.amount_paid}
+            onDepositChange={
+              showDeclaredDepositField ? onDeclaredDepositChange : onDepositAmountChange
+            }
+            depositEditorDisabled={submitting || (depositLocked && !showDeclaredDepositField)}
+            depositInputId={showDeclaredDepositField ? 'sale-declared-deposit' : 'sale-amount-paid'}
+            depositFooter={
+              <>
+                {showDeclaredDepositField && showIllegibleDepositAlert ?
+                  <div className="w-full text-right">
+                    <IllegibleReceiptAlert className="inline-block max-w-md ml-auto" layout="block" />
+                  </div>
+                : null}
+                {showDeclaredDepositField && reportedDepositDestination ?
+                  <ReportedDepositDestinationAlert
+                    className="mt-2 max-w-md ml-auto"
+                    depositAccountName={reportedDepositDestination.depositAccountName}
+                    paymentMethodName={reportedDepositDestination.paymentMethodName}
+                  />
+                : null}
+                {!showDeclaredDepositField && !saleIsViewOnly ?
+                  <p className="text-[11px] text-gray-500 text-right leading-snug mt-1">
+                    Importe recibido o declarado por el cliente en esta venta.
+                  </p>
+                : null}
+                {showDeclaredDepositField ?
+                  <p className="text-[11px] text-gray-500 text-right leading-snug mt-1">
+                    Monto extraído por OCR del comprobante en revisión; corrígelo si la lectura fue incorrecta.
+                  </p>
+                : null}
+              </>
+            }
+          />
+        </div>
       </div>
       <aside className="space-y-4 xl:sticky xl:top-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm self-start w-full max-w-full">
-        <FinancialSummarySidebar
-          subtotal={linesSubtotal}
-          discount={discountAmount}
-          total={netLinesTotal}
-          currency={saleCurrencyCode}
-          linkedPayments={linkedPayments}
-          pendingReviewPayments={pendingReviewPayments}
-          balanceDue={balanceDueReceivable}
-          apiOrigin={apiOrigin}
-          onOpenLinkedPayment={onOpenLinkedPayment}
-          onOpenPendingReviewPayment={onOpenPendingReviewPayment}
-        />
-        {!saleIsViewOnly ? (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              Descuento ({saleCurrencyCode})
-            </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
-                <CurrencyFlag code={form.currency} />
-              </span>
-              <input
-                type="number"
-                name="discount"
-                value={form.discount ?? ''}
-                onChange={handleChange}
-                min="0"
-                step="0.01"
-                placeholder="0.00"
-                className={`${inputCls} pl-8`}
-              />
-            </div>
-            <p className="mt-1 text-[11px] text-gray-500 leading-snug">
-              Comisiones de pasarela (Hotmart, etc.) absorbidas por ti. Total = Subtotal − Descuento.
-            </p>
-          </div>
-        ) : null}
-        {showDeclaredDepositField ? (
-          <div>
-            {showIllegibleDepositAlert ? (
-              <div className="mb-2.5">
-                <IllegibleReceiptAlert className="w-full" layout="block" />
-              </div>
-            ) : null}
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              Depósito declarado ({saleCurrencyCode})
-            </label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
-                <CurrencyFlag code={saleCurrencyCode} />
-              </span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={declaredDepositStr}
-                onChange={(e) => onDeclaredDepositChange?.(e.target.value)}
-                disabled={submitting}
-                placeholder="0.00"
-                className={`${inputCls} pl-8`}
-              />
-            </div>
-            <p className="mt-1 text-xs text-gray-600 leading-snug">
-              Corrija aquí si la lectura automática del comprobante fue incorrecta. Al guardar, el monto se aplicará al
-              cobro en revisión.
-            </p>
-            {reportedDepositDestination ? (
-              <ReportedDepositDestinationAlert
-                className="mt-3"
-                depositAccountName={reportedDepositDestination.depositAccountName}
-                paymentMethodName={reportedDepositDestination.paymentMethodName}
-              />
-            ) : null}
-          </div>
-        ) : null}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            Importe del depósito ({saleCurrencyCode})
-          </label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
-              <CurrencyFlag code={form.currency} />
-            </span>
-            <input
-              type="number"
-              name="amount_paid"
-              value={form.amount_paid}
-              onChange={handleChange}
-              min="0"
-              step="0.01"
-              readOnly={depositLocked}
-              disabled={depositLocked}
-              placeholder={form.local_amount ? String(form.local_amount) : '0.00'}
-              className={`${inputCls} pl-8 ${depositLocked ? 'bg-gray-50 text-gray-700 cursor-not-allowed' : ''}`}
-            />
-          </div>
-        </div>
         {showDepositPaymentFields && (
           <>
             {portalConfigLocked ? (
