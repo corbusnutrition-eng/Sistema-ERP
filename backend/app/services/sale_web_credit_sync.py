@@ -139,13 +139,17 @@ def apply_vip_catalog_row_to_sale(db: Session, sale: Sale, row: dict[str, Any]) 
         )
         db.add(pay)
         db.flush()
-        db.add(
-            PaymentAllocation(
-                payment_id=int(pay.id),
-                sale_id=int(sale.id),
-                amount_applied=amt_dec.quantize(Decimal("0.0001")),
-            ),
-        )
+        from app.services.client_payment_service import cap_allocation_for_sale
+
+        alloc_amt = cap_allocation_for_sale(db, pay, sale, amt_dec)
+        if alloc_amt > Decimal("0.0001"):
+            db.add(
+                PaymentAllocation(
+                    payment_id=int(pay.id),
+                    sale_id=int(sale.id),
+                    amount_applied=alloc_amt.quantize(Decimal("0.0001")),
+                )
+            )
         events.append(
             {
                 "occurred_at": now_iso,
@@ -208,13 +212,17 @@ def apply_vip_catalog_row_to_sale(db: Session, sale: Sale, row: dict[str, Any]) 
             )
             db.add(pay)
             db.flush()
-            db.add(
-                PaymentAllocation(
-                    payment_id=int(pay.id),
-                    sale_id=int(sale.id),
-                    amount_applied=amt_dec.quantize(Decimal("0.0001")),
-                ),
-            )
+            from app.services.client_payment_service import cap_allocation_for_sale
+
+            alloc_amt = cap_allocation_for_sale(db, pay, sale, amt_dec)
+            if alloc_amt > Decimal("0.0001"):
+                db.add(
+                    PaymentAllocation(
+                        payment_id=int(pay.id),
+                        sale_id=int(sale.id),
+                        amount_applied=alloc_amt.quantize(Decimal("0.0001")),
+                    )
+                )
             sync_sale_accounting_ledgers(db, sale, strict=False)
             return True
 

@@ -1598,7 +1598,8 @@ export default function NuevaVentaModal({
       0,
     )
     const net = effectiveSaleNetTotal
-    balanceDueReceivable = Math.max(0, Math.round((net - approvedSum - declaredSafe) * 100) / 100)
+    const rawDue = Math.round((net - approvedSum - declaredSafe) * 100) / 100
+    balanceDueReceivable = Math.max(0, rawDue)
   } else if (treatServerCxC) {
     balanceDueReceivable = Math.max(0, serverBalanceDue)
   } else if (amountPaidRawTrim === '') {

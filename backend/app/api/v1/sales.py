@@ -5455,7 +5455,10 @@ def _build_response(
             if allo is not None:
                 appl = Decimal(str(allo.amount_applied or 0)).quantize(Decimal("0.0001"))
             else:
-                appl = amt_pay
+                from app.services.client_payment_service import _sale_cxc_open_balance
+
+                open_bal = _sale_cxc_open_balance(db, sale, pr)
+                appl = min(amt_pay, open_bal) if open_bal > Decimal("0") else Decimal("0")
             if appl > Decimal("0"):
                 pending_alloc_total += appl
             dest = client_payment_review_destination_brief(db, pr)

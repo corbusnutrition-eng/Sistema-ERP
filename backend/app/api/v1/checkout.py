@@ -259,13 +259,17 @@ def _create_encapsulated_checkout_payment(
     )
     db.add(cp)
     db.flush()
-    db.add(
-        PaymentAllocation(
-            payment_id=int(cp.id),
-            sale_id=sid,
-            amount_applied=amt_opt.quantize(Decimal("0.0001")),
+    from app.services.client_payment_service import cap_allocation_for_sale
+
+    alloc_amt = cap_allocation_for_sale(db, cp, sale, amt_opt)
+    if alloc_amt > Decimal("0.0001"):
+        db.add(
+            PaymentAllocation(
+                payment_id=int(cp.id),
+                sale_id=sid,
+                amount_applied=alloc_amt.quantize(Decimal("0.0001")),
+            )
         )
-    )
 
 
 def _checkout_lines_public(

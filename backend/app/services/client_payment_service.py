@@ -2511,6 +2511,23 @@ def finalize_client_payment_approval(
                 )
                 db.flush()
 
+    if meta_sid is not None and not is_credit_only_client_payment(payment):
+        linked_sale = db.get(Sale, int(meta_sid))
+        if linked_sale is not None and int(linked_sale.client_id) == int(payment.client_id):
+            applied_est = applied_total
+            if applied_est <= _FP_EPS:
+                open_sale = _sale_cxc_open_balance(db, linked_sale, payment)
+                applied_est = min(_q_amt(payment.amount), open_sale)
+            if applied_est > _FP_EPS:
+                payment.notes = _stamp_sale_cxc_applied_notes(
+                    payment.notes,
+                    applied_to_cxc=float(applied_est),
+                    received_amount=float(client_payment_cash_portion(payment) or payment.amount),
+                    currency=normalize_currency_code(str(payment.currency or "USD")),
+                    sale_id=int(meta_sid),
+                )
+                db.flush()
+
     if not is_credit_only_client_payment(payment) and not is_baas_wallet_settlement_payment(payment):
         if payment.deposit_account_id is None:
             from fastapi import HTTPException, status
@@ -3275,11 +3292,35 @@ def sync_pending_payment_declared_amount_for_sale(
             targets = [pending[0]]
 
     cur = normalize_currency_code(str(getattr(sale, "currency", None) or "USD"))
+    sid = int(sale.id)
     for cp in targets:
         credit_f = credit_reserved_restore_from_notes(cp.notes)
         total = cash + Decimal(str(credit_f)).quantize(Decimal("0.0001"))
         cp.amount = total
         cp.notes = _stamp_parte_efectivo_in_notes(cp.notes, float(cash), cur)
+
+        alloc_cap = cap_allocation_for_sale(db, cp, sale, cash)
+        existing = (
+            db.query(PaymentAllocation)
+            .filter(
+                PaymentAllocation.payment_id == int(cp.id),
+                PaymentAllocation.sale_id == sid,
+            )
+            .first()
+        )
+        if alloc_cap > _FP_EPS:
+            if existing is not None:
+                existing.amount_applied = alloc_cap
+            else:
+                db.add(
+                    PaymentAllocation(
+                        payment_id=int(cp.id),
+                        sale_id=sid,
+                        amount_applied=alloc_cap,
+                    )
+                )
+        elif existing is not None:
+            db.delete(existing)
     db.flush()
 
 
@@ -3287,7 +3328,7 @@ def infer_client_payment_applied_to_ar(db: Session, payment: ClientPayment) -> D
     """
     Monto del cobro que reduce CxC.
 
-    Fuente de verdad: suma de ``PaymentAllocation``. Las notas (``PARTE_EFECTIVO``,
+    Fuente de verdad: suma de ``PaymentAllocation``. Las notas (``META_SALE_CXC_APPLIED``,
     ``META_WR_CXC_APPLIED``) solo se usan cuando aún no hay filas de asignación.
     """
     applied_alloc = _payment_applied_total(db, payment)
@@ -3457,11 +3498,50 @@ def _stamp_wallet_recharge_cxc_applied_notes(
     return "\n".join(kept)
 
 
+def _stamp_sale_cxc_applied_notes(
+    notes: Optional[str],
+    *,
+    applied_to_cxc: float,
+    received_amount: float,
+    currency: str,
+    sale_id: Optional[int] = None,
+) -> str:
+    """Anota el monto aplicado a CxC de una venta para inferencia contable."""
+    base = str(notes or "").strip()
+    rid = sale_id if sale_id is not None else parse_notes_meta_sale_id(base)
+    cur = normalize_currency_code(currency, "USD")
+    kept: list[str] = []
+    for ln in base.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if _RE_META_SALE_CXC_APPLIED.search(s):
+            continue
+        kept.append(s)
+    if rid is not None and not any(f"META_SALE_ID={rid}" in ln for ln in kept):
+        kept.append(f"META_SALE_ID={int(rid)}")
+    kept.append(f"PARTE_EFECTIVO={float(received_amount):.2f} {cur}")
+    kept.append(f"META_SALE_CXC_APPLIED={float(applied_to_cxc):.2f}")
+    surplus = round(float(received_amount) - float(applied_to_cxc), 2)
+    if surplus > _FP_EPS:
+        kept.append(f"META_SALE_SURPLUS={surplus:.2f} {cur}")
+    return "\n".join(kept)
+
+
 def _infer_ar_from_linked_sale_notes(db: Session, payment: ClientPayment, amt: Decimal) -> Decimal:
     """Respaldo: pago con ``META_SALE_ID`` sin allocations persistidas."""
     sid = parse_notes_meta_sale_id(payment.notes)
     if sid is None:
         return Decimal("0")
+    notes = str(payment.notes or "")
+    m = _RE_META_SALE_CXC_APPLIED.search(notes)
+    if m is not None:
+        try:
+            applied = _q_amt(m.group(1))
+            if applied > _FP_EPS:
+                return min(applied, amt)
+        except Exception:
+            pass
     sale = _load_client_sale_for_payment(db, payment, int(sid))
     if sale is None:
         return Decimal("0")
@@ -3976,6 +4056,7 @@ _RE_WR_APLICADO = re.compile(r"aplicado(?:\s*CxC)?\s*([\d.]+)", re.IGNORECASE)
 _RE_PARTE_EFECTIVO = re.compile(r"PARTE_EFECTIVO=([\d.]+)", re.IGNORECASE)
 _RE_PARTE_SALDO_FAVOR = re.compile(r"PARTE_SALDO_FAVOR=([\d.]+)", re.IGNORECASE)
 _RE_META_WR_CXC_APPLIED = re.compile(r"META_WR_CXC_APPLIED=([\d.]+)", re.IGNORECASE)
+_RE_META_SALE_CXC_APPLIED = re.compile(r"META_SALE_CXC_APPLIED=([\d.]+)", re.IGNORECASE)
 _RE_WR_BILLETERA = re.compile(r"billetera\s*\+([\d.]+)", re.IGNORECASE)
 
 
