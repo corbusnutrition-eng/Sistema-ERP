@@ -800,6 +800,7 @@ export default function NuevaVentaModal({
   const [pendingReviewPayments, setPendingReviewPayments] = useState([])
   const [declaredDepositStr, setDeclaredDepositStr] = useState('')
   const declaredDepositInitializedRef = useRef(false)
+  const saleDiscountAutoDepositSkipRef = useRef(true)
   const [detailBalanceDue, setDetailBalanceDue] = useState(null)
 
   const amountPaidDirtyRef = useRef(false)
@@ -1550,6 +1551,16 @@ export default function NuevaVentaModal({
     usdEquiv > 0 &&
     usdEquiv <= estimatedInventoryCostUsd
 
+  const showDeclaredDepositField =
+    isEditing &&
+    !saleIsViewOnly &&
+    (pendingReviewPayments.length > 0 ||
+      ['payment_submitted', 'partially_paid'].includes(
+        String(initialSale?.status ?? '').toLowerCase(),
+      ))
+
+  const effectiveSaleNetTotal = showInvoiceLayout ? netLinesTotal : localAmount
+
   const amountPaidRawTrim = String(form.amount_paid ?? '').trim()
   const amountPaidParsed = parseDecimalInput(amountPaidRawTrim)
   let balanceDueReceivable = 0
@@ -1564,8 +1575,18 @@ export default function NuevaVentaModal({
     isEditing &&
     serverBalanceDue !== null &&
     Number.isFinite(serverBalanceDue) &&
-    (linkedPayments.length > 0 || pendingReviewPayments.length > 0)
-  if (treatServerCxC) {
+    (linkedPayments.length > 0 || pendingReviewPayments.length > 0) &&
+    !showDeclaredDepositField
+  if (showDeclaredDepositField && isEditing) {
+    const declaredNum = Number.parseFloat(String(declaredDepositStr ?? '').replace(',', '.'))
+    const declaredSafe = Number.isFinite(declaredNum) && declaredNum >= 0 ? declaredNum : 0
+    const approvedSum = linkedPayments.reduce(
+      (acc, lp) => acc + (parseFloat(lp.amount_applied) || 0),
+      0,
+    )
+    const net = effectiveSaleNetTotal
+    balanceDueReceivable = Math.max(0, Math.round((net - approvedSum - declaredSafe) * 100) / 100)
+  } else if (treatServerCxC) {
     balanceDueReceivable = Math.max(0, serverBalanceDue)
   } else if (amountPaidRawTrim === '') {
     balanceDueReceivable = localAmount
@@ -1640,14 +1661,6 @@ export default function NuevaVentaModal({
         String(initialSale?.status ?? '').toLowerCase(),
       )) ||
     (isEditing && pendingReviewPayments.length > 0)
-
-  const showDeclaredDepositField =
-    isEditing &&
-    !saleIsViewOnly &&
-    (pendingReviewPayments.length > 0 ||
-      ['payment_submitted', 'partially_paid'].includes(
-        String(initialSale?.status ?? '').toLowerCase(),
-      ))
 
   const amountPaidInvalid =
     localAmount > 0 &&
@@ -2063,6 +2076,7 @@ export default function NuevaVentaModal({
   useEffect(() => {
     declaredDepositInitializedRef.current = false
     setDeclaredDepositStr('')
+    saleDiscountAutoDepositSkipRef.current = true
   }, [initialSale?.id])
 
   useEffect(() => {
@@ -2075,6 +2089,18 @@ export default function NuevaVentaModal({
       declaredDepositInitializedRef.current = true
     }
   }, [pendingReviewPayments])
+
+  useEffect(() => {
+    if (!showDeclaredDepositField || saleIsViewOnly) return undefined
+    if (saleDiscountAutoDepositSkipRef.current) {
+      saleDiscountAutoDepositSkipRef.current = false
+      return undefined
+    }
+    const net = effectiveSaleNetTotal
+    if (!Number.isFinite(net) || net < 0) return undefined
+    setDeclaredDepositStr(net > 0 ? net.toFixed(2) : '')
+    return undefined
+  }, [form.discount, effectiveSaleNetTotal, showDeclaredDepositField, saleIsViewOnly])
 
   const pendingReviewForOcr = pendingReviewPayments[0] ?? null
   const showIllegibleDepositAlert =
@@ -4149,6 +4175,10 @@ export default function NuevaVentaModal({
               pendingReviewPayments={pendingReviewPayments}
               onOpenPendingReviewPayment={handleOpenPendingReviewPayment}
               saleIsViewOnly={saleIsViewOnly}
+              showDeclaredDepositField={showDeclaredDepositField}
+              declaredDepositStr={declaredDepositStr}
+              onDeclaredDepositChange={setDeclaredDepositStr}
+              showIllegibleDepositAlert={showIllegibleDepositAlert}
             />
           )}
 
@@ -4477,7 +4507,7 @@ export default function NuevaVentaModal({
           )}
 
           <div>
-            {showDeclaredDepositField ? (
+            {showDeclaredDepositField && !showInvoiceLayout ? (
               <>
                 {showIllegibleDepositAlert ? (
                   <div className="mb-2.5">

@@ -693,17 +693,32 @@ export default function NewRechargeModal({
   const subOv = summarySubtotalOverride != null ? Number(summarySubtotalOverride) : NaN
   const balOv = summaryBalancePendingOverride != null ? Number(summaryBalancePendingOverride) : NaN
   const lateralSubtotalDisplay =
-    (isReadOnly || editMode) && Number.isFinite(subOv) ?
+    linesSubtotal > 0 ? linesSubtotal
+    : (isReadOnly || editMode) && Number.isFinite(subOv) ?
       Math.round((subOv + discountBillingNum) * 100) / 100
     : linesSubtotal
   const lateralTotalDisplay =
-    (isReadOnly || editMode) && Number.isFinite(subOv) ?
+    linesSubtotal > 0 ? netLinesTotal
+    : (isReadOnly || editMode) && Number.isFinite(subOv) ?
       Math.max(0, Math.round(subOv * 100) / 100)
     : netLinesTotal
-  const lateralBalancePendingDisplay =
-    (isReadOnly || editMode) && Number.isFinite(balOv) ?
-      Math.max(0, Math.round(balOv * 100) / 100)
-    : balanceRemainingInfo
+
+  const discountAutoDepositSkipRef = useRef(true)
+  useEffect(() => {
+    if (!open) {
+      discountAutoDepositSkipRef.current = true
+      return undefined
+    }
+    if (isReadOnly || typeof onDepositUsdChange !== 'function') return undefined
+    if (discountAutoDepositSkipRef.current) {
+      discountAutoDepositSkipRef.current = false
+      return undefined
+    }
+    const net = netLinesTotal
+    if (!Number.isFinite(net) || net < 0) return undefined
+    onDepositUsdChange(net > 0 ? net.toFixed(2) : '')
+    return undefined
+  }, [open, isReadOnly, discountBilling, netLinesTotal, onDepositUsdChange])
 
   const financialLinkedRaw = useMemo(() => {
     if (isReadOnly && linkedPaymentsForReadOnly != null) return linkedPaymentsForReadOnly
@@ -724,6 +739,32 @@ export default function NewRechargeModal({
     () => financialSummaryFromRechargeLinkedPayments(financialLinkedRaw),
     [financialLinkedRaw],
   )
+
+  const lateralBalancePendingDisplay = useMemo(() => {
+    if (isReadOnly && Number.isFinite(balOv)) {
+      return Math.max(0, Math.round(balOv * 100) / 100)
+    }
+    const approvedSum = (Array.isArray(financialApproved) ? financialApproved : []).reduce(
+      (acc, row) => acc + (parseLineNum(row?.amount_applied ?? row?.amount) || 0),
+      0,
+    )
+    const net = lateralTotalDisplay
+    if (editMode) {
+      return Math.max(0, Math.round((net - approvedSum - depositInBilling) * 100) / 100)
+    }
+    if (Number.isFinite(balOv)) {
+      return Math.max(0, Math.round(balOv * 100) / 100)
+    }
+    return balanceRemainingInfo
+  }, [
+    isReadOnly,
+    editMode,
+    balOv,
+    financialApproved,
+    lateralTotalDisplay,
+    depositInBilling,
+    balanceRemainingInfo,
+  ])
 
   const pendingReviewForOcr = useMemo(() => {
     const pending = Array.isArray(financialPending) ? financialPending : []
@@ -1366,57 +1407,44 @@ export default function NewRechargeModal({
                 </div>
 
                 <aside className="space-y-3 xl:sticky xl:top-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm self-start w-full max-w-full">
-                  {showFinancialSummary ?
-                    <FinancialSummarySidebar
-                      subtotal={lateralSubtotalDisplay}
-                      discount={discountBillingNum}
-                      total={lateralTotalDisplay}
-                      currency={billingCode}
-                      linkedPayments={financialApproved}
-                      pendingReviewPayments={financialPending}
-                      balanceDue={lateralBalancePendingDisplay}
-                      subtotalLabel={isReadOnly ? 'Monto original' : 'Subtotal'}
-                      subtotalSize="sm"
-                      apiOrigin={apiOrigin}
-                    />
-                  : (
-                    <>
-                      <FinancialSummarySidebar
-                        subtotal={lateralSubtotalDisplay}
-                        discount={discountBillingNum}
-                        total={lateralTotalDisplay}
-                        currency={billingCode}
-                        linkedPayments={[]}
-                        pendingReviewPayments={[]}
-                        balanceDue={lateralBalancePendingDisplay}
-                        autoAppliedCredit={creditAutoApplied}
-                        subtotalLabel="Subtotal"
-                        subtotalSize="sm"
-                        apiOrigin={apiOrigin}
+                  <FinancialSummarySidebar
+                    subtotal={lateralSubtotalDisplay}
+                    discount={discountBillingNum}
+                    total={lateralTotalDisplay}
+                    currency={billingCode}
+                    linkedPayments={showFinancialSummary ? financialApproved : []}
+                    pendingReviewPayments={showFinancialSummary ? financialPending : []}
+                    balanceDue={lateralBalancePendingDisplay}
+                    autoAppliedCredit={showFinancialSummary ? 0 : creditAutoApplied}
+                    subtotalLabel={isReadOnly ? 'Monto original' : 'Subtotal'}
+                    subtotalSize="sm"
+                    apiOrigin={apiOrigin}
+                  />
+                  {!isReadOnly ? (
+                    <div>
+                      <label
+                        className="block text-[11px] font-medium text-gray-600 mb-1"
+                        htmlFor="recharge-discount-ref"
+                      >
+                        Descuento ({billingCode})
+                      </label>
+                      <input
+                        id="recharge-discount-ref"
+                        type="text"
+                        inputMode="decimal"
+                        value={discountBilling}
+                        onChange={(e) => onDiscountBillingChange?.(e.target.value)}
+                        placeholder="0.00"
+                        disabled={generatingLink}
+                        className={icls}
                       />
-                      {!isReadOnly ? (
-                        <div>
-                          <label
-                            className="block text-[11px] font-medium text-gray-600 mb-1"
-                            htmlFor="recharge-discount-ref"
-                          >
-                            Descuento ({billingCode})
-                          </label>
-                          <input
-                            id="recharge-discount-ref"
-                            type="text"
-                            inputMode="decimal"
-                            value={discountBilling}
-                            onChange={(e) => onDiscountBillingChange?.(e.target.value)}
-                            placeholder="0.00"
-                            disabled={generatingLink}
-                            className={icls}
-                          />
-                          <p className="mt-1 text-[10px] text-gray-500 leading-snug">
-                            Comisiones de pasarela absorbidas. Total = Subtotal − Descuento.
-                          </p>
-                        </div>
-                      ) : null}
+                      <p className="mt-1 text-[10px] text-gray-500 leading-snug">
+                        Comisiones de pasarela absorbidas. Total = Subtotal − Descuento.
+                      </p>
+                    </div>
+                  ) : null}
+                  {!isReadOnly && !editMode ?
+                    <>
                       {clientCreditLoading ?
                         <p className="text-[10px] text-gray-400">Consultando saldo a favor…</p>
                       : null}
@@ -1430,7 +1458,7 @@ export default function NewRechargeModal({
                         </p>
                       : null}
                     </>
-                  )}
+                  : null}
 
                   {!isReadOnly ?
                     <>

@@ -6,6 +6,7 @@ import SaleLineProductSelect from './SaleLineProductSelect'
 import { SALES_CURRENCIES } from '../salesCurrencies'
 import { invoiceLineCredentialKind } from '../invoiceLineCredentials'
 import FinancialSummarySidebar from '../../../components/ui/FinancialSummarySidebar'
+import IllegibleReceiptAlert from '../../../components/ui/IllegibleReceiptAlert'
 import PaymentMethodsDepositCheckboxes from './PaymentMethodsDepositCheckboxes'
 import HotmartLinksEditor from './HotmartLinksEditor'
 import {
@@ -103,6 +104,10 @@ export default function NuevaVentaInvoiceSection(props) {
     pendingReviewPayments = [],
     onOpenPendingReviewPayment,
     saleIsViewOnly = false,
+    showDeclaredDepositField = false,
+    declaredDepositStr = '',
+    onDeclaredDepositChange,
+    showIllegibleDepositAlert = false,
   } = props
 
   const apiOrigin = salesApiOrigin()
@@ -468,6 +473,36 @@ export default function NuevaVentaInvoiceSection(props) {
             </div>
             <p className="mt-1 text-[11px] text-gray-500 leading-snug">
               Comisiones de pasarela (Hotmart, etc.) absorbidas por ti. Total = Subtotal − Descuento.
+            </p>
+          </div>
+        ) : null}
+        {showDeclaredDepositField ? (
+          <div>
+            {showIllegibleDepositAlert ? (
+              <div className="mb-2.5">
+                <IllegibleReceiptAlert className="w-full" layout="block" />
+              </div>
+            ) : null}
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              Depósito declarado ({saleCurrencyCode})
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs font-medium">
+                <CurrencyFlag code={saleCurrencyCode} />
+              </span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={declaredDepositStr}
+                onChange={(e) => onDeclaredDepositChange?.(e.target.value)}
+                disabled={submitting}
+                placeholder="0.00"
+                className={`${inputCls} pl-8`}
+              />
+            </div>
+            <p className="mt-1 text-xs text-gray-600 leading-snug">
+              Corrija aquí si la lectura automática del comprobante fue incorrecta. Al guardar, el monto se aplicará al
+              cobro en revisión.
             </p>
           </div>
         ) : null}
