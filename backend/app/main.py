@@ -51,24 +51,33 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # Necesario para JWT / Authorization en peticiones cross-origin desde el frontend.
 _DEFAULT_ORIGINS = [
     "https://sistema-erp-1.onrender.com",  # Frontend producción (Render Static Site)
-    "http://localhost:5173",               # Vite dev server
-    "http://localhost:3000",               # Entorno local alternativo
+    "http://localhost:5173",  # Vite dev server
+    "http://localhost:3000",  # Entorno local alternativo
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
 ]
 
 _extra = os.getenv("CORS_ORIGINS", "")
 _EXTRA_ORIGINS = [o.strip() for o in _extra.split(",") if o.strip()]
 _ALLOWED_ORIGINS = list(dict.fromkeys(_DEFAULT_ORIGINS + _EXTRA_ORIGINS))
 
+# Cubre despliegues Render adicionales (preview, staging, otros static sites).
+# Con allow_credentials=True no se puede usar allow_origins=["*"]; el regex complementa la lista.
+_ALLOW_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.onrender\.com").strip() or None
+
 print(f"INFO: CORS allow_origins = {_ALLOWED_ORIGINS}")
+if _ALLOW_ORIGIN_REGEX:
+    print(f"INFO: CORS allow_origin_regex = {_ALLOW_ORIGIN_REGEX!r}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
+    allow_origin_regex=_ALLOW_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
-    max_age=600,
+    max_age=3600,
 )
 
 # Archivos estáticos antes de la API (logos y comprobantes legados en /uploads/…)
