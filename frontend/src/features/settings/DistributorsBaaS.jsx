@@ -29,6 +29,7 @@ import {
 import { useAuth } from '../../context/AuthContext'
 import { notifyAccountsReceivableStale } from '../../utils/arReportEvents'
 import StatusFilterTabs from '../../components/ui/StatusFilterTabs'
+import TablePagination, { ITEMS_PER_PAGE } from '../../components/ui/TablePagination'
 import ResizableTh from '../../components/ui/ResizableTh'
 import {
   useTableResize,
@@ -319,6 +320,8 @@ export default function DistributorsBaaSPage() {
   const [users, setUsers] = useState([])
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [baasSearch, setBaasSearch] = useState('')
+  const [usersPage, setUsersPage] = useState(1)
+  const [rechargePage, setRechargePage] = useState(1)
 
   /** Estado maestro: todas las solicitudes; cada pestaña filtra en derivado. */
   const [rechargeRequests, setRechargeRequests] = useState([])
@@ -1670,6 +1673,30 @@ export default function DistributorsBaaSPage() {
     [rechargeRequests, rechargeActiveTab],
   )
 
+  useEffect(() => {
+    setUsersPage(1)
+  }, [baasSearch])
+
+  useEffect(() => {
+    setRechargePage(1)
+  }, [rechargeActiveTab])
+
+  const usersTotalPages = Math.max(1, Math.ceil(filteredUsers.length / ITEMS_PER_PAGE))
+  const safeUsersPage = Math.min(usersPage, usersTotalPages)
+
+  const paginatedFilteredUsers = useMemo(() => {
+    const start = (safeUsersPage - 1) * ITEMS_PER_PAGE
+    return filteredUsers.slice(start, start + ITEMS_PER_PAGE)
+  }, [filteredUsers, safeUsersPage])
+
+  const rechargeTotalPages = Math.max(1, Math.ceil(visibleRechargeRequests.length / ITEMS_PER_PAGE))
+  const safeRechargePage = Math.min(rechargePage, rechargeTotalPages)
+
+  const paginatedRechargeRequests = useMemo(() => {
+    const start = (safeRechargePage - 1) * ITEMS_PER_PAGE
+    return visibleRechargeRequests.slice(start, start + ITEMS_PER_PAGE)
+  }, [visibleRechargeRequests, safeRechargePage])
+
   const rechargeTabCounts = useMemo(() => {
     const counts = {
       pending: 0,
@@ -1874,6 +1901,7 @@ export default function DistributorsBaaSPage() {
               <p className="text-sm font-medium">Ningún cliente coincide con la búsqueda</p>
             </div>
           ) : (
+            <>
             <div className="w-full overflow-x-auto scrollbar-hide">
               <table className="w-full min-w-max text-sm">
                 <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
@@ -1886,7 +1914,7 @@ export default function DistributorsBaaSPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredUsers.map((u) => {
+                  {paginatedFilteredUsers.map((u) => {
                     const displayName = u.name?.trim?.() ? u.name.trim() : u.email
                     const treeHref =
                       canViewTree && u.id
@@ -1941,6 +1969,12 @@ export default function DistributorsBaaSPage() {
                 </tbody>
               </table>
             </div>
+            <TablePagination
+              currentPage={safeUsersPage}
+              totalItems={filteredUsers.length}
+              onPageChange={setUsersPage}
+            />
+            </>
           )}
         </div>
       )}
@@ -2009,6 +2043,7 @@ export default function DistributorsBaaSPage() {
               </p>
             </div>
           ) : (
+            <>
             <div className="w-full overflow-x-auto scrollbar-hide">
               <table className="w-full table-fixed min-w-[1100px] text-sm">
                 <thead>
@@ -2105,7 +2140,7 @@ export default function DistributorsBaaSPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {visibleRechargeRequests.map((r) => (
+                  {paginatedRechargeRequests.map((r) => (
                     <tr
                       key={r.id}
                       className={`hover:bg-gray-50/60 transition-colors ${
@@ -2311,6 +2346,12 @@ export default function DistributorsBaaSPage() {
                 </tbody>
               </table>
             </div>
+            <TablePagination
+              currentPage={safeRechargePage}
+              totalItems={visibleRechargeRequests.length}
+              onPageChange={setRechargePage}
+            />
+            </>
           )}
         </div>
       )}
