@@ -101,10 +101,6 @@ export default function FinancialSummarySidebar({
     total != null && Number.isFinite(Number(total)) ?
       Math.max(0, Number(total))
     : Math.max(0, Math.round((subDisplay - discDisplay) * 100) / 100)
-  const balance =
-    balanceDue != null && Number.isFinite(Number(balanceDue)) ?
-      Math.max(0, Number(balanceDue))
-    : Math.max(0, totalDisplay)
 
   const autoCredit = Number(autoAppliedCredit)
   const showAutoCredit = Number.isFinite(autoCredit) && autoCredit > 1e-9
@@ -120,6 +116,22 @@ export default function FinancialSummarySidebar({
   const depositParsed = parseFloat(String(depositValue ?? '').trim().replace(',', '.'))
   const depositDisplayNum =
     Number.isFinite(depositParsed) && depositParsed >= 0 ? depositParsed : 0
+
+  const approvedSum = approved.reduce(
+    (acc, lp) => acc + (Number.parseFloat(String(lp.amount_applied)) || 0),
+    0,
+  )
+  const depositForBalance = showDepositEditor ? depositDisplayNum : 0
+  const paidTowardTotal =
+    Math.round((approvedSum + depositForBalance + (showAutoCredit ? autoCredit : 0)) * 100) / 100
+  const computedBalance = Math.max(0, Math.round((totalDisplay - paidTowardTotal) * 100) / 100)
+  const creditGenerated = Math.max(0, Math.round((paidTowardTotal - totalDisplay) * 100) / 100)
+  const balance =
+    showDepositEditor ?
+      computedBalance
+    : balanceDue != null && Number.isFinite(Number(balanceDue)) ?
+      Math.max(0, Number(balanceDue))
+    : Math.max(0, totalDisplay)
 
   return (
     <div className={`w-full max-w-md ml-auto space-y-1.5 ${className}`.trim()}>
@@ -278,6 +290,14 @@ export default function FinancialSummarySidebar({
           label="Pago auto-aplicado"
           value={`−${fmtPlain(autoCredit)}`}
           valueClassName="text-gray-900"
+        />
+      : null}
+
+      {creditGenerated > 1e-9 ?
+        <SummaryRow
+          label="Saldo a favor generado"
+          value={fmtPlain(creditGenerated)}
+          valueClassName="font-semibold text-emerald-700"
         />
       : null}
 

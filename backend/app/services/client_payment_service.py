@@ -3406,16 +3406,14 @@ def _infer_ar_from_wallet_recharge_payment_notes(
     if wr_id is None:
         return Decimal("0")
     notes = str(payment.notes or "")
-    for pat in (_RE_META_WR_CXC_APPLIED, _RE_PARTE_EFECTIVO):
-        m = pat.search(notes)
-        if m is None:
-            continue
+    m = _RE_META_WR_CXC_APPLIED.search(notes)
+    if m is not None:
         try:
             applied = _q_amt(m.group(1))
             if applied > _FP_EPS:
                 return min(applied, amt)
         except Exception:
-            continue
+            pass
     req = db.get(WalletRechargeRequest, int(wr_id))
     if req is not None and int(req.client_id) == int(payment.client_id):
         open_bal = _effective_open_balance_for_wallet_recharge_apply(db, req, payment)
@@ -4279,19 +4277,19 @@ def credit_wallet_recharge_product_if_pending(
     currency: str,
 ) -> float:
     """
-    Entrega única del producto virtual (``amount_requested`` completo) al primer abono.
+    Entrega única del producto virtual (subtotal bruto BaaS) al primer abono.
 
     Usa movimientos de billetera vinculados a la solicitud como candado anti doble entrega.
     """
-    from app.wallet_recharge_helpers import wallet_recharge_virtual_product_already_delivered
+    from app.wallet_recharge_helpers import (
+        wallet_recharge_virtual_product_already_delivered,
+        wallet_recharge_virtual_product_gross,
+    )
 
     if wallet_recharge_virtual_product_already_delivered(db, req):
         return 0.0
 
-    try:
-        product_total = float(getattr(req, "amount_requested", 0) or 0)
-    except (TypeError, ValueError):
-        product_total = 0.0
+    product_total = wallet_recharge_virtual_product_gross(req)
     credited_so_far = _wallet_credited_for_recharge_request(db, req)
     wallet_to_add = max(0.0, round(product_total - credited_so_far, 2))
     if wallet_to_add <= _WR_EPS:
@@ -4443,6 +4441,12 @@ def finalize_wallet_recharge_payment_approval(
         credited_after = _wallet_credited_for_recharge_request(db, req)
         wallet_to_add = max(0.0, round(credited_after - credited_before, 2))
     surplus = float(compute_payment_credit_excess(cp, db=db)) if cp is not None else max(0.0, recv - applied)
+    if surplus > _WR_EPS:
+        try:
+            prev_surplus = float(getattr(req, "surplus_credited", 0) or 0)
+        except (TypeError, ValueError):
+            prev_surplus = 0.0
+        req.surplus_credited = round(prev_surplus + surplus, 2)
 
     desc = (
         f"Recarga abono (solicitud #{req.id}): percibido {recv:.2f}"
@@ -4455,7 +4459,7 @@ def finalize_wallet_recharge_payment_approval(
     tx = WalletTransaction(
         user_id=None,
         client_id=int(client.id),
-        amount=wallet_to_add if wallet_to_add > _WR_EPS else recv,
+        amount=0.0 if wallet_to_add > _WR_EPS else recv,
         transaction_type=wallet_tx_type,
         description=desc,
     )

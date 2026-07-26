@@ -115,6 +115,41 @@ def wallet_recharge_open_balance(req) -> float:
         return 0.0
 
 
+def wallet_recharge_virtual_product_gross(req) -> float:
+    """
+    Saldo BaaS a entregar al cliente (subtotal bruto de líneas, antes del descuento comercial).
+
+    ``amount_requested`` es el neto CxC (subtotal − descuento); la billetera recibe el bruto.
+    """
+    try:
+        net = float(getattr(req, "amount_requested", 0) or 0)
+    except (TypeError, ValueError):
+        net = 0.0
+    try:
+        disc = float(getattr(req, "discount", 0) or 0)
+    except (TypeError, ValueError):
+        disc = 0.0
+    gross = round(net + max(0.0, disc), 2)
+    if gross > _WR_BALANCE_EPS:
+        return gross
+    raw_lines = getattr(req, "recharge_detail_lines", None)
+    if isinstance(raw_lines, list) and raw_lines:
+        try:
+            line_sum = round(
+                sum(
+                    float(x.get("importe") or x.get("saldo_recargar") or 0)
+                    for x in raw_lines
+                    if isinstance(x, dict)
+                ),
+                2,
+            )
+            if line_sum > _WR_BALANCE_EPS:
+                return line_sum
+        except (TypeError, ValueError):
+            pass
+    return max(0.0, net)
+
+
 def wallet_recharge_accepts_client_receipt(req) -> bool:
     """Cliente puede adjuntar comprobante (inicial o abono adicional contra CxC)."""
     st = str(getattr(req, "status", "") or "")
@@ -168,7 +203,7 @@ def wallet_recharge_virtual_product_already_delivered(db: Session, req) -> bool:
     ni en flags de revisión portal, que bloqueaban la entrega al primer abono).
     """
     try:
-        product = float(getattr(req, "amount_requested", 0) or 0)
+        product = wallet_recharge_virtual_product_gross(req)
     except (TypeError, ValueError):
         product = 0.0
     if product <= _WR_BALANCE_EPS:
