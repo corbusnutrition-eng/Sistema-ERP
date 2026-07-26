@@ -27,6 +27,7 @@ import {
   PERMS,
 } from '../../lib/permissions'
 import { useAuth } from '../../context/AuthContext'
+import { useModal } from '../../context/ModalContext'
 import { notifyAccountsReceivableStale } from '../../utils/arReportEvents'
 import StatusFilterTabs from '../../components/ui/StatusFilterTabs'
 import TablePagination, { ITEMS_PER_PAGE } from '../../components/ui/TablePagination'
@@ -60,6 +61,7 @@ import {
   formatSaleDocNo,
   SaleListNotesCell,
   SaleReceiptProofLink,
+  saleReceiptHref,
   RechargeAmountCell,
   CopyPaymentLinkButton,
   copyOrSharePaymentUrl,
@@ -67,11 +69,13 @@ import {
 } from '../sales/saleTableHelpers'
 import OcrSecurityBadges, {
   pickOcrFlagsFromRecharge,
+  pickOcrSecurityFlags,
   isIllegibleDeclaredRecord,
   IllegibleReceiptAlert,
   declaredDepositInputValueFromReview,
   pickPendingReviewLinkedPayment,
 } from '../../components/OcrSecurityBadges'
+import { isPortalSaldoCrossSinComprobante } from '../sales/portalCreditMeta'
 
 const NotificationManagementPanel = lazy(() => import('./NotificationManagementPanel'))
 
@@ -306,8 +310,10 @@ function buildWalletRechargeApiPayload(linkLineItems) {
 export default function DistributorsBaaSPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const wrDeepLinkHandledRef = useRef(null)
+  const paymentDeepLinkHandledRef = useRef(null)
   const { hasPermission } = usePermissions()
   const { isAdmin } = useAuth()
+  const { openReceivePayment } = useModal()
 
   const allowedTabs = useMemo(() => {
     const tabs = []
@@ -393,6 +399,24 @@ export default function DistributorsBaaSPage() {
     rejected: 0,
     canceled: 0,
   })
+
+  const [pendingPayments, setPendingPayments] = useState([])
+
+  const pendingAbonosStandalone = useMemo(
+    () => pendingPayments.filter((p) => !p.encapsulated_in_sale_review),
+    [pendingPayments],
+  )
+
+  const refreshPendingPayments = useCallback(async () => {
+    try {
+      const { data } = await api.get('/api/v1/payments/', {
+        params: { status_filter: 'pending_review', review_queue: 'standalone' },
+      })
+      setPendingPayments(Array.isArray(data) ? data : [])
+    } catch {
+      setPendingPayments([])
+    }
+  }, [])
 
   function showToast(msg) {
     setToast(msg)
@@ -588,12 +612,78 @@ export default function DistributorsBaaSPage() {
     }
   }, [searchParams, setSearchParams, hasPermission])
 
+  /** Deep link: ?payment_id=99 → modal Recibir pago (abono CxC standalone). */
+  useEffect(() => {
+    const paymentRaw = searchParams.get('payment_id')
+    if (!paymentRaw) {
+      paymentDeepLinkHandledRef.current = null
+      return undefined
+    }
+    if (!hasPermission(BAAS_TAB_PERMISSIONS.requests)) {
+      setSearchParams({}, { replace: true })
+      return undefined
+    }
+    const pid = parseInt(String(paymentRaw).replace(/\D/g, ''), 10)
+    if (!Number.isFinite(pid) || pid < 1) return undefined
+    const linkKey = `payment:${pid}`
+    if (paymentDeepLinkHandledRef.current === linkKey) return undefined
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data: payment } = await api.get(`/api/v1/payments/${pid}`)
+        if (cancelled || !payment?.id) return
+        paymentDeepLinkHandledRef.current = linkKey
+        setTab('requests')
+        setRechargeActiveTab('in_review')
+        openReceivePayment(
+          () => {
+            fetchRechargeRequests({ silentToast: true })
+            fetchRechargeMetrics()
+            void refreshPendingPayments()
+          },
+          {
+            paymentId: payment.id,
+            paymentNumber: payment.payment_number,
+            clientId: payment.client_id,
+            amount: payment.amount,
+            currency: payment.currency,
+            receiptUrl: payment.receipt_file_url,
+            paymentMethodId: payment.payment_method_id,
+            depositAccountId: payment.deposit_account_id,
+            referenceNumber: payment.reference_number,
+            notes: payment.notes,
+          },
+        )
+        setSearchParams({}, { replace: true })
+      } catch {
+        if (!cancelled) {
+          showToast(`No se encontró el pago #${pid}.`)
+          setSearchParams({}, { replace: true })
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    searchParams,
+    setSearchParams,
+    hasPermission,
+    openReceivePayment,
+    fetchRechargeRequests,
+    fetchRechargeMetrics,
+    refreshPendingPayments,
+  ])
+
   useEffect(() => {
     if (tab === 'requests') {
       fetchRechargeRequests()
       fetchRechargeMetrics()
+      void refreshPendingPayments()
     }
-  }, [tab, fetchRechargeRequests, fetchRechargeMetrics])
+  }, [tab, fetchRechargeRequests, fetchRechargeMetrics, refreshPendingPayments])
 
   /** Escucha sincronización global (robot en MainLayout): refresca lista si hay recargas nuevas desde Render. */
   useEffect(() => {
@@ -1386,6 +1476,46 @@ export default function DistributorsBaaSPage() {
     }
   }
 
+  const handleReviewPayment = useCallback(
+    (payment) => {
+      openReceivePayment(
+        () => {
+          fetchRechargeRequests({ silentToast: true })
+          fetchRechargeMetrics()
+          void refreshPendingPayments()
+        },
+        {
+          paymentId: payment.id,
+          paymentNumber: payment.payment_number,
+          clientId: payment.client_id,
+          amount: payment.amount,
+          currency: payment.currency,
+          receiptUrl: payment.receipt_file_url,
+          paymentMethodId: payment.payment_method_id,
+          depositAccountId: payment.deposit_account_id,
+          referenceNumber: payment.reference_number,
+          notes: payment.notes,
+        },
+      )
+    },
+    [openReceivePayment, fetchRechargeRequests, fetchRechargeMetrics, refreshPendingPayments],
+  )
+
+  const handleRejectPayment = useCallback(
+    async (id) => {
+      if (!window.confirm('¿Rechazar este pago?')) return
+      try {
+        await api.patch(`/api/v1/payments/${id}/reject`)
+        await refreshPendingPayments()
+        showToast('Pago rechazado.')
+      } catch (err) {
+        const d = err?.response?.data?.detail
+        showToast(typeof d === 'string' ? d : 'No se pudo rechazar el pago.')
+      }
+    },
+    [refreshPendingPayments],
+  )
+
   async function handleRestoreRecharge(row) {
     if (!row?.id) return
     if (
@@ -1728,6 +1858,10 @@ export default function DistributorsBaaSPage() {
     return visibleRechargeRequests.slice(start, start + ITEMS_PER_PAGE)
   }, [visibleRechargeRequests, safeRechargePage])
 
+  const inReviewAbonoCount =
+    rechargeActiveTab === 'in_review' ? pendingAbonosStandalone.length : 0
+  const visibleTableRowCount = visibleRechargeRequests.length + inReviewAbonoCount
+
   const rechargeTabCounts = useMemo(() => {
     const counts = {
       pending: 0,
@@ -1747,14 +1881,15 @@ export default function DistributorsBaaSPage() {
     if (rechargeRequests.length === 0) {
       return {
         pending: Number(reqMetrics.pending ?? 0) || 0,
-        in_review: Number(reqMetrics.in_review ?? 0) || 0,
+        in_review: (Number(reqMetrics.in_review ?? 0) || 0) + pendingAbonosStandalone.length,
         approved: Number(reqMetrics.approved ?? 0) || 0,
         rejected: Number(reqMetrics.rejected ?? 0) || 0,
         canceled: Number(reqMetrics.canceled ?? 0) || 0,
       }
     }
+    counts.in_review += pendingAbonosStandalone.length
     return counts
-  }, [rechargeRequests, reqMetrics])
+  }, [rechargeRequests, reqMetrics, pendingAbonosStandalone.length])
 
   const clientSnapshotForEdit = useMemo(() => {
     if (!editRechargeRow) return null
@@ -2033,7 +2168,7 @@ export default function DistributorsBaaSPage() {
               <h2 className="text-base font-semibold text-gray-800">Solicitudes de recarga</h2>
             </div>
             <span className="text-xs text-gray-400">
-              {loadingRequests ? '…' : `${visibleRechargeRequests.length} solicitudes`}
+              {loadingRequests ? '…' : `${visibleTableRowCount} solicitudes`}
             </span>
           </div>
 
@@ -2063,7 +2198,7 @@ export default function DistributorsBaaSPage() {
                 <div key={i} className="h-14 bg-gray-100 rounded-xl animate-pulse" />
               ))}
             </div>
-          ) : visibleRechargeRequests.length === 0 ? (
+          ) : visibleRechargeRequests.length === 0 && inReviewAbonoCount === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400">
               <ClipboardList size={40} className="mb-3 opacity-25" />
               <p className="text-sm font-medium">
@@ -2345,12 +2480,110 @@ export default function DistributorsBaaSPage() {
                       </td>
                     </tr>
                   ))}
+
+                  {rechargeActiveTab === 'in_review' &&
+                    pendingAbonosStandalone.map((p) => {
+                      let dtStr = '—'
+                      try {
+                        dtStr = formatSaleTableDate(p.created_at)
+                      } catch {
+                        /* noop */
+                      }
+                      const amt = parseFloat(p.amount ?? 0)
+                      const portalSaldoOnly = isPortalSaldoCrossSinComprobante({
+                        receiptFileUrlOrPath: p.receipt_file_url,
+                        notes: p.notes,
+                      })
+                      return (
+                        <tr
+                          key={`payment-${p.id}`}
+                          className="bg-indigo-50/35 hover:bg-indigo-50/55 transition-colors"
+                        >
+                          <td className={`${TABLE_CELL_NOWRAP} text-gray-600 text-sm`}>{dtStr}</td>
+                          <td className={TABLE_CELL_TRUNC}>
+                            <span className="font-medium text-gray-800 truncate block">
+                              {p.client_name || '—'}
+                            </span>
+                          </td>
+                          <td className={`${TABLE_CELL} text-gray-400 text-sm`}>—</td>
+                          <td className={`${TABLE_CELL_NOWRAP} font-mono text-sm font-semibold text-indigo-800`}>
+                            {p.payment_number || `PAG-${p.id}`}
+                          </td>
+                          <td className={`${TABLE_CELL_TRUNC} text-xs text-gray-600`} title={p.notes}>
+                            {p.notes || 'Abono portal'}
+                          </td>
+                          <td className={`${TABLE_CELL_NOWRAP} text-sm truncate`} title={p.payment_method || undefined}>
+                            {p.payment_method || '—'}
+                          </td>
+                          <td className={`${TABLE_CELL_NOWRAP} font-mono text-sm`}>{p.currency || 'USD'}</td>
+                          <td className={TABLE_CELL}>
+                            <span className="text-[10px] font-bold uppercase text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
+                              Pago
+                            </span>
+                          </td>
+                          <td className={`${TABLE_CELL_NOWRAP} text-right font-bold tabular-nums text-sm`}>
+                            {Number.isFinite(amt) ? amt.toFixed(2) : '—'}
+                          </td>
+                          <td className={`${TABLE_CELL} min-w-0 max-w-0 overflow-hidden`}>
+                            <div className="flex flex-col items-center gap-0.5 min-w-0">
+                              <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-1 rounded-full ring-1 ring-sky-100 whitespace-nowrap">
+                                En revisión
+                              </span>
+                              <OcrSecurityBadges
+                                {...pickOcrSecurityFlags(p)}
+                                amount={p?.amount_applied_to_sale ?? p?.amount}
+                                portal_declared_payment_amount={p?.amount_applied_to_sale ?? p?.amount}
+                                layout="table"
+                                illegibleLayout="compact"
+                              />
+                            </div>
+                          </td>
+                          <td className={`${TABLE_CELL_NOWRAP} text-center`}>
+                            {p.receipt_file_url ? (
+                              <a
+                                href={saleReceiptHref({ receipt_url: p.receipt_file_url })}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:underline font-semibold"
+                              >
+                                Ver
+                              </a>
+                            ) : portalSaldoOnly ? (
+                              <span
+                                className="mx-auto inline-block max-w-[9.5rem] rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-center text-[10px] font-semibold leading-snug text-emerald-900"
+                                title="Cruce solo con saldo a favor desde el portal — sin archivo"
+                              >
+                                🔄 SALDO — sin comprobante
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-400">—</span>
+                            )}
+                          </td>
+                          <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
+                            <button
+                              type="button"
+                              onClick={() => handleReviewPayment(p)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm mr-2"
+                            >
+                              Revisar Abono
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectPayment(p.id)}
+                              className="inline-flex px-3 py-1.5 text-xs font-bold rounded-lg bg-red-100 text-red-700 hover:bg-red-200"
+                            >
+                              Rechazar
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
                 </tbody>
               </table>
             </div>
             <TablePagination
               currentPage={safeRechargePage}
-              totalItems={visibleRechargeRequests.length}
+              totalItems={visibleTableRowCount}
               onPageChange={setRechargePage}
             />
             </>

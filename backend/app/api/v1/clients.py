@@ -37,7 +37,7 @@ from app.schemas.client_payments import ClientLedgerResponse, LedgerEntry, Ledge
 from app.services.client_payment_service import (
     build_client_ledger,
     compute_client_pending_balance,
-    list_unpaid_invoices,
+    list_client_ar_open_obligations,
 )
 from app.services.catalog_vip_sync import notify_catalog_vip_new_manual_customer
 
@@ -632,13 +632,16 @@ def get_client_unpaid_invoices(
     db: DbDep,
     current_user: ClientsViewDep,
 ) -> list[UnpaidInvoiceOut]:
-    """Facturas con saldo pendiente (aprobada / parcial) para conciliación QB."""
+    """Ventas y recargas BaaS con saldo CxC > 0 (FIFO) para conciliación QB."""
     assert_client_in_caller_scope(db, current_user, client_id)
     client = db.query(Client).filter(Client.id == client_id).first()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
-    raw = list_unpaid_invoices(db, client_id)
-    return [UnpaidInvoiceOut(**row) for row in raw]
+    raw = list_client_ar_open_obligations(db, client_id)
+    return [
+        UnpaidInvoiceOut(**{k: v for k, v in row.items() if not str(k).startswith("_")})
+        for row in raw
+    ]
 
 
 @router.get("/{client_id}/ledger", response_model=ClientLedgerResponse)

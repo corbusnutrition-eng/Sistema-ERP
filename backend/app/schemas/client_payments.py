@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class VoidTransactionBody(BaseModel):
@@ -24,7 +24,9 @@ class VoidTransactionResponse(BaseModel):
 
 
 class PaymentAllocationOut(BaseModel):
-    sale_id: int
+    obligation_kind: str = "sale"
+    sale_id: Optional[int] = None
+    wallet_recharge_id: Optional[int] = None
     sale_ref: str
     amount_applied: Decimal
     currency: Optional[str] = None
@@ -79,7 +81,9 @@ class PortalAbonoResponse(BaseModel):
 
 
 class UnpaidInvoiceOut(BaseModel):
-    sale_id: int
+    obligation_kind: str = Field(description="sale | wallet_recharge")
+    sale_id: Optional[int] = None
+    wallet_recharge_id: Optional[int] = None
     reference: str
     date: Optional[datetime] = None
     total_amount: float
@@ -88,8 +92,17 @@ class UnpaidInvoiceOut(BaseModel):
 
 
 class PaymentAllocationIn(BaseModel):
-    sale_id: int
+    sale_id: Optional[int] = None
+    wallet_recharge_id: Optional[int] = None
     applied_amount: float = Field(gt=0, description="Monto a aplicar a esta factura.")
+
+    @model_validator(mode="after")
+    def _exactly_one_obligation(self) -> "PaymentAllocationIn":
+        sid = self.sale_id
+        wid = self.wallet_recharge_id
+        if (sid is None) == (wid is None):
+            raise ValueError("Indica sale_id o wallet_recharge_id (uno solo).")
+        return self
 
 
 class PaymentCreateBody(BaseModel):

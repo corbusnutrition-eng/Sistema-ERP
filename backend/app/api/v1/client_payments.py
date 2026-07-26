@@ -48,6 +48,7 @@ from app.services.client_payment_service import (
     payment_encapsulated_in_open_sale_review,
     sale_ref_number,
     void_client_payment,
+    wallet_recharge_ref_number,
 )
 from app.security.money_validation import validate_form_money
 from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
@@ -75,8 +76,33 @@ def _payment_to_out(
 ) -> ClientPaymentOut:
     allocs = []
     for a in p.allocations or []:
+        if a.wallet_recharge_id is not None:
+            wr = getattr(a, "wallet_recharge", None)
+            wr_dt = getattr(wr, "created_at", None) if wr is not None else None
+            inv_total: float | None = None
+            if wr is not None:
+                try:
+                    inv_total = float(getattr(wr, "amount_requested", 0) or 0)
+                except (TypeError, ValueError):
+                    inv_total = None
+            wr_id = int(a.wallet_recharge_id)
+            allocs.append(
+                PaymentAllocationOut(
+                    obligation_kind="wallet_recharge",
+                    wallet_recharge_id=wr_id,
+                    sale_ref=wallet_recharge_ref_number(wr_id),
+                    amount_applied=a.amount_applied,
+                    currency=p.currency,
+                    sale_date=wr_dt,
+                    invoice_total=inv_total,
+                    open_balance=float(a.amount_applied),
+                )
+            )
+            continue
+        if a.sale_id is None:
+            continue
         sale = getattr(a, "sale", None)
-        inv_total: float | None = None
+        inv_total = None
         sale_dt = None
         if sale is not None:
             sale_dt = getattr(sale, "created_at", None)
@@ -85,10 +111,12 @@ def _payment_to_out(
                 inv_total = float(la) if la is not None else None
             except (TypeError, ValueError):
                 inv_total = None
+        sid = int(a.sale_id)
         allocs.append(
             PaymentAllocationOut(
-                sale_id=a.sale_id,
-                sale_ref=sale_ref_number(a.sale_id),
+                obligation_kind="sale",
+                sale_id=sid,
+                sale_ref=sale_ref_number(sid),
                 amount_applied=a.amount_applied,
                 currency=p.currency,
                 sale_date=sale_dt,
@@ -410,6 +438,7 @@ def get_payment(payment_id: int, db: DbDep, _: ReceivablesViewDep) -> ClientPaym
         .options(
             joinedload(ClientPayment.client),
             joinedload(ClientPayment.allocations).joinedload(PaymentAllocation.sale),
+            joinedload(ClientPayment.allocations).joinedload(PaymentAllocation.wallet_recharge),
         )
         .filter(ClientPayment.id == payment_id)
         .first()

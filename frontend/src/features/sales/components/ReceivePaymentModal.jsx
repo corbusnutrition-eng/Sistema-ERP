@@ -70,23 +70,38 @@ function clientLabel(c) {
   return mail || `Cliente #${c.id}`
 }
 
+/** Clave estable por obligación CxC (venta o recarga BaaS). */
+function obligationKey(inv) {
+  if (inv?.wallet_recharge_id != null) return `wr:${inv.wallet_recharge_id}`
+  if (inv?.sale_id != null) return `sale:${inv.sale_id}`
+  return `ref:${inv?.reference ?? 'unknown'}`
+}
+
+function obligationLabel(inv) {
+  const kind =
+    inv?.obligation_kind
+    || (inv?.wallet_recharge_id != null ? 'wallet_recharge' : 'sale')
+  if (kind === 'wallet_recharge') return `Recarga #${inv.reference}`
+  return `Factura #${inv.reference}`
+}
+
 /** Distribuye el importe recibido a facturas más antiguas (FIFO). */
 function fifoDistribute(amount, invoices) {
   const next = {}
   let remaining = Math.max(0, Number(amount) || 0)
   for (const inv of invoices) {
-    const sid = String(inv.sale_id)
+    const key = obligationKey(inv)
     if (remaining <= 1e-9) {
-      next[sid] = ''
+      next[key] = ''
       continue
     }
     const open = Number(inv.open_balance) || 0
     const apply = Math.min(remaining, open)
     if (apply > 1e-9) {
-      next[sid] = String(Math.round(apply * 100) / 100)
+      next[key] = String(Math.round(apply * 100) / 100)
       remaining -= apply
     } else {
-      next[sid] = ''
+      next[key] = ''
     }
   }
   return next
@@ -244,7 +259,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   const [receiptDragOver, setReceiptDragOver] = useState(false)
   const receiptInputRef = useRef(null)
 
-  /** { [sale_id]: "12.50" } */
+  /** { [obligationKey]: "12.50" } */
   const [paidBySale, setPaidBySale] = useState({})
   const skipFifoRef = useRef(false)
   const prefillAppliedRef = useRef(false)
@@ -321,7 +336,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
 
   const totalApplied = useMemo(() => {
     return unpaidInvoices.reduce((sum, inv) => {
-      const v = Number.parseFloat(String(paidBySale[String(inv.sale_id)] ?? '').replace(',', '.'))
+      const v = Number.parseFloat(String(paidBySale[obligationKey(inv)] ?? '').replace(',', '.'))
       return sum + (Number.isFinite(v) && v > 0 ? v : 0)
     }, 0)
   }, [unpaidInvoices, paidBySale])
@@ -427,7 +442,9 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
         const status = String(data.status || '').toLowerCase()
         const isHistorical = status && status !== 'pending_review'
         const rows = (data.allocations || []).map((a) => ({
+          obligation_kind: a.obligation_kind || (a.wallet_recharge_id != null ? 'wallet_recharge' : 'sale'),
           sale_id: a.sale_id,
+          wallet_recharge_id: a.wallet_recharge_id,
           reference: a.sale_ref,
           date: a.sale_date,
           total_amount: a.invoice_total ?? a.amount_applied,
@@ -440,7 +457,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
         const paid = {}
         for (const a of data.allocations || []) {
           const applied = Number(a.amount_applied)
-          paid[String(a.sale_id)] = Number.isFinite(applied) ? String(applied) : ''
+          paid[obligationKey(a)] = Number.isFinite(applied) ? String(applied) : ''
         }
         setPaidBySale(paid)
         paymentLoadedRef.current = true
@@ -507,9 +524,14 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   function buildAllocationsPayload() {
     const rows = []
     for (const inv of unpaidInvoices) {
-      const v = Number.parseFloat(String(paidBySale[String(inv.sale_id)] ?? '').replace(',', '.'))
+      const v = Number.parseFloat(String(paidBySale[obligationKey(inv)] ?? '').replace(',', '.'))
       if (Number.isFinite(v) && v > 1e-9) {
-        rows.push({ sale_id: inv.sale_id, applied_amount: Math.round(v * 100) / 100 })
+        const applied = Math.round(v * 100) / 100
+        if (inv.wallet_recharge_id != null) {
+          rows.push({ wallet_recharge_id: inv.wallet_recharge_id, applied_amount: applied })
+        } else if (inv.sale_id != null) {
+          rows.push({ sale_id: inv.sale_id, applied_amount: applied })
+        }
       }
     }
     return rows
@@ -877,14 +899,14 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                   </thead>
                   <tbody className="divide-y divide-gray-200 bg-white">
                     {unpaidInvoices.map((inv) => {
-                      const sid = String(inv.sale_id)
-                      const paidVal = paidBySale[sid] ?? ''
+                      const rowKey = obligationKey(inv)
+                      const paidVal = paidBySale[rowKey] ?? ''
                       const paidNum = Number.parseFloat(String(paidVal).replace(',', '.'))
                       const hasPay = Number.isFinite(paidNum) && paidNum > 1e-9
                       return (
-                        <tr key={sid} className={hasPay ? 'bg-green-50/40' : undefined}>
+                        <tr key={rowKey} className={hasPay ? 'bg-green-50/40' : undefined}>
                           <td className="px-3 py-2 font-medium text-gray-900">
-                            Factura #{inv.reference}
+                            {obligationLabel(inv)}
                           </td>
                           <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{formatDateEcuador(inv.date)}</td>
                           <td className="px-3 py-2 text-right tabular-nums text-gray-800">
@@ -904,7 +926,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                               value={paidVal}
                               onChange={(e) => {
                                 skipFifoRef.current = true
-                                setPaidBySale((p) => ({ ...p, [sid]: e.target.value }))
+                                setPaidBySale((p) => ({ ...p, [rowKey]: e.target.value }))
                               }}
                               readOnly={allocationsReadOnly}
                               disabled={allocationsReadOnly}
