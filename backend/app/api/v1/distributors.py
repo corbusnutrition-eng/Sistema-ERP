@@ -933,6 +933,15 @@ def _pm_rows_from_existing_request(db: Session, req: WalletRechargeRequest) -> l
     return _validate_payment_method_ids(db, ids)
 
 
+def _wallet_recharge_staff_review_action(db: Session, req: WalletRechargeRequest) -> str:
+    """``activate`` = entrega virtual; ``approve_payment`` = abono CxC posterior."""
+    from app.wallet_recharge_helpers import wallet_recharge_virtual_product_already_delivered
+
+    if wallet_recharge_virtual_product_already_delivered(db, req):
+        return "approve_payment"
+    return "activate"
+
+
 def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletRechargeRequestAdminRow:
     c = r.client
     pm_disp = payment_methods_display(db, r.allowed_payment_methods if isinstance(r.allowed_payment_methods, list) else None)
@@ -1002,6 +1011,7 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
         portal_submitted_payment_method_name=wr_dest.get("payment_method_name"),
         is_manually_edited=bool(getattr(r, "is_manually_edited", False)),
         ai_confidence_score=getattr(r, "ai_confidence_score", None),
+        staff_review_action=_wallet_recharge_staff_review_action(db, r),
         linked_payments=_linked_wallet_payments_admin(db, r),
         hotmart_links=hotmart_links_from_model(getattr(r, "hotmart_links", None)),
         assigned_package_prices=(

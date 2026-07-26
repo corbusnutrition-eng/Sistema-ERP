@@ -76,6 +76,11 @@ import OcrSecurityBadges, {
   pickPendingReviewLinkedPayment,
 } from '../../components/OcrSecurityBadges'
 import { isPortalSaldoCrossSinComprobante } from '../sales/portalCreditMeta'
+import {
+  buildReceivePaymentPrefill,
+  isSubsequentCxcAbonoForRecharge,
+  openReceivePaymentForRechargeAbono,
+} from '../sales/receivePaymentRouting'
 
 const NotificationManagementPanel = lazy(() => import('./NotificationManagementPanel'))
 
@@ -493,6 +498,34 @@ export default function DistributorsBaaSPage() {
     }
   }, [])
 
+  const receivePaymentAfterSave = useCallback(() => {
+    fetchRechargeRequests({ silentToast: true })
+    fetchRechargeMetrics()
+    void refreshPendingPayments()
+  }, [fetchRechargeRequests, fetchRechargeMetrics, refreshPendingPayments])
+
+  const handleReviewPayment = useCallback(
+    (payment) => {
+      openReceivePayment(receivePaymentAfterSave, buildReceivePaymentPrefill(payment))
+    },
+    [openReceivePayment, receivePaymentAfterSave],
+  )
+
+  const handleRejectPayment = useCallback(
+    async (id) => {
+      if (!window.confirm('¿Rechazar este pago?')) return
+      try {
+        await api.patch(`/api/v1/payments/${id}/reject`)
+        await refreshPendingPayments()
+        showToast('Pago rechazado.')
+      } catch (err) {
+        const d = err?.response?.data?.detail
+        showToast(typeof d === 'string' ? d : 'No se pudo rechazar el pago.')
+      }
+    },
+    [refreshPendingPayments],
+  )
+
   /** Evita solapar peticiones concurrentes desde el robot o el botón manual */
   const syncWebInFlightRef = useRef(false)
   const [syncingWeb, setSyncingWeb] = useState(false)
@@ -578,9 +611,17 @@ export default function DistributorsBaaSPage() {
           } catch {
             hydrated = row
           }
-          setApproveRow(hydrated)
-          setApproveReceived(defaultReceivedAmountForApprove(hydrated))
-          setApproveModalOpen(true)
+          if (isSubsequentCxcAbonoForRecharge(hydrated)) {
+            await openReceivePaymentForRechargeAbono(
+              hydrated,
+              openReceivePayment,
+              receivePaymentAfterSave,
+            )
+          } else {
+            setApproveRow(hydrated)
+            setApproveReceived(defaultReceivedAmountForApprove(hydrated))
+            setApproveModalOpen(true)
+          }
         } else if (
           ['pending', 'partially_paid', 'approved'].includes(status)
           && (status !== 'approved' || rechargeHasOpenCxcBalance(row))
@@ -637,23 +678,8 @@ export default function DistributorsBaaSPage() {
         setTab('requests')
         setRechargeActiveTab('in_review')
         openReceivePayment(
-          () => {
-            fetchRechargeRequests({ silentToast: true })
-            fetchRechargeMetrics()
-            void refreshPendingPayments()
-          },
-          {
-            paymentId: payment.id,
-            paymentNumber: payment.payment_number,
-            clientId: payment.client_id,
-            amount: payment.amount,
-            currency: payment.currency,
-            receiptUrl: payment.receipt_file_url,
-            paymentMethodId: payment.payment_method_id,
-            depositAccountId: payment.deposit_account_id,
-            referenceNumber: payment.reference_number,
-            notes: payment.notes,
-          },
+          receivePaymentAfterSave,
+          buildReceivePaymentPrefill(payment),
         )
         setSearchParams({}, { replace: true })
       } catch {
@@ -672,9 +698,7 @@ export default function DistributorsBaaSPage() {
     setSearchParams,
     hasPermission,
     openReceivePayment,
-    fetchRechargeRequests,
-    fetchRechargeMetrics,
-    refreshPendingPayments,
+    receivePaymentAfterSave,
   ])
 
   useEffect(() => {
@@ -1381,6 +1405,10 @@ export default function DistributorsBaaSPage() {
 
   async function openApproveModal(row) {
     if (!row || row.status !== 'in_review') return
+    if (isSubsequentCxcAbonoForRecharge(row)) {
+      await openReceivePaymentForRechargeAbono(row, openReceivePayment, receivePaymentAfterSave)
+      return
+    }
     let hydrated = row
     try {
       const { data } = await api.get(`/api/v1/distributors/recharge-requests/${row.id}`)
@@ -1475,46 +1503,6 @@ export default function DistributorsBaaSPage() {
       setProcessingReqId(null)
     }
   }
-
-  const handleReviewPayment = useCallback(
-    (payment) => {
-      openReceivePayment(
-        () => {
-          fetchRechargeRequests({ silentToast: true })
-          fetchRechargeMetrics()
-          void refreshPendingPayments()
-        },
-        {
-          paymentId: payment.id,
-          paymentNumber: payment.payment_number,
-          clientId: payment.client_id,
-          amount: payment.amount,
-          currency: payment.currency,
-          receiptUrl: payment.receipt_file_url,
-          paymentMethodId: payment.payment_method_id,
-          depositAccountId: payment.deposit_account_id,
-          referenceNumber: payment.reference_number,
-          notes: payment.notes,
-        },
-      )
-    },
-    [openReceivePayment, fetchRechargeRequests, fetchRechargeMetrics, refreshPendingPayments],
-  )
-
-  const handleRejectPayment = useCallback(
-    async (id) => {
-      if (!window.confirm('¿Rechazar este pago?')) return
-      try {
-        await api.patch(`/api/v1/payments/${id}/reject`)
-        await refreshPendingPayments()
-        showToast('Pago rechazado.')
-      } catch (err) {
-        const d = err?.response?.data?.detail
-        showToast(typeof d === 'string' ? d : 'No se pudo rechazar el pago.')
-      }
-    },
-    [refreshPendingPayments],
-  )
 
   async function handleRestoreRecharge(row) {
     if (!row?.id) return
@@ -1622,6 +1610,10 @@ export default function DistributorsBaaSPage() {
       || !['pending', 'in_review', 'partially_paid', 'approved'].includes(row.status)
       || (row.status === 'approved' && !rechargeHasOpenCxcBalance(row))
     ) {
+      return
+    }
+    if (row.status === 'in_review' && isSubsequentCxcAbonoForRecharge(row)) {
+      await openReceivePaymentForRechargeAbono(row, openReceivePayment, receivePaymentAfterSave)
       return
     }
     const email = String(row.client_email ?? '').trim()

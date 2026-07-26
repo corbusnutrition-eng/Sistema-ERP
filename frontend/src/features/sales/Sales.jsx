@@ -24,6 +24,11 @@ import {
   staffReviewSuccessToast,
 } from './saleStaffReview'
 import {
+  buildReceivePaymentPrefill,
+  isSubsequentCxcAbonoForSale,
+  openReceivePaymentForSaleAbono,
+} from './receivePaymentRouting'
+import {
   SaleAmountCell,
   SaleListNotesCell,
   SaleReceiptProofLink,
@@ -540,29 +545,36 @@ export default function Sales() {
     void refreshMetrics()
   }, [refreshMetrics])
 
+  const receivePaymentAfterSave = useCallback(() => {
+    fetchSales()
+    refreshPendingPayments()
+    refreshMetrics()
+  }, [fetchSales, refreshPendingPayments, refreshMetrics])
+
   const handleReviewPayment = useCallback(
     (payment) => {
-      openReceivePayment(
-        () => {
-          fetchSales()
-          refreshPendingPayments()
-          refreshMetrics()
-        },
-        {
-          paymentId: payment.id,
-          paymentNumber: payment.payment_number,
-          clientId: payment.client_id,
-          amount: payment.amount,
-          currency: payment.currency,
-          receiptUrl: payment.receipt_file_url,
-          paymentMethodId: payment.payment_method_id,
-          depositAccountId: payment.deposit_account_id,
-          referenceNumber: payment.reference_number,
-          notes: payment.notes,
-        },
-      )
+      openReceivePayment(receivePaymentAfterSave, buildReceivePaymentPrefill(payment))
     },
-    [openReceivePayment, fetchSales, refreshPendingPayments, refreshMetrics],
+    [openReceivePayment, receivePaymentAfterSave],
+  )
+
+  const handleEditSale = useCallback(
+    async (sale) => {
+      if (
+        filter === 'payment_submitted'
+        && sale.status === 'payment_submitted'
+        && isSubsequentCxcAbonoForSale(sale)
+      ) {
+        const opened = await openReceivePaymentForSaleAbono(
+          sale,
+          openReceivePayment,
+          receivePaymentAfterSave,
+        )
+        if (opened) return
+      }
+      setEditSale(sale)
+    },
+    [filter, openReceivePayment, receivePaymentAfterSave],
   )
 
   const handleRejectPayment = useCallback(
@@ -609,23 +621,8 @@ export default function Sales() {
           deepLinkHandledRef.current = linkKey
           setFilter('payment_submitted')
           openReceivePayment(
-            () => {
-              fetchSales()
-              refreshPendingPayments()
-              refreshMetrics()
-            },
-            {
-              paymentId: payment.id,
-              paymentNumber: payment.payment_number,
-              clientId: payment.client_id,
-              amount: payment.amount,
-              currency: payment.currency,
-              receiptUrl: payment.receipt_file_url,
-              paymentMethodId: payment.payment_method_id,
-              depositAccountId: payment.deposit_account_id,
-              referenceNumber: payment.reference_number,
-              notes: payment.notes,
-            },
+            receivePaymentAfterSave,
+            buildReceivePaymentPrefill(payment),
           )
           setSearchParams({}, { replace: true })
         } catch {
@@ -691,9 +688,7 @@ export default function Sales() {
     searchParams,
     setSearchParams,
     openReceivePayment,
-    fetchSales,
-    refreshPendingPayments,
-    refreshMetrics,
+    receivePaymentAfterSave,
   ])
 
   /** Refresco por robot global (/sales/sync-web-credits desde catalogo-vip). */
@@ -917,6 +912,10 @@ export default function Sales() {
   }
 
   async function handleActivate(sale) {
+    if (sale.status === 'payment_submitted' && isSubsequentCxcAbonoForSale(sale)) {
+      await openReceivePaymentForSaleAbono(sale, openReceivePayment, receivePaymentAfterSave)
+      return
+    }
     // Comprobante en revisión: modal consolidado (activación o solo cobro según inventario).
     if (sale.status === 'payment_submitted') {
       setReviewActivateSale(sale)
@@ -1658,7 +1657,7 @@ export default function Sales() {
                           onActivate={handleActivate}
                           onReject={handleRejectPending}
                           onCopyCheckoutLink={handleCopyCheckoutLink}
-                          onEdit={setEditSale}
+                          onEdit={handleEditSale}
                           onDelete={handleDelete}
                           onCancelApproved={handleCancelApproved}
                           onComment={handleComment}

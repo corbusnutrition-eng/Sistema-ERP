@@ -484,6 +484,13 @@ class WalletRechargeRequestAdminRow(BaseModel):
     )
     is_manually_edited: bool = Field(default=False)
     ai_confidence_score: Optional[int] = Field(default=None, ge=0, le=100)
+    staff_review_action: str = Field(
+        default="activate",
+        description=(
+            "``activate`` = primera activación / entrega virtual; "
+            "``approve_payment`` = solo aprobar cobro CxC (producto ya entregado)."
+        ),
+    )
     linked_payments: list[WalletRechargeLinkedPaymentAdmin] = Field(
         default_factory=list,
         description="Historial de abonos reconocidos y comprobante en revisión vinculados a esta recarga.",

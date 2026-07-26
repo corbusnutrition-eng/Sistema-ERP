@@ -441,6 +441,18 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
         }
         const status = String(data.status || '').toLowerCase()
         const isHistorical = status && status !== 'pending_review'
+        const hasAllocations = Array.isArray(data.allocations) && data.allocations.length > 0
+
+        if (!isHistorical && status === 'pending_review' && !hasAllocations) {
+          paymentLoadedRef.current = true
+          setExistingPaymentLoaded(true)
+          const amt = Number(data.amount)
+          await loadUnpaidInvoices(String(data.client_id), {
+            autoFifoAmount: Number.isFinite(amt) && amt > 0 ? amt : undefined,
+          })
+          return
+        }
+
         const rows = (data.allocations || []).map((a) => ({
           obligation_kind: a.obligation_kind || (a.wallet_recharge_id != null ? 'wallet_recharge' : 'sale'),
           sale_id: a.sale_id,
@@ -469,7 +481,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
         setLoadingPaymentView(false)
       }
     },
-    [onToast],
+    [onToast, loadUnpaidInvoices],
   )
 
   useEffect(() => {
@@ -489,15 +501,49 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   }, [isExistingPayment, prefill?.paymentId, loadPaymentView])
 
   useEffect(() => {
-    if (formReadOnly || isExistingPayment) return
+    if (formReadOnly) return
     if (!prefill || prefillAppliedRef.current) return
     if (prefill.clientId != null) setClientId(String(prefill.clientId))
     if (prefill.amount != null) setAmountStr(String(prefill.amount))
     if (prefill.referenceNumber) setReferenceNo(String(prefill.referenceNumber))
     if (prefill.depositAccountId != null) setDepositAccountId(String(prefill.depositAccountId))
     if (prefill.notes) setNote(String(prefill.notes))
+    if (prefill.paymentDate) {
+      try {
+        const d = new Date(prefill.paymentDate)
+        const p = (n) => String(n).padStart(2, '0')
+        setPaymentDate(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`)
+      } catch {
+        /* keep default */
+      }
+    }
     prefillAppliedRef.current = true
   }, [prefill, formReadOnly, isExistingPayment])
+
+  useEffect(() => {
+    if (!isPendingReviewPayment || !clientId || !existingPaymentLoaded) return
+    if (loadingInvoices || loadingPaymentView) return
+    const hasManualAlloc = unpaidInvoices.some((inv) => {
+      const v = Number.parseFloat(String(paidBySale[obligationKey(inv)] ?? '').replace(',', '.'))
+      return Number.isFinite(v) && v > 1e-9
+    })
+    if (hasManualAlloc) return
+    const amt = Number(viewPaymentMeta?.amount ?? prefill?.amount ?? amountNum)
+    if (!Number.isFinite(amt) || amt <= 0 || unpaidInvoices.length === 0) return
+    skipFifoRef.current = true
+    setPaidBySale(fifoDistribute(amt, unpaidInvoices))
+  }, [
+    isPendingReviewPayment,
+    clientId,
+    existingPaymentLoaded,
+    loadingInvoices,
+    loadingPaymentView,
+    unpaidInvoices,
+    paidBySale,
+    viewPaymentMeta?.amount,
+    prefill?.amount,
+    amountNum,
+  ])
 
   useEffect(() => {
     if (isExistingPayment) return
