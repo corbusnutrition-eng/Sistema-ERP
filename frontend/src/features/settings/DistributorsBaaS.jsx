@@ -9,14 +9,14 @@ import {
   ClipboardList,
   Users,
   CheckCircle,
-  XCircle,
   Sparkles,
-  Ban,
   MessageSquare,
   Pencil,
   X,
   Search,
   Bell,
+  Trash2,
+  RotateCcw,
 } from 'lucide-react'
 
 import api from '../../api/axios'
@@ -169,6 +169,14 @@ function rechargeFilterEmptyCopy(tabId) {
   if (tabId === 'rejected') return 'rechazadas'
   if (tabId === 'canceled') return 'canceladas'
   return 'activadas'
+}
+
+function rechargeTabShowsEditDelete(tabId) {
+  return tabId === 'pending' || tabId === 'in_review' || tabId === 'approved'
+}
+
+function rechargeTabShowsRestore(tabId) {
+  return tabId === 'rejected' || tabId === 'canceled'
 }
 
 function RechargeStatusBadge({ status }) {
@@ -1378,6 +1386,30 @@ export default function DistributorsBaaSPage() {
     }
   }
 
+  async function handleRestoreRecharge(row) {
+    if (!row?.id) return
+    if (
+      !window.confirm(
+        `¿Restaurar la solicitud ${formatSaleDocNo(row.id)} a pendiente? Volverá al ciclo normal de cobro.`,
+      )
+    ) {
+      return
+    }
+    setProcessingReqId(row.id)
+    try {
+      await api.patch(`/api/v1/distributors/restore-recharge/${row.id}`)
+      showToast('Solicitud restaurada a pendiente.')
+      setRechargeActiveTab('pending')
+      fetchRechargeRequests()
+      fetchRechargeMetrics()
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      showToast(typeof d === 'string' ? d : 'No se pudo restaurar la solicitud.')
+    } finally {
+      setProcessingReqId(null)
+    }
+  }
+
   function openNoteModal(row) {
     if (!row || !['in_review', 'approved', 'partially_paid'].includes(row.status)) return
     setNoteModalRow(row)
@@ -1901,8 +1933,8 @@ export default function DistributorsBaaSPage() {
             </div>
           ) : (
             <>
-            <div className="w-full overflow-x-auto scrollbar-hide">
-              <table className="w-full min-w-max text-sm">
+            <div className="overflow-x-auto w-full scrollbar-hide">
+              <table className="w-full min-w-[1000px] text-sm">
                 <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
                   <tr>
                     <th className="text-left px-6 py-3 font-semibold whitespace-nowrap">Cliente</th>
@@ -2043,8 +2075,8 @@ export default function DistributorsBaaSPage() {
             </div>
           ) : (
             <>
-            <div className="w-full overflow-x-auto scrollbar-hide">
-              <table className="w-full table-fixed min-w-[1100px] text-sm">
+            <div className="overflow-x-auto w-full scrollbar-hide">
+              <table className="w-full min-w-[1000px] table-fixed text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
                     <ResizableTh
@@ -2216,126 +2248,97 @@ export default function DistributorsBaaSPage() {
                         />
                       </td>
                       <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
-                        <div className="flex flex-wrap items-center justify-end gap-3">
-                          {r.status === 'pending' ? (
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {rechargeTabShowsRestore(rechargeActiveTab) ?
+                            <button
+                              type="button"
+                              disabled={processingReqId === r.id}
+                              onClick={() => handleRestoreRecharge(r)}
+                              className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 transition-colors disabled:opacity-40"
+                              title="Restaurar a pendiente"
+                            >
+                              {processingReqId === r.id ?
+                                <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+                              : <RotateCcw size={14} strokeWidth={2.5} aria-hidden />}
+                              <span className="sr-only">Restaurar</span>
+                            </button>
+                          : null}
+
+                          {rechargeTabShowsEditDelete(rechargeActiveTab) && r.status === 'in_review' ?
+                            <div className="flex flex-wrap gap-2 justify-end">
+                              {canApproveRecharge ?
+                                <button
+                                  type="button"
+                                  disabled={processingReqId === r.id}
+                                  onClick={() => openApproveModal(r)}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  <CheckCircle size={14} />
+                                  Aprobar
+                                </button>
+                              : null}
+                            </div>
+                          : null}
+
+                          {rechargeTabShowsEditDelete(rechargeActiveTab) ?
                             <>
-                              {r.client_id ?
+                              {r.status === 'pending' && r.client_id ?
                                 <CopyPaymentLinkButton
                                   onClick={() => handleCopyRechargePortalLink(r)}
                                   disabled={Boolean(processingReqId) || generatingLink}
-                                  title="Copiar enlace del portal del cliente (permanente)"
+                                  title="Copiar enlace del portal del cliente"
                                 />
                               : null}
-                              <button
-                                type="button"
-                                disabled={Boolean(processingReqId) || generatingLink}
-                                onClick={() => openEditRechargeModal(r)}
-                                className="inline-flex items-center justify-center p-1.5 rounded-lg text-xs font-medium text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 disabled:opacity-50"
-                                title="Editar solicitud"
-                              >
-                                <Pencil size={14} aria-hidden strokeWidth={2} />
-                                <span className="sr-only">Editar solicitud</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={processingReqId === r.id}
-                                onClick={() => cancelRequest(r.id)}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 disabled:opacity-50"
-                              >
-                                <Ban size={14} />
-                                Cancelar
-                              </button>
+                              {rechargeAwaitingClientReceipt(r) ?
+                                <p className="w-full text-[10px] text-emerald-900 font-medium text-right max-w-[12rem]">
+                                  CxC pendiente {formatMoney(Number(r.balance_pending ?? 0))}
+                                </p>
+                              : null}
+                              <div className="flex items-center justify-end gap-0.5">
+                                <button
+                                  type="button"
+                                  disabled={(processingReqId != null && processingReqId === r.id) || generatingLink}
+                                  onClick={() => openEditRechargeModal(r)}
+                                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
+                                  title="Editar solicitud"
+                                >
+                                  <Pencil size={14} strokeWidth={2} aria-hidden />
+                                  <span className="sr-only">Editar</span>
+                                </button>
+                                {(r.status === 'pending' || r.status === 'in_review') ?
+                                  <button
+                                    type="button"
+                                    disabled={processingReqId === r.id}
+                                    onClick={() =>
+                                      r.status === 'pending' ? cancelRequest(r.id) : rejectRequest(r.id)
+                                    }
+                                    className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors disabled:opacity-40"
+                                    title={r.status === 'pending' ? 'Cancelar solicitud' : 'Rechazar solicitud'}
+                                  >
+                                    <Trash2 size={14} strokeWidth={2} aria-hidden />
+                                    <span className="sr-only">Eliminar</span>
+                                  </button>
+                                : null}
+                                {['in_review', 'approved', 'partially_paid'].includes(r.status) ?
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      (processingReqId != null && processingReqId === r.id)
+                                      || (savingNote && noteModalRow?.id === r.id)
+                                    }
+                                    onClick={() => openNoteModal(r)}
+                                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
+                                    title="Nota administrativa"
+                                  >
+                                    <MessageSquare size={14} strokeWidth={2} aria-hidden />
+                                    <span className="sr-only">Nota</span>
+                                  </button>
+                                : null}
+                              </div>
                             </>
-                          ) : null}
-                          {r.status === 'in_review' ? (
-                            <div className="flex flex-col items-end gap-1.5 max-w-[min(100%,20rem)]">
-                              <div className="flex flex-wrap gap-2 justify-end">
-                                {canApproveRecharge && (
-                                  <button
-                                    type="button"
-                                    disabled={processingReqId === r.id}
-                                    onClick={() => openApproveModal(r)}
-                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-                                  >
-                                    <CheckCircle size={14} />
-                                    Aprobar
-                                  </button>
-                                )}
-                                {canEditRecharge && (
-                                  <button
-                                    type="button"
-                                    disabled={processingReqId === r.id}
-                                    onClick={() => rejectRequest(r.id)}
-                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
-                                  >
-                                    <XCircle size={14} />
-                                    Rechazar
-                                  </button>
-                                )}
-                              </div>
-                              {canEditRecharge && (
-                              <div className="flex items-center justify-end gap-0.5">
-                                <button
-                                  type="button"
-                                  disabled={(processingReqId != null && processingReqId === r.id) || generatingLink}
-                                  onClick={() => openEditRechargeModal(r)}
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
-                                  title="Corregir importe, moneda o métodos de pago"
-                                >
-                                  <Pencil size={14} strokeWidth={2} aria-hidden />
-                                  <span className="sr-only">Editar solicitud en revisión</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    (processingReqId != null && processingReqId === r.id)
-                                    || (savingNote && noteModalRow?.id === r.id)
-                                  }
-                                  onClick={() => openNoteModal(r)}
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
-                                  title="Nota administrativa (columna NOTA)"
-                                >
-                                  <MessageSquare size={14} strokeWidth={2} aria-hidden />
-                                  <span className="sr-only">Comentario o nota</span>
-                                </button>
-                              </div>
-                              )}
-                            </div>
-                          ) : null}
-                          {rechargeAwaitingClientReceipt(r) ? (
-                            <div className="flex flex-col items-end gap-1">
-                              <p className="text-[10px] text-emerald-900 font-medium text-right max-w-[12rem]">
-                                CxC pendiente {formatMoney(Number(r.balance_pending ?? 0))}: el cliente puede adjuntar
-                                nuevo comprobante.
-                              </p>
-                              <div className="flex items-center justify-end gap-0.5">
-                                <button
-                                  type="button"
-                                  disabled={(processingReqId != null && processingReqId === r.id) || generatingLink}
-                                  onClick={() => openEditRechargeModal(r)}
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
-                                  title="Corregir objetivo o métodos"
-                                >
-                                  <Pencil size={14} strokeWidth={2} aria-hidden />
-                                  <span className="sr-only">Editar solicitud activada con saldo</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    (processingReqId != null && processingReqId === r.id)
-                                    || (savingNote && noteModalRow?.id === r.id)
-                                  }
-                                  onClick={() => openNoteModal(r)}
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
-                                  title="Nota administrativa"
-                                >
-                                  <MessageSquare size={14} strokeWidth={2} aria-hidden />
-                                  <span className="sr-only">Nota</span>
-                                </button>
-                              </div>
-                            </div>
-                          ) : null}
-                          {!['pending', 'in_review'].includes(r.status) && !rechargeAwaitingClientReceipt(r) ?
+                          : null}
+
+                          {!rechargeTabShowsEditDelete(rechargeActiveTab) && !rechargeTabShowsRestore(rechargeActiveTab) ?
                             <span className="text-xs text-gray-400">—</span>
                           : null}
                         </div>

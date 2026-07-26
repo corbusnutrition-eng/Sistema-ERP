@@ -1742,6 +1742,32 @@ def cancel_wallet_recharge_request(
     return req
 
 
+@router.patch("/restore-recharge/{request_id}", response_model=WalletRechargeRequestRead)
+def restore_wallet_recharge_request(
+    request_id: int,
+    db: DbDep,
+    current_user: BaasRechargeEditDep,
+) -> WalletRechargeRequest:
+    """Restaura una solicitud rechazada o cancelada al estado pending."""
+    req = db.get(WalletRechargeRequest, request_id)
+    if req is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
+    if req.status not in (REQ_STATUS_REJECTED, REQ_STATUS_CANCELED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se pueden restaurar solicitudes rechazadas o canceladas.",
+        )
+
+    paid = float(getattr(req, "amount_paid", 0) or 0)
+    amt = float(getattr(req, "amount_requested", 0) or 0)
+    req.status = REQ_STATUS_PENDING
+    req.balance_pending = max(0.0, round(amt - paid, 2))
+    db.commit()
+    db.refresh(req)
+    return req
+
+
 @router.get("/screen-catalog-products", response_model=list[FlujoPackageForPricing])
 def list_screen_catalog_products_for_admin_pricing(
     db: DbDep,

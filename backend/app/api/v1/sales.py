@@ -3454,6 +3454,75 @@ def reactivate_expired_sale(
 
 
 @router.patch(
+    "/{sale_id}/restore",
+    response_model=SaleResponse,
+    summary="Restaurar venta rechazada o cancelada a pending",
+)
+def restore_sale_record(
+    sale_id: int,
+    db: DbDep,
+    _: SalesInvoicesEditDep,
+) -> SaleResponse:
+    """Devuelve una venta terminal (rechazada/cancelada) al ciclo pendiente con nueva reserva."""
+    expire_pending_sales_if_needed(db)
+    sale = (
+        db.query(Sale)
+        .options(
+            joinedload(Sale.client),
+            joinedload(Sale.product),
+            joinedload(Sale.screen).joinedload(IPTVScreen.iptv_account),
+            joinedload(Sale.screen_stock_row),
+            joinedload(Sale.payment_method),
+            joinedload(Sale.tags),
+        )
+        .filter(Sale.id == sale_id)
+        .first()
+    )
+    if sale is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Venta no encontrada.")
+    if sale.status not in (SaleStatus.rejected, SaleStatus.cancelled):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se pueden restaurar ventas rechazadas o canceladas.",
+        )
+
+    client = sale.client if sale.client else db.get(Client, sale.client_id)
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Cliente inconsistente.")
+
+    product = db.get(Product, sale.product_id) if sale.product_id else None
+
+    try:
+        _reserve_inventory_for_reactivated_sale(db, sale)
+        sale.status = SaleStatus.pending
+        sale.expires_at = _pending_sale_expires_at()
+        sale.rejection_reason = None
+        sale.rejection_image_url = None
+        sync_sale_accounting_ledgers(db, sale, strict=True)
+        notify_catalog_vip_sale_pending_payment(db, sale)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("PATCH /sales/%s/restore failed", sale_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc) if str(exc) else "No se pudo restaurar la venta.",
+        ) from exc
+
+    db.refresh(sale)
+
+    stock = sale.screen_stock_row
+    if stock is None and sale.screen_stock_id:
+        stock = db.get(ScreenStock, sale.screen_stock_id)
+
+    screen_resp = sale.screen
+    return _build_response(sale, client, screen_resp, product, stock_row=stock, db=db)
+
+
+@router.patch(
     "/{sale_id}/extend-timer",
     response_model=SaleResponse,
     summary="Extender temporizador de reserva (solo administrador)",

@@ -7,11 +7,10 @@ import {
   Pencil,
   Trash2,
   MessageSquare,
-  Ban,
   UploadCloud,
   XCircle,
-  RefreshCw,
   Clock,
+  RotateCcw,
 } from 'lucide-react'
 import api from '../../api/axios'
 import Swal from 'sweetalert2'
@@ -244,8 +243,17 @@ function filterEmptyCopy(filterId) {
   return 'activadas'
 }
 
+function filterShowsEditDelete(filterId) {
+  return filterId === 'pending' || filterId === 'payment_submitted' || filterId === 'approved'
+}
+
+function filterShowsRestore(filterId) {
+  return filterId === 'rejected' || filterId === 'cancelled' || filterId === 'expired'
+}
+
 function SaleRowActions({
   sale,
+  activeFilter,
   onActivate,
   onReject,
   onEdit,
@@ -254,19 +262,51 @@ function SaleRowActions({
   onComment,
   onCopyCheckoutLink,
   onReactivate,
+  onRestore,
   activating,
   cancellingId,
   rejectingId,
   reactivatingId,
+  restoringId,
 }) {
   const isPending = sale.status === 'pending'
   const isExpired = sale.status === 'expired'
   const awaitingStaff = sale.status === 'pending' || sale.status === 'payment_submitted'
   const staffAction = saleStaffReviewAction(sale)
   const staffPrimaryLabel = staffReviewPrimaryLabel(staffAction)
-  const isApproved = sale.status === 'approved'
+  const isApproved = sale.status === 'approved' || sale.status === 'partially_paid'
   const isVoidable = sale.status === 'approved' || sale.status === 'partially_paid'
   const archived = saleOpensReadOnly(sale)
+  const showEditDelete = filterShowsEditDelete(activeFilter)
+  const showRestore = filterShowsRestore(activeFilter)
+  const canDeletePending = isPending || isExpired
+  const canVoidApproved = isVoidable && activeFilter === 'approved'
+  const canDeleteReview =
+    activeFilter === 'payment_submitted' && sale.status === 'payment_submitted'
+  const deleteEnabled = canDeletePending || canVoidApproved || canDeleteReview
+  const isRestoring = restoringId === sale.id || (isExpired && reactivatingId === sale.id)
+
+  if (showRestore) {
+    if (sale.status === 'annulled') {
+      return <span className="text-xs text-gray-400">—</span>
+    }
+    return (
+      <div className="flex items-center justify-end gap-0.5 shrink-0">
+        <button
+          type="button"
+          onClick={() => onRestore?.(sale)}
+          disabled={isRestoring}
+          className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title={isExpired ? 'Restaurar reserva caducada' : 'Restaurar a pendiente'}
+        >
+          {isRestoring ?
+            <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+          : <RotateCcw size={14} strokeWidth={2.5} aria-hidden />}
+          <span className="sr-only">Restaurar</span>
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-3">
@@ -280,25 +320,7 @@ function SaleRowActions({
           }
         />
       )}
-      {isExpired && (
-        <button
-          type="button"
-          onClick={() => onReactivate?.(sale)}
-          disabled={reactivatingId === sale.id}
-          title="Reactivar reserva (10 min)"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg
-                     bg-orange-600 text-white hover:bg-orange-700 shadow-sm
-                     disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-        >
-          {reactivatingId === sale.id ? (
-            <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-          ) : (
-            <RefreshCw size={14} strokeWidth={2.5} aria-hidden />
-          )}
-          Reactivar
-        </button>
-      )}
-      {awaitingStaff && (
+      {awaitingStaff && showEditDelete && (
         <>
           <button
             type="button"
@@ -329,60 +351,62 @@ function SaleRowActions({
         </>
       )}
 
-      <div className="flex items-center justify-end gap-0.5 shrink-0">
-        <button
-          type="button"
-          onClick={() => onEdit(sale)}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          title={
-            archived
-              ? 'Ver venta (solo lectura)'
-              : isApproved
-                ? 'Editar venta activada'
-                : awaitingStaff
-                  ? 'Editar venta pendiente / en revisión'
-                  : 'Ver detalle de la venta'
-          }
-        >
-          <Pencil size={14} />
-        </button>
-        <button
-          type="button"
-          onClick={() => onComment(sale)}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-          title="Comentario al cliente"
-        >
-          <MessageSquare size={14} />
-        </button>
-        {isVoidable && (
+      {showEditDelete ?
+        <div className="flex items-center justify-end gap-0.5 shrink-0">
           <button
             type="button"
-            disabled={cancellingId === sale.id}
-            onClick={() => onCancelApproved(sale)}
-            className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors
-                       disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Anular factura (reverso contable e inventario)"
+            onClick={() => onEdit(sale)}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            title={
+              archived
+                ? 'Ver venta (solo lectura)'
+                : isApproved
+                  ? 'Editar venta activada'
+                  : awaitingStaff
+                    ? 'Editar venta pendiente / en revisión'
+                    : 'Ver detalle de la venta'
+            }
           >
-            {cancellingId === sale.id ? (
-              <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-red-400 border-t-transparent animate-spin" />
-            ) : (
-              <Ban size={14} />
-            )}
+            <Pencil size={14} strokeWidth={2} aria-hidden />
+            <span className="sr-only">Editar</span>
           </button>
-        )}
-        <button
-          type="button"
-          disabled={!isPending && !isExpired}
-          onClick={() => (isPending || isExpired) && onDelete(sale)}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-slate-700 hover:bg-slate-100 transition-colors
-                     disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400"
-          title={
-            isPending || isExpired ? 'Eliminar esta venta del listado' : 'Solo ventas pendientes o caducadas'
-          }
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
+          {canDeleteReview || canDeletePending || canVoidApproved ?
+            <button
+              type="button"
+              disabled={!deleteEnabled || cancellingId === sale.id}
+              onClick={() => {
+                if (!deleteEnabled) return
+                if (canVoidApproved) onCancelApproved(sale)
+                else if (canDeleteReview) onReject(sale)
+                else onDelete(sale)
+              }}
+              className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors
+                         disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400"
+              title={
+                canVoidApproved ?
+                  'Anular factura (reverso contable e inventario)'
+                : canDeleteReview ?
+                  'Rechazar venta en revisión'
+                : 'Eliminar esta venta del listado'
+              }
+            >
+              {cancellingId === sale.id || rejectingId === sale.id ?
+                <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-red-400 border-t-transparent animate-spin" />
+              : <Trash2 size={14} strokeWidth={2} aria-hidden />}
+              <span className="sr-only">Eliminar</span>
+            </button>
+          : null}
+          <button
+            type="button"
+            onClick={() => onComment(sale)}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            title="Comentario al cliente"
+          >
+            <MessageSquare size={14} strokeWidth={2} aria-hidden />
+            <span className="sr-only">Comentario</span>
+          </button>
+        </div>
+      : null}
     </div>
   )
 }
@@ -409,6 +433,7 @@ export default function Sales() {
   const [page, setPage] = useState(1)
   const [activatingId, setActivatingId] = useState(null)
   const [reactivatingId, setReactivatingId] = useState(null)
+  const [restoringId, setRestoringId] = useState(null)
   const [rejectingId, setRejectingId] = useState(null)
   /** Modal rechazo motivo + evidencia (paso tras confirmación Swal). */
   const [rejectModalSale, setRejectModalSale] = useState(null)
@@ -800,6 +825,41 @@ export default function Sales() {
       setTimeout(() => setToast(null), 7000)
     } finally {
       setRejectingId(null)
+    }
+  }
+
+  async function handleRestore(sale) {
+    if (sale.status === 'annulled') {
+      setToast('Las ventas anuladas contablemente no se restauran desde aquí.')
+      setTimeout(() => setToast(null), 5000)
+      return
+    }
+    if (sale.status === 'expired') {
+      await handleReactivate(sale)
+      return
+    }
+    if (sale.status !== 'rejected' && sale.status !== 'cancelled') return
+    if (
+      !window.confirm(
+        `¿Restaurar la venta #${formatSaleDocNo(sale.id)} a pendiente? Se reservará inventario de nuevo.`,
+      )
+    ) {
+      return
+    }
+    setRestoringId(sale.id)
+    try {
+      await api.patch(`/api/v1/sales/${sale.id}/restore`)
+      await fetchSales()
+      await refreshInventoryData()
+      setFilter('pending')
+      setToast(`Venta #${formatSaleDocNo(sale.id)} restaurada a pendiente.`)
+      setTimeout(() => setToast(null), 4800)
+    } catch (err) {
+      const msg = formatApiError(err, 'No se pudo restaurar la venta.')
+      setToast(msg)
+      setTimeout(() => setToast(null), 7000)
+    } finally {
+      setRestoringId(null)
     }
   }
 
@@ -1358,8 +1418,8 @@ export default function Sales() {
 
         {/* Solo la tabla reacciona al fetch de la pestaña activa */}
         <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-100 overflow-hidden w-full min-h-[28rem] flex flex-col">
-          <div className="overflow-x-auto scrollbar-hide w-full flex-1 min-h-[22rem]">
-            <table className="w-full table-fixed min-w-[1200px] text-sm">
+          <div className="overflow-x-auto w-full scrollbar-hide flex-1 min-h-[22rem]">
+            <table className="w-full min-w-[1000px] table-fixed text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100">
                   <ResizableTh columnKey="fecha" width={columnWidths.fecha} onResizeStart={startResize}>
@@ -1594,6 +1654,7 @@ export default function Sales() {
                       <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
                         <SaleRowActions
                           sale={sale}
+                          activeFilter={filter}
                           onActivate={handleActivate}
                           onReject={handleRejectPending}
                           onCopyCheckoutLink={handleCopyCheckoutLink}
@@ -1602,10 +1663,12 @@ export default function Sales() {
                           onCancelApproved={handleCancelApproved}
                           onComment={handleComment}
                           onReactivate={handleReactivate}
+                          onRestore={handleRestore}
                           activating={activatingId === sale.id}
                           cancellingId={cancellingId}
                           rejectingId={rejectingId}
                           reactivatingId={reactivatingId}
+                          restoringId={restoringId}
                         />
                       </td>
                     </tr>
