@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.services.transaction_discount_helpers import normalize_discount_triplet
+from app.account_constants import is_liquid_deposit_account
 from app.currency_utils import normalize_currency_code
 from app.schemas.hotmart_links import hotmart_links_from_model, normalize_hotmart_links_list
 from app.api.v1.dependencies import require_any_permission, require_permission
