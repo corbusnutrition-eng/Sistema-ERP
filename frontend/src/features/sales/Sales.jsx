@@ -11,7 +11,6 @@ import {
   XCircle,
   Clock,
   RotateCcw,
-  ClipboardList,
 } from 'lucide-react'
 import { useCopyLinkFeedback } from '../../hooks/useCopyLinkFeedback'
 import api from '../../api/axios'
@@ -40,6 +39,12 @@ import {
   formatSaleTableDate,
   copySalePaymentLink,
   CopyPaymentLinkButton,
+  TABLE_ACTION_BTN,
+  TABLE_ACTION_ICON_SIZE,
+  TABLE_ACTION_ICON_STROKE,
+  TABLE_ACTION_VARIANT,
+  TableActionSpinner,
+  TableActionsContainer,
 } from './saleTableHelpers'
 import { isPortalSaldoCrossSinComprobante } from './portalCreditMeta'
 import { SALES_CURRENCIES } from './salesCurrencies'
@@ -299,53 +304,49 @@ function SaleRowActions({
       return <span className="text-xs text-gray-400">—</span>
     }
     return (
-      <div className="flex items-center justify-end gap-0.5 shrink-0">
+      <TableActionsContainer>
         <button
           type="button"
           onClick={() => onRestore?.(sale)}
           disabled={isRestoring}
-          className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.restore} disabled:opacity-40`}
           title={isExpired ? 'Restaurar reserva caducada' : 'Restaurar a pendiente'}
         >
           {isRestoring ?
-            <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-          : <RotateCcw size={14} strokeWidth={2.5} aria-hidden />}
+            <TableActionSpinner tone="emerald" />
+          : <RotateCcw size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
           <span className="sr-only">Restaurar</span>
         </button>
-      </div>
+      </TableActionsContainer>
     )
   }
 
   return (
-    <div className="flex items-center justify-end gap-0.5 shrink-0">
+    <TableActionsContainer>
       {awaitingStaff && showEditDelete ?
         <>
           <button
             type="button"
             onClick={() => onActivate(sale)}
             disabled={activating || rejectingId === sale.id}
-            className="p-1.5 rounded-md transition-colors focus:outline-none
-                       text-emerald-600 hover:bg-emerald-50
-                       disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate}`}
             title={staffPrimaryLabel}
           >
             {activating ?
-              <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-            : <CheckCircle2 size={14} strokeWidth={2.35} aria-hidden />}
+              <TableActionSpinner tone="emerald" />
+            : <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
             <span className="sr-only">{staffPrimaryLabel}</span>
           </button>
           <button
             type="button"
             onClick={() => onReject(sale)}
             disabled={activating || rejectingId === sale.id}
-            className="p-1.5 rounded-md transition-colors focus:outline-none
-                       text-rose-600 hover:bg-rose-50
-                       disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.reject}`}
             title="Rechazar venta"
           >
             {rejectingId === sale.id ?
-              <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-rose-400 border-t-transparent animate-spin" />
-            : <XCircle size={14} strokeWidth={2.35} aria-hidden />}
+              <TableActionSpinner tone="rose" />
+            : <XCircle size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
             <span className="sr-only">Rechazar venta</span>
           </button>
         </>
@@ -363,7 +364,7 @@ function SaleRowActions({
           <button
             type="button"
             onClick={() => onEdit(sale)}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.edit}`}
             title={
               archived
                 ? 'Ver venta (solo lectura)'
@@ -374,8 +375,17 @@ function SaleRowActions({
                     : 'Ver detalle de la venta'
             }
           >
-            <Pencil size={14} strokeWidth={2} aria-hidden />
+            <Pencil size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
             <span className="sr-only">Editar</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onComment(sale)}
+            className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.note}`}
+            title="Comentario al cliente"
+          >
+            <MessageSquare size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
+            <span className="sr-only">Comentario</span>
           </button>
           {canDeleteReview || canDeletePending || canVoidApproved ?
             <button
@@ -387,8 +397,7 @@ function SaleRowActions({
                 else if (canDeleteReview) onReject(sale)
                 else onDelete(sale)
               }}
-              className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors
-                         disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400"
+              className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.delete} disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400`}
               title={
                 canVoidApproved ?
                   'Anular factura (reverso contable e inventario)'
@@ -398,23 +407,14 @@ function SaleRowActions({
               }
             >
               {cancellingId === sale.id || rejectingId === sale.id ?
-                <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-red-400 border-t-transparent animate-spin" />
-              : <Trash2 size={14} strokeWidth={2} aria-hidden />}
+                <TableActionSpinner tone="red" />
+              : <Trash2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
               <span className="sr-only">Eliminar</span>
             </button>
           : null}
-          <button
-            type="button"
-            onClick={() => onComment(sale)}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-            title="Comentario al cliente"
-          >
-            <MessageSquare size={14} strokeWidth={2} aria-hidden />
-            <span className="sr-only">Comentario</span>
-          </button>
         </>
       : null}
-    </div>
+    </TableActionsContainer>
   )
 }
 
@@ -1754,28 +1754,26 @@ export default function Sales() {
                         </td>
                         {showRejectReasonCol ? <td className={`${TABLE_CELL} text-gray-400`}>—</td> : null}
                         <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
-                          <div className="flex items-center justify-end gap-0.5">
+                          <TableActionsContainer>
                             <button
                               type="button"
                               onClick={() => handleReviewPayment(p)}
-                              className="p-1.5 rounded-md transition-colors focus:outline-none
-                                         text-indigo-600 hover:bg-indigo-50"
+                              className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate}`}
                               title="Revisar abono"
                             >
-                              <ClipboardList size={14} strokeWidth={2.35} aria-hidden />
+                              <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                               <span className="sr-only">Revisar abono</span>
                             </button>
                             <button
                               type="button"
                               onClick={() => handleRejectPayment(p.id)}
-                              className="p-1.5 rounded-md transition-colors focus:outline-none
-                                         text-rose-600 hover:bg-rose-50"
+                              className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.reject}`}
                               title="Rechazar pago"
                             >
-                              <XCircle size={14} strokeWidth={2.35} aria-hidden />
+                              <XCircle size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                               <span className="sr-only">Rechazar pago</span>
                             </button>
-                          </div>
+                          </TableActionsContainer>
                         </td>
                       </tr>
                     )

@@ -8,7 +8,7 @@ import {
   PlusCircle,
   ClipboardList,
   Users,
-  CheckCircle,
+  CheckCircle2,
   Sparkles,
   MessageSquare,
   Pencil,
@@ -68,6 +68,12 @@ import {
   CopyPaymentLinkButton,
   copyOrSharePaymentUrl,
   resolveRechargePaymentUrl,
+  TABLE_ACTION_BTN,
+  TABLE_ACTION_ICON_SIZE,
+  TABLE_ACTION_ICON_STROKE,
+  TABLE_ACTION_VARIANT,
+  TableActionSpinner,
+  TableActionsContainer,
 } from '../sales/saleTableHelpers'
 import OcrSecurityBadges, {
   pickOcrFlagsFromRecharge,
@@ -2403,113 +2409,117 @@ export default function DistributorsBaaSPage() {
                         />
                       </td>
                       <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          {rechargeTabShowsRestore(rechargeActiveTab) ?
-                            <button
-                              type="button"
-                              disabled={processingReqId === r.id}
-                              onClick={() => handleRestoreRecharge(r)}
-                              className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 transition-colors disabled:opacity-40"
-                              title="Restaurar a pendiente"
-                            >
-                              {processingReqId === r.id ?
-                                <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-                              : <RotateCcw size={14} strokeWidth={2.5} aria-hidden />}
-                              <span className="sr-only">Restaurar</span>
-                            </button>
+                        <div className="flex flex-col items-end gap-1">
+                          {rechargeTabShowsEditDelete(rechargeActiveTab) && rechargeAwaitingClientReceipt(r) ?
+                            <p className="text-[10px] text-emerald-900 font-medium text-right max-w-[12rem]">
+                              CxC pendiente {formatMoney(Number(r.balance_pending ?? 0))}
+                            </p>
                           : null}
+                          <TableActionsContainer>
+                            {rechargeTabShowsRestore(rechargeActiveTab) ?
+                              <button
+                                type="button"
+                                disabled={processingReqId === r.id}
+                                onClick={() => handleRestoreRecharge(r)}
+                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.restore} disabled:opacity-40`}
+                                title="Restaurar a pendiente"
+                              >
+                                {processingReqId === r.id ?
+                                  <TableActionSpinner tone="emerald" />
+                                : <RotateCcw size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
+                                <span className="sr-only">Restaurar</span>
+                              </button>
+                            : null}
 
-                          {rechargeTabShowsEditDelete(rechargeActiveTab) ?
-                            <>
-                              {rechargeAwaitingClientReceipt(r) ?
-                                <p className="w-full text-[10px] text-emerald-900 font-medium text-right max-w-[12rem]">
-                                  CxC pendiente {formatMoney(Number(r.balance_pending ?? 0))}
-                                </p>
-                              : null}
-                              <div className="flex items-center justify-end gap-0.5">
-                                {r.status === 'pending' && r.client_id ?
-                                  <CopyPaymentLinkButton
-                                    copied={copiedLinkId === r.id}
-                                    onClick={() => handleCopyRechargePortalLink(r)}
-                                    disabled={Boolean(processingReqId) || generatingLink}
-                                    title="Copiar enlace del portal del cliente"
-                                  />
-                                : null}
-                                {r.status === 'pending' && canEditRecharge ?
-                                  <button
-                                    type="button"
-                                    disabled={processingReqId === r.id || generatingLink}
-                                    onClick={() => activatePendingRecharge(r)}
-                                    className="p-1.5 rounded-md transition-colors focus:outline-none
-                                               text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
-                                    title="Activar recarga (CxC)"
-                                  >
-                                    {processingReqId === r.id ?
-                                      <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-                                    : <CheckCircle size={14} strokeWidth={2.35} aria-hidden />}
-                                    <span className="sr-only">Activar recarga</span>
-                                  </button>
-                                : null}
-                                {r.status === 'in_review' && canApproveRecharge ?
-                                  <button
-                                    type="button"
-                                    disabled={processingReqId === r.id}
-                                    onClick={() => openApproveModal(r)}
-                                    className="p-1.5 rounded-md transition-colors focus:outline-none
-                                               text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
-                                    title="Aprobar abono / activar recarga"
-                                  >
-                                    {processingReqId === r.id ?
-                                      <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
-                                    : <CheckCircle size={14} strokeWidth={2.35} aria-hidden />}
-                                    <span className="sr-only">Aprobar recarga</span>
-                                  </button>
-                                : null}
-                                {(r.status === 'pending' || r.status === 'in_review') ?
-                                  <button
-                                    type="button"
-                                    disabled={processingReqId === r.id}
-                                    onClick={() =>
-                                      r.status === 'pending' ? cancelRequest(r.id) : rejectRequest(r.id)
-                                    }
-                                    className="p-1.5 rounded-md transition-colors focus:outline-none
-                                               text-rose-600 hover:bg-rose-50 disabled:opacity-40"
-                                    title={r.status === 'pending' ? 'Rechazar solicitud' : 'Rechazar solicitud'}
-                                  >
-                                    {processingReqId === r.id ?
-                                      <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-rose-400 border-t-transparent animate-spin" />
-                                    : <XCircle size={14} strokeWidth={2.35} aria-hidden />}
-                                    <span className="sr-only">Rechazar solicitud</span>
-                                  </button>
-                                : null}
-                                <button
-                                  type="button"
-                                  disabled={(processingReqId != null && processingReqId === r.id) || generatingLink}
-                                  onClick={() => openEditRechargeModal(r)}
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
-                                  title="Editar solicitud"
-                                >
-                                  <Pencil size={14} strokeWidth={2} aria-hidden />
-                                  <span className="sr-only">Editar</span>
-                                </button>
-                                {['in_review', 'approved', 'partially_paid'].includes(r.status) ?
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      (processingReqId != null && processingReqId === r.id)
-                                      || (savingNote && noteModalRow?.id === r.id)
-                                    }
-                                    onClick={() => openNoteModal(r)}
-                                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
-                                    title="Nota administrativa"
-                                  >
-                                    <MessageSquare size={14} strokeWidth={2} aria-hidden />
-                                    <span className="sr-only">Nota</span>
-                                  </button>
-                                : null}
-                              </div>
-                            </>
-                          : null}
+                            {rechargeTabShowsEditDelete(rechargeActiveTab) && r.status === 'pending' && canEditRecharge ?
+                              <button
+                                type="button"
+                                disabled={processingReqId === r.id || generatingLink}
+                                onClick={() => activatePendingRecharge(r)}
+                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate} disabled:opacity-40`}
+                                title="Activar recarga (CxC)"
+                              >
+                                {processingReqId === r.id ?
+                                  <TableActionSpinner tone="emerald" />
+                                : <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
+                                <span className="sr-only">Activar recarga</span>
+                              </button>
+                            : null}
+
+                            {rechargeTabShowsEditDelete(rechargeActiveTab) && r.status === 'in_review' && canApproveRecharge ?
+                              <button
+                                type="button"
+                                disabled={processingReqId === r.id}
+                                onClick={() => openApproveModal(r)}
+                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate} disabled:opacity-40`}
+                                title="Aprobar abono / activar recarga"
+                              >
+                                {processingReqId === r.id ?
+                                  <TableActionSpinner tone="emerald" />
+                                : <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
+                                <span className="sr-only">Aprobar recarga</span>
+                              </button>
+                            : null}
+
+                            {rechargeTabShowsEditDelete(rechargeActiveTab)
+                            && (r.status === 'pending' || r.status === 'in_review') ?
+                              <button
+                                type="button"
+                                disabled={processingReqId === r.id}
+                                onClick={() =>
+                                  r.status === 'pending' ? cancelRequest(r.id) : rejectRequest(r.id)
+                                }
+                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.reject} disabled:opacity-40`}
+                                title="Rechazar solicitud"
+                              >
+                                {processingReqId === r.id ?
+                                  <TableActionSpinner tone="rose" />
+                                : <XCircle size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
+                                <span className="sr-only">Rechazar solicitud</span>
+                              </button>
+                            : null}
+
+                            {rechargeTabShowsEditDelete(rechargeActiveTab)
+                            && r.status === 'pending'
+                            && r.client_id ?
+                              <CopyPaymentLinkButton
+                                copied={copiedLinkId === r.id}
+                                onClick={() => handleCopyRechargePortalLink(r)}
+                                disabled={Boolean(processingReqId) || generatingLink}
+                                title="Copiar enlace del portal del cliente"
+                              />
+                            : null}
+
+                            {rechargeTabShowsEditDelete(rechargeActiveTab) ?
+                              <button
+                                type="button"
+                                disabled={(processingReqId != null && processingReqId === r.id) || generatingLink}
+                                onClick={() => openEditRechargeModal(r)}
+                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.edit} disabled:opacity-40`}
+                                title="Editar solicitud"
+                              >
+                                <Pencil size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
+                                <span className="sr-only">Editar</span>
+                              </button>
+                            : null}
+
+                            {rechargeTabShowsEditDelete(rechargeActiveTab)
+                            && ['in_review', 'approved', 'partially_paid'].includes(r.status) ?
+                              <button
+                                type="button"
+                                disabled={
+                                  (processingReqId != null && processingReqId === r.id)
+                                  || (savingNote && noteModalRow?.id === r.id)
+                                }
+                                onClick={() => openNoteModal(r)}
+                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.note} disabled:opacity-40`}
+                                title="Nota administrativa"
+                              >
+                                <MessageSquare size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
+                                <span className="sr-only">Nota</span>
+                              </button>
+                            : null}
+                          </TableActionsContainer>
 
                           {!rechargeTabShowsEditDelete(rechargeActiveTab) && !rechargeTabShowsRestore(rechargeActiveTab) ?
                             <span className="text-xs text-gray-400">—</span>
@@ -2598,28 +2608,26 @@ export default function DistributorsBaaSPage() {
                             )}
                           </td>
                           <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
-                            <div className="flex items-center justify-end gap-0.5">
+                            <TableActionsContainer>
                               <button
                                 type="button"
                                 onClick={() => handleReviewPayment(p)}
-                                className="p-1.5 rounded-md transition-colors focus:outline-none
-                                           text-indigo-600 hover:bg-indigo-50"
+                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate}`}
                                 title="Revisar abono"
                               >
-                                <ClipboardList size={14} strokeWidth={2.35} aria-hidden />
+                                <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                                 <span className="sr-only">Revisar abono</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleRejectPayment(p.id)}
-                                className="p-1.5 rounded-md transition-colors focus:outline-none
-                                           text-rose-600 hover:bg-rose-50"
+                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.reject}`}
                                 title="Rechazar pago"
                               >
-                                <XCircle size={14} strokeWidth={2.35} aria-hidden />
+                                <XCircle size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                                 <span className="sr-only">Rechazar pago</span>
                               </button>
-                            </div>
+                            </TableActionsContainer>
                           </td>
                         </tr>
                       )

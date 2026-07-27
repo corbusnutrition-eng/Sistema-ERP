@@ -201,6 +201,44 @@ export async function copySalePaymentLink(sale) {
 }
 
 /** Botón minimalista (solo ícono) para copiar enlace de pago (Ventas / recargas BaaS). */
+export const TABLE_ACTION_BTN =
+  'p-1.5 rounded-md flex items-center justify-center transition-colors focus:outline-none shrink-0 disabled:opacity-50 disabled:cursor-not-allowed'
+
+export const TABLE_ACTION_ICON_SIZE = 16
+export const TABLE_ACTION_ICON_STROKE = 2.25
+
+export const TABLE_ACTION_VARIANT = {
+  activate: 'text-emerald-600 hover:bg-emerald-50',
+  reject: 'text-rose-600 hover:bg-rose-50',
+  edit: 'text-gray-400 hover:text-gray-700 hover:bg-gray-100',
+  delete: 'text-red-500 hover:text-red-700 hover:bg-red-50',
+  note: 'text-gray-400 hover:text-gray-700 hover:bg-gray-100',
+  review: 'text-indigo-600 hover:bg-indigo-50',
+  restore: 'text-emerald-600 hover:bg-emerald-50',
+}
+
+/** Contenedor flex estándar para la columna ACCIONES (Ventas / BaaS). */
+export function TableActionsContainer({ children, className = '' }) {
+  return (
+    <div className={`flex items-center justify-end gap-2 shrink-0 ${className}`.trim()}>
+      {children}
+    </div>
+  )
+}
+
+export function TableActionSpinner({ tone = 'emerald' }) {
+  const ring =
+    tone === 'rose' ? 'border-rose-400'
+    : tone === 'red' ? 'border-red-400'
+    : 'border-emerald-500'
+  return (
+    <span
+      className={`inline-block w-4 h-4 rounded-full border-2 ${ring} border-t-transparent animate-spin`}
+      aria-hidden
+    />
+  )
+}
+
 export function CopyPaymentLinkButton({
   onClick,
   copied = false,
@@ -215,17 +253,15 @@ export function CopyPaymentLinkButton({
       disabled={disabled}
       title={title}
       aria-label={copied ? 'Enlace copiado' : title}
-      className={`p-1.5 rounded-md transition-colors focus:outline-none shrink-0
-                 disabled:opacity-50 disabled:cursor-not-allowed
-                 ${
+      className={`${TABLE_ACTION_BTN} ${
                    copied
                      ? 'text-emerald-500 bg-emerald-50'
                      : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
                  } ${className}`}
     >
       {copied ?
-        <Check size={14} strokeWidth={2.35} aria-hidden />
-      : <Link size={14} strokeWidth={2.35} aria-hidden />}
+        <Check size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
+      : <Link size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
       <span className="sr-only">{copied ? 'Enlace copiado' : 'Copiar enlace'}</span>
     </button>
   )
