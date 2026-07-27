@@ -218,7 +218,8 @@ export const TABLE_ACTION_VARIANT = {
   restore: 'text-emerald-600 hover:bg-emerald-50',
 }
 
-const TABLE_ACTIONS_WRAP_THRESHOLD = 3
+const TABLE_ACTIONS_WRAP_CLASS =
+  'flex flex-wrap items-center justify-end gap-1.5 ml-auto w-fit max-w-[80px] sm:max-w-[100px]'
 
 function tableActionChildren(children) {
   return Children.toArray(children).filter(
@@ -226,21 +227,13 @@ function tableActionChildren(children) {
   )
 }
 
-/**
- * Contenedor inteligente para ACCIONES: 1 fila (≤3 íconos) o cuadrícula 2×N (>3).
- * Estrategia CSS Grid condicional por cantidad de acciones visibles.
- */
+/** Contenedor ACCIONES compartido (Ventas / BaaS): flex-wrap con ancho máximo para 1–2 filas. */
 export function TableActionsContainer({ children, className = '' }) {
   const items = tableActionChildren(children)
   if (items.length === 0) return null
 
-  const useGrid = items.length > TABLE_ACTIONS_WRAP_THRESHOLD
-  const layoutClass = useGrid
-    ? 'grid grid-cols-2 gap-1.5 justify-items-end ml-auto w-fit max-w-[80px] sm:max-w-[100px]'
-    : 'flex items-center justify-end gap-1.5 ml-auto w-fit'
-
   return (
-    <div className={`${layoutClass} shrink-0 ${className}`.trim()}>
+    <div className={`${TABLE_ACTIONS_WRAP_CLASS} shrink-0 ${className}`.trim()}>
       {items}
     </div>
   )
@@ -400,8 +393,6 @@ export function RechargeAmountCell({ row }) {
     .toUpperCase() || 'USD'
   const xr = Number(row?.recharge_exchange_rate ?? row?.exchange_rate ?? 1)
   const amt = Number(row?.total_amount ?? row?.amount_requested ?? row?.amount ?? 0)
-  const paid = Number(row?.paid_amount ?? row?.amount_paid ?? 0)
-  const pending = Number(row?.pending_amount ?? row?.balance_pending ?? 0)
   const rateOk = Number.isFinite(xr) && xr > 0
   const usdEquivalent = cur !== 'USD' && rateOk ? amt / xr : amt
 
@@ -418,8 +409,6 @@ export function RechargeAmountCell({ row }) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number.isFinite(usdEquivalent) ? usdEquivalent : 0)
-
-  const showPending = pending > 0.009 && String(row?.status ?? '') !== 'approved'
 
   const totalBlock =
     cur === 'USD' ?
@@ -438,24 +427,6 @@ export function RechargeAmountCell({ row }) {
   return (
     <div className="inline-block text-right">
       {totalBlock}
-      {showPending ?
-        <div className="text-[10px] font-semibold mt-1 tabular-nums leading-snug">
-          <span className="text-amber-800">
-            Pendiente {rechargeMoneyFmt(pending)} {cur}
-          </span>
-          {paid > 0.009 ?
-            <span className="text-gray-500 font-normal">
-              {' '}
-              · Pagado {rechargeMoneyFmt(paid)}
-            </span>
-          : null}
-          {Number(row?.surplus_credited) > 0.009 ?
-            <span className="block text-emerald-700 font-medium">
-              Exc. favor CxC +{rechargeMoneyFmt(Number(row.surplus_credited))}
-            </span>
-          : null}
-        </div>
-      : null}
     </div>
   )
 }
