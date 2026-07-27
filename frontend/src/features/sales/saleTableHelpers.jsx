@@ -1,5 +1,6 @@
 /** Columnas tipo QuickBooks compartidas entre Ventas y detalle de cliente. */
 
+import { Children } from 'react'
 import { Check, Eye, Link } from 'lucide-react'
 import {
   formatSaleLedgerDateParts,
@@ -200,9 +201,9 @@ export async function copySalePaymentLink(sale) {
   return 'checkout'
 }
 
-/** Botón minimalista (solo ícono) para copiar enlace de pago (Ventas / recargas BaaS). */
+/** Columna ACCIONES: botones compactos compartidos (Ventas / BaaS). */
 export const TABLE_ACTION_BTN =
-  'p-1.5 rounded-md flex items-center justify-center transition-colors focus:outline-none shrink-0 disabled:opacity-50 disabled:cursor-not-allowed'
+  'p-1 rounded flex items-center justify-center transition-colors focus:outline-none shrink-0 disabled:opacity-50 disabled:cursor-not-allowed'
 
 export const TABLE_ACTION_ICON_SIZE = 16
 export const TABLE_ACTION_ICON_STROKE = 2.25
@@ -217,11 +218,30 @@ export const TABLE_ACTION_VARIANT = {
   restore: 'text-emerald-600 hover:bg-emerald-50',
 }
 
-/** Contenedor flex estándar para la columna ACCIONES (Ventas / BaaS). */
+const TABLE_ACTIONS_WRAP_THRESHOLD = 3
+
+function tableActionChildren(children) {
+  return Children.toArray(children).filter(
+    (child) => child !== null && child !== undefined && child !== false,
+  )
+}
+
+/**
+ * Contenedor inteligente para ACCIONES: 1 fila (≤3 íconos) o cuadrícula 2×N (>3).
+ * Estrategia CSS Grid condicional por cantidad de acciones visibles.
+ */
 export function TableActionsContainer({ children, className = '' }) {
+  const items = tableActionChildren(children)
+  if (items.length === 0) return null
+
+  const useGrid = items.length > TABLE_ACTIONS_WRAP_THRESHOLD
+  const layoutClass = useGrid
+    ? 'grid grid-cols-2 gap-1.5 justify-items-end ml-auto w-fit max-w-[80px] sm:max-w-[100px]'
+    : 'flex items-center justify-end gap-1.5 ml-auto w-fit'
+
   return (
-    <div className={`flex items-center justify-end gap-2 shrink-0 ${className}`.trim()}>
-      {children}
+    <div className={`${layoutClass} shrink-0 ${className}`.trim()}>
+      {items}
     </div>
   )
 }
