@@ -22,6 +22,7 @@ import {
 import api from '../../api/axios'
 import { fetchClientPaymentPrefs } from '../../lib/clientPaymentPrefs'
 import usePermissions from '../../hooks/usePermissions'
+import { useCopyLinkFeedback } from '../../hooks/useCopyLinkFeedback'
 import {
   BAAS_TAB_PERMISSIONS,
   PERMS,
@@ -357,6 +358,7 @@ export default function DistributorsBaaSPage() {
     })
 
   const [toast, setToast] = useState('')
+  const { copiedId: copiedLinkId, copyWithFeedback } = useCopyLinkFeedback()
   const [processingReqId, setProcessingReqId] = useState(null)
 
   const [linkModalOpen, setLinkModalOpen] = useState(false)
@@ -1142,46 +1144,45 @@ export default function DistributorsBaaSPage() {
       Number.isFinite(cid) && cid > 0 ? portalPathByClientIdRef.current.get(cid) : undefined
 
     try {
-      let urlToCopy = resolveRechargePaymentUrl({
-        ...row,
-        portal_path: row?.portal_path ?? cachedPath,
+      await copyWithFeedback(row.id, async () => {
+        let urlToCopy = resolveRechargePaymentUrl({
+          ...row,
+          portal_path: row?.portal_path ?? cachedPath,
+        })
+
+        if (!urlToCopy) {
+          if (!Number.isFinite(cid) || cid < 1) {
+            showToast('Este cliente no tiene enlace de portal disponible.')
+            throw new Error('Sin enlace')
+          }
+          const { data } = await api.get(`/api/v1/distributors/clients/${cid}/portal-link`)
+          const path = String(data?.portal_path ?? '').trim()
+          if (!path) {
+            showToast('Este cliente no tiene enlace de portal disponible.')
+            throw new Error('Sin enlace')
+          }
+          portalPathByClientIdRef.current.set(cid, path)
+          urlToCopy = resolveRechargePaymentUrl({ ...row, portal_path: path })
+        }
+
+        if (!urlToCopy) {
+          showToast('Este cliente no tiene enlace de portal disponible.')
+          throw new Error('Sin enlace')
+        }
+
+        if (import.meta.env?.DEV) {
+          console.debug('[copy-recharge-link]', { clientId: cid, urlToCopy })
+        }
+
+        const mode = await copyOrSharePaymentUrl(urlToCopy, { shareTitle: 'Enlace de Pago' })
+        showToast(
+          mode === 'shared' ? 'Enlace compartido' : 'Enlace del portal del cliente copiado',
+        )
       })
-
-      if (!urlToCopy) {
-        if (!Number.isFinite(cid) || cid < 1) {
-          showToast('Este cliente no tiene enlace de portal disponible.')
-          return
-        }
-        const { data } = await api.get(`/api/v1/distributors/clients/${cid}/portal-link`)
-        const path = String(data?.portal_path ?? '').trim()
-        if (!path) {
-          showToast('Este cliente no tiene enlace de portal disponible.')
-          return
-        }
-        portalPathByClientIdRef.current.set(cid, path)
-        urlToCopy = resolveRechargePaymentUrl({ ...row, portal_path: path })
-      }
-
-      if (!urlToCopy) {
-        showToast('Este cliente no tiene enlace de portal disponible.')
-        return
-      }
-
-      if (import.meta.env?.DEV) {
-        console.debug('[copy-recharge-link]', { clientId: cid, urlToCopy })
-      }
-
-      const mode = await copyOrSharePaymentUrl(urlToCopy, { shareTitle: 'Enlace de Pago' })
-      showToast(
-        mode === 'shared' ? 'Enlace compartido' : 'Enlace del portal del cliente copiado',
-      )
     } catch (err) {
       if (err?.name === 'AbortError') return
       const msg = String(err?.message ?? '')
-      if (msg.includes('Sin enlace') || msg.includes('Nada que copiar')) {
-        showToast('Este cliente no tiene enlace de portal disponible.')
-        return
-      }
+      if (msg.includes('Sin enlace') || msg.includes('Nada que copiar')) return
       showToast('No se pudo copiar el enlace.')
     }
   }
@@ -2409,19 +2410,20 @@ export default function DistributorsBaaSPage() {
 
                           {rechargeTabShowsEditDelete(rechargeActiveTab) ?
                             <>
-                              {r.status === 'pending' && r.client_id ?
-                                <CopyPaymentLinkButton
-                                  onClick={() => handleCopyRechargePortalLink(r)}
-                                  disabled={Boolean(processingReqId) || generatingLink}
-                                  title="Copiar enlace del portal del cliente"
-                                />
-                              : null}
                               {rechargeAwaitingClientReceipt(r) ?
                                 <p className="w-full text-[10px] text-emerald-900 font-medium text-right max-w-[12rem]">
                                   CxC pendiente {formatMoney(Number(r.balance_pending ?? 0))}
                                 </p>
                               : null}
                               <div className="flex items-center justify-end gap-0.5">
+                                {r.status === 'pending' && r.client_id ?
+                                  <CopyPaymentLinkButton
+                                    copied={copiedLinkId === r.id}
+                                    onClick={() => handleCopyRechargePortalLink(r)}
+                                    disabled={Boolean(processingReqId) || generatingLink}
+                                    title="Copiar enlace del portal del cliente"
+                                  />
+                                : null}
                                 <button
                                   type="button"
                                   disabled={(processingReqId != null && processingReqId === r.id) || generatingLink}

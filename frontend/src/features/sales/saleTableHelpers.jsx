@@ -1,6 +1,6 @@
 /** Columnas tipo QuickBooks compartidas entre Ventas y detalle de cliente. */
 
-import { Copy, Eye, Link } from 'lucide-react'
+import { Check, Eye, Link } from 'lucide-react'
 import {
   formatSaleLedgerDateParts,
   formatSaleTableDate,
@@ -200,10 +200,11 @@ export async function copySalePaymentLink(sale) {
   return 'checkout'
 }
 
-/** Botón azul con icono para copiar enlace de pago (Ventas / recargas BaaS). */
+/** Botón minimalista (solo ícono) para copiar enlace de pago (Ventas / recargas BaaS). */
 export function CopyPaymentLinkButton({
   onClick,
-  title = 'Copiar enlace del portal del cliente (permanente)',
+  copied = false,
+  title = 'Copiar enlace del portal del cliente',
   disabled = false,
   className = '',
 }) {
@@ -213,16 +214,19 @@ export function CopyPaymentLinkButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`checkout-pay-link-blink inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
-                 text-[11px] font-bold uppercase tracking-wide whitespace-nowrap
-                 bg-gradient-to-r from-sky-600 to-cyan-500 text-white
-                 hover:from-sky-700 hover:to-cyan-600
-                 shadow-sm border border-white/25 transition-[filter]
-                 shrink-0 max-w-[200px] disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      aria-label={copied ? 'Enlace copiado' : title}
+      className={`p-1.5 rounded-md transition-colors focus:outline-none shrink-0
+                 disabled:opacity-50 disabled:cursor-not-allowed
+                 ${
+                   copied
+                     ? 'text-emerald-500 bg-emerald-50'
+                     : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                 } ${className}`}
     >
-      <Link size={14} strokeWidth={2.35} aria-hidden />
-      <span className="truncate">Copiar enlace pagado</span>
-      <Copy size={13} strokeWidth={2.35} aria-hidden />
+      {copied ?
+        <Check size={14} strokeWidth={2.35} aria-hidden />
+      : <Link size={14} strokeWidth={2.35} aria-hidden />}
+      <span className="sr-only">{copied ? 'Enlace copiado' : 'Copiar enlace'}</span>
     </button>
   )
 }

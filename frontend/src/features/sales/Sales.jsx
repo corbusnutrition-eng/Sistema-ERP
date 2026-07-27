@@ -12,7 +12,7 @@ import {
   Clock,
   RotateCcw,
 } from 'lucide-react'
-import api from '../../api/axios'
+import { useCopyLinkFeedback } from '../../hooks/useCopyLinkFeedback'
 import Swal from 'sweetalert2'
 import { useInventoryData } from '../../context/InventoryDataContext'
 import { useModal } from '../../context/ModalContext'
@@ -266,6 +266,7 @@ function SaleRowActions({
   onCancelApproved,
   onComment,
   onCopyCheckoutLink,
+  copiedLinkId,
   onReactivate,
   onRestore,
   activating,
@@ -315,16 +316,6 @@ function SaleRowActions({
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-3">
-      {isPending && (sale.client_portal_token || sale.payment_token) && (
-        <CopyPaymentLinkButton
-          onClick={() => onCopyCheckoutLink?.(sale)}
-          title={
-            sale.client_portal_token
-              ? 'Copiar enlace del portal del cliente (permanente)'
-              : 'Copiar enlace de pago de esta venta (checkout)'
-          }
-        />
-      )}
       {awaitingStaff && showEditDelete && (
         <>
           <button
@@ -358,6 +349,13 @@ function SaleRowActions({
 
       {showEditDelete ?
         <div className="flex items-center justify-end gap-0.5 shrink-0">
+          {isPending && (sale.client_portal_token || sale.payment_token) ?
+            <CopyPaymentLinkButton
+              copied={copiedLinkId === sale.id}
+              onClick={() => onCopyCheckoutLink?.(sale)}
+              title="Copiar enlace del portal del cliente"
+            />
+          : null}
           <button
             type="button"
             onClick={() => onEdit(sale)}
@@ -458,6 +456,7 @@ export default function Sales() {
   })
   const { refreshInventoryData } = useInventoryData()
   const [editSale, setEditSale] = useState(null)
+  const { copiedId: copiedLinkId, copyWithFeedback } = useCopyLinkFeedback()
 
   const [extendTimerModalSale, setExtendTimerModalSale] = useState(null)
   const [extendTimerMinutes, setExtendTimerMinutes] = useState('10')
@@ -740,11 +739,13 @@ export default function Sales() {
 
   async function handleCopyCheckoutLink(sale) {
     try {
-      const kind = await copySalePaymentLink(sale)
-      setToast(
-        kind === 'portal' ? 'Enlace del portal del cliente copiado' : 'Enlace de pago de la venta copiado',
-      )
-      setTimeout(() => setToast(null), 2600)
+      await copyWithFeedback(sale.id, async () => {
+        const kind = await copySalePaymentLink(sale)
+        setToast(
+          kind === 'portal' ? 'Enlace del portal del cliente copiado' : 'Enlace de pago de la venta copiado',
+        )
+        setTimeout(() => setToast(null), 2600)
+      })
     } catch {
       setToast('No se pudo copiar el enlace.')
       setTimeout(() => setToast(null), 5000)
@@ -1657,6 +1658,7 @@ export default function Sales() {
                           onActivate={handleActivate}
                           onReject={handleRejectPending}
                           onCopyCheckoutLink={handleCopyCheckoutLink}
+                          copiedLinkId={copiedLinkId}
                           onEdit={handleEditSale}
                           onDelete={handleDelete}
                           onCancelApproved={handleCancelApproved}
