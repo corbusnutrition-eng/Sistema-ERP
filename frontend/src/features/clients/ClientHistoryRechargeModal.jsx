@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import api from '../../api/axios'
 import { useModal } from '../../context/ModalContext'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
@@ -107,10 +108,23 @@ export default function ClientHistoryRechargeModal({
   requestId,
   onClose,
   onAfterSave,
-  onLoadingChange,
+  onLoadComplete,
 }) {
   const { openReceivePayment } = useModal()
+  const onCloseRef = useRef(onClose)
+  const onAfterSaveRef = useRef(onAfterSave)
+  const onLoadCompleteRef = useRef(onLoadComplete)
+  const openReceivePaymentRef = useRef(openReceivePayment)
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+    onAfterSaveRef.current = onAfterSave
+    onLoadCompleteRef.current = onLoadComplete
+    openReceivePaymentRef.current = openReceivePayment
+  }, [onClose, onAfterSave, onLoadComplete, openReceivePayment])
+
   const [detail, setDetail] = useState(null)
+  const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(null)
   const [paymentMethods, setPaymentMethods] = useState([])
   const [depositAccounts, setDepositAccounts] = useState([])
@@ -156,7 +170,7 @@ export default function ClientHistoryRechargeModal({
   useEffect(() => {
     if (!requestId) return undefined
     let cancelled = false
-    onLoadingChange?.(true)
+    setLoading(true)
     setLoadError(null)
     setDetail(null)
 
@@ -174,35 +188,37 @@ export default function ClientHistoryRechargeModal({
 
         const st = String(hydrated?.status ?? '').toLowerCase()
         if (st === 'in_review' && isSubsequentCxcAbonoForRecharge(hydrated)) {
-          onLoadingChange?.(false)
-          onClose?.()
-          await openReceivePaymentForRechargeAbono(hydrated, openReceivePayment, onAfterSave)
+          onLoadCompleteRef.current?.()
+          onCloseRef.current?.()
+          await openReceivePaymentForRechargeAbono(
+            hydrated,
+            openReceivePaymentRef.current,
+            onAfterSaveRef.current,
+          )
           return
         }
 
         setDetail(hydrated)
         applyDetailToForm(hydrated)
+        onLoadCompleteRef.current?.()
       } catch (err) {
         if (!cancelled) {
           const d = err?.response?.data?.detail
-          setLoadError(typeof d === 'string' ? d : 'No se pudo cargar el detalle de la recarga.')
+          const msg = typeof d === 'string' ? d : 'No se pudo cargar el detalle de la recarga.'
+          setLoadError(msg)
+          window.alert(msg)
+          onLoadCompleteRef.current?.()
+          onCloseRef.current?.()
         }
       } finally {
-        if (!cancelled) onLoadingChange?.(false)
+        if (!cancelled) setLoading(false)
       }
     })()
 
     return () => {
       cancelled = true
     }
-  }, [
-    requestId,
-    applyDetailToForm,
-    onAfterSave,
-    onClose,
-    onLoadingChange,
-    openReceivePayment,
-  ])
+  }, [requestId, applyDetailToForm])
 
   const isDepositGroupingParent = useCallback(
     (accId) =>
@@ -256,12 +272,32 @@ export default function ClientHistoryRechargeModal({
   }, [])
 
   if (!requestId) return null
-  if (loadError) {
-    window.alert(loadError)
-    onClose?.()
-    return null
+
+  if (loading || !detail) {
+    return (
+      <div
+        className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4"
+        role="presentation"
+      >
+        <div className="flex items-center gap-3 rounded-xl bg-white px-5 py-4 shadow-xl ring-1 ring-gray-200">
+          <Loader2 className="h-6 w-6 animate-spin text-emerald-600" aria-hidden />
+          <p className="text-sm font-medium text-gray-700">Cargando solicitud de recarga…</p>
+          <button
+            type="button"
+            onClick={() => {
+              onLoadCompleteRef.current?.()
+              onCloseRef.current?.()
+            }}
+            className="ml-2 text-xs font-semibold text-gray-500 hover:text-gray-800 underline"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    )
   }
-  if (!detail) return null
+
+  if (loadError) return null
 
   const existingReceiptUrl =
     detail.receipt_url?.trim?.()

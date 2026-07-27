@@ -303,6 +303,15 @@ export default function ClientDetail() {
     setRechargeModalId(rid)
   }, [])
 
+  const handleRechargeModalClose = useCallback(() => {
+    setRechargeModalId(null)
+    setWalletRechargeModalLoadingId(null)
+  }, [])
+
+  const handleRechargeModalLoadComplete = useCallback(() => {
+    setWalletRechargeModalLoadingId(null)
+  }, [])
+
   const copyCredToClipboard = useCallback(async (label, raw) => {
     const text = String(raw ?? '').trim()
     if (!text) return
@@ -605,7 +614,13 @@ export default function ClientDetail() {
           toastInfo('No tienes permiso para ver recargas BaaS.')
           return
         }
-        openWalletRechargeFromHistory(Number(entry.entity_id))
+        try {
+          openWalletRechargeFromHistory(Number(entry.entity_id))
+        } catch (err) {
+          console.error('[ClientDetail] open recharge failed:', err)
+          setWalletRechargeModalLoadingId(null)
+          window.alert('No se pudo abrir la recarga.')
+        }
         return
       }
 
@@ -1477,14 +1492,9 @@ export default function ClientDetail() {
       {rechargeModalId != null && (
         <ClientHistoryRechargeModal
           requestId={rechargeModalId}
-          onClose={() => {
-            setRechargeModalId(null)
-            setWalletRechargeModalLoadingId(null)
-          }}
+          onClose={handleRechargeModalClose}
           onAfterSave={refreshAfterClientTransaction}
-          onLoadingChange={(loading) => {
-            setWalletRechargeModalLoadingId(loading ? rechargeModalId : null)
-          }}
+          onLoadComplete={handleRechargeModalLoadComplete}
         />
       )}
 
