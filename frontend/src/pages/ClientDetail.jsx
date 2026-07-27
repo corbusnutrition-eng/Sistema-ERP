@@ -21,6 +21,7 @@ import usePermissions from '../hooks/usePermissions'
 import { PERMS } from '../lib/permissions'
 import { confirmVoidTransaction } from '../utils/confirmVoidTransaction'
 import NuevaVentaModal from '../features/sales/components/NuevaVentaModal'
+import ViewPaymentModal from '../features/sales/components/ViewPaymentModal'
 import {
   ClientDetailNotesCell,
   SaleAmountCell,
@@ -33,7 +34,11 @@ import {
 } from '../features/sales/saleTableHelpers'
 import { EditModal } from './Clientes'
 import { formatDateTimeEcuador } from '../utils/datetime'
-import VerRecargaModal from '../features/settings/VerRecargaModal'
+import NewRechargeModal, {
+  newRechargeLineRow,
+  normalizeClienteDesdeWebhook,
+} from '../features/settings/NewRechargeModal'
+import { normalizeCurrencyCode } from '../lib/currencyCode'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -189,19 +194,20 @@ function ledgerEntryIsVoidable(entry) {
   if (entry.entity_kind === 'sale') {
     return st === 'approved' || st === 'partially_paid'
   }
-  if (entry.entity_kind === 'payment') {
+  if (entry.entity_kind === 'payment' || entry.entity_kind === 'wallet_recharge_payment') {
     return st === 'approved' || st === 'aprobado' || st === 'pending_review' || st === 'en revisión'
   }
   return false
 }
 
 function classifyLedgerEntry(entry) {
-  const isPayment = entry?.type === 'Pago' || entry?.entity_kind === 'payment'
-  const isRecharge =
-    entry?.type === 'RECARGA'
-    || entry?.type === 'Recarga BaaS'
-    || entry?.entity_kind === 'wallet_recharge'
+  const isPayment =
+    entry?.type === 'Pago'
+    || entry?.entity_kind === 'payment'
     || entry?.entity_kind === 'wallet_recharge_payment'
+  const isRecharge =
+    !isPayment
+    && (entry?.type === 'RECARGA' || entry?.entity_kind === 'wallet_recharge')
   const isSale = entry?.entity_kind === 'sale'
   const isBaasTransfer =
     entry?.entity_kind === 'wallet_transfer'
@@ -229,6 +235,35 @@ function formatApiErrorDetail(err, fallback) {
   return fallback
 }
 
+const noop = () => {}
+
+/** Líneas de conceptos para `NewRechargeModal` (solo lectura) desde detalle ERP. */
+function rechargeLinesFromAdminDetail(row) {
+  if (!row || typeof row !== 'object') return []
+  const cur = normalizeCurrencyCode(row.recharge_currency, 'USD')
+  const stored = row.recharge_detail_lines
+  if (!Array.isArray(stored) || stored.length === 0) {
+    const base = newRechargeLineRow()
+    base.producto = 'Recarga de saldo BaaS'
+    base.tipo_moneda = cur
+    base.saldo_recargar = row.amount_requested != null ? String(row.amount_requested) : ''
+    return [base]
+  }
+  return stored.map((li, idx) => {
+    const line = newRechargeLineRow()
+    const rawId = li?.id ?? li?.line_id ?? li?.concept_id
+    line.id =
+      rawId != null && String(rawId).trim() !== ''
+        ? `wr-li-${String(rawId)}`
+        : `wr-ro-${String(row?.id ?? 'x')}-${idx}`
+    line.producto = String(li.product_name ?? li.producto ?? 'Saldo BaaS')
+    line.tipo_moneda = normalizeCurrencyCode(li.tipo_moneda ?? li.balance_currency ?? cur, cur)
+    const imp = li.importe ?? li.saldo_recargar ?? li.line_amount ?? li.balance_to_recharge
+    line.saldo_recargar = imp != null ? String(imp) : ''
+    return line
+  })
+}
+
 export default function ClientDetail() {
   const { clientId } = useParams()
   const navigate = useNavigate()
@@ -238,8 +273,6 @@ export default function ClientDetail() {
   const canVoidSales = hasPermission(PERMS.SALES_INVOICES_EDIT)
   const canVoidPayments = hasPermission(PERMS.ACCOUNTING_RECEIVABLES_EDIT)
   const canViewSalesDetail = hasPermission(PERMS.SALES_INVOICES_VIEW)
-  const canEditPayments =
-    hasPermission(PERMS.ACCOUNTING_RECEIVABLES_EDIT) || hasPermission(PERMS.SALES_RECEIPTS_EDIT)
   const canViewRechargeDetail = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_VIEW)
 
   const idNum = Number(clientId)
@@ -257,6 +290,8 @@ export default function ClientDetail() {
   const [txnMenuOpen, setTxnMenuOpen] = useState(false)
   const [walletRechargeModalLoadingId, setWalletRechargeModalLoadingId] = useState(null)
   const [walletRechargeViewerDetail, setWalletRechargeViewerDetail] = useState(null)
+  const [paymentViewId, setPaymentViewId] = useState(null)
+  const [depositAccounts, setDepositAccounts] = useState([])
   const [devToast, setDevToast] = useState(null)
   const [detailTab, setDetailTab] = useState('historial')
   const [subClients, setSubClients] = useState([])
@@ -460,7 +495,52 @@ export default function ClientDetail() {
   useEffect(() => {
     setRevertConfirmOpen(false)
     setRevertTarget(null)
+    setPaymentViewId(null)
+    setWalletRechargeViewerDetail(null)
   }, [idNum])
+
+  useEffect(() => {
+    if (!paymentViewId) return undefined
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data } = await api.get('/api/v1/accounts/deposit-options')
+        if (!cancelled) setDepositAccounts(Array.isArray(data) ? data : [])
+      } catch {
+        if (!cancelled) setDepositAccounts([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [paymentViewId])
+
+  const rechargeModalClientSnapshot = useMemo(() => {
+    const detail = walletRechargeViewerDetail
+    if (!detail) return null
+    const rawName = detail.client_name != null ? String(detail.client_name).trim() : ''
+    return normalizeClienteDesdeWebhook({
+      id: detail.client_id,
+      name: rawName || 'Cliente',
+      full_name: rawName || 'Cliente',
+      email: detail.client_email,
+      username: detail.client_username,
+      iptv_username: detail.client_username,
+    })
+  }, [walletRechargeViewerDetail])
+
+  const rechargeModalLineItems = useMemo(
+    () => rechargeLinesFromAdminDetail(walletRechargeViewerDetail),
+    [walletRechargeViewerDetail],
+  )
+
+  const rechargeModalComment = useMemo(() => {
+    const detail = walletRechargeViewerDetail
+    if (!detail) return ''
+    const a = detail.admin_note != null ? String(detail.admin_note).trim() : ''
+    const n = detail.notes_preview != null ? String(detail.notes_preview).trim() : ''
+    return [a, n].filter(Boolean).join('\n\n')
+  }, [walletRechargeViewerDetail])
 
   useEffect(() => {
     if (menuSaleId == null) return
@@ -560,9 +640,9 @@ export default function ClientDetail() {
   const handleOpenTransactionDetails = useCallback(
     async (entry) => {
       if (!entry) return
-      const { isPayment, isRecharge, isSale } = classifyLedgerEntry(entry)
+      const kind = entry.entity_kind
 
-      if (isSale) {
+      if (kind === 'sale') {
         if (!canViewSalesDetail) {
           toastInfo('No tienes permiso para ver facturas.')
           return
@@ -583,20 +663,14 @@ export default function ClientDetail() {
         return
       }
 
-      if (isPayment) {
-        const paymentId = entry.payment_id ?? entry.entity_id
-        if (!paymentId) return
-        openReceivePayment(refreshAfterClientTransaction, {
-          ...(canEditPayments ? {} : { viewMode: true }),
-          paymentId,
-          paymentNumber: entry.ref_number,
-          clientId: idNum,
-          receiptUrl: entry.receipt_file_url,
-        })
+      if (kind === 'payment' || kind === 'wallet_recharge_payment') {
+        const paymentId = Number(entry.payment_id ?? entry.entity_id)
+        if (!Number.isFinite(paymentId) || paymentId < 1) return
+        setPaymentViewId(paymentId)
         return
       }
 
-      if (isRecharge) {
+      if (kind === 'wallet_recharge') {
         if (!canViewRechargeDetail) {
           toastInfo('No tienes permiso para ver recargas BaaS.')
           return
@@ -608,13 +682,9 @@ export default function ClientDetail() {
       toastInfo('Este tipo de movimiento no tiene detalle editable.')
     },
     [
-      canEditPayments,
       canViewRechargeDetail,
       canViewSalesDetail,
-      idNum,
-      openReceivePayment,
       openWalletRechargeViewer,
-      refreshAfterClientTransaction,
       sales,
       toastInfo,
     ],
@@ -1081,11 +1151,13 @@ export default function ClientDetail() {
                     const voidable =
                       ledgerEntryIsVoidable(entry)
                       && ((entry.entity_kind === 'sale' && canVoidSales)
-                        || (entry.entity_kind === 'payment' && canVoidPayments))
+                        || ((entry.entity_kind === 'payment' || entry.entity_kind === 'wallet_recharge_payment')
+                          && canVoidPayments))
                     const isVoiding = voidingKey === rowKey
                     const showDetailAction = ledgerEntrySupportsDetailModal(entry)
                     const detailLoading =
-                      isRecharge && walletRechargeModalLoadingId === Number(entry.entity_id)
+                      entry.entity_kind === 'wallet_recharge'
+                      && walletRechargeModalLoadingId === Number(entry.entity_id)
                     return (
                       <Fragment key={rowKey}>
                         <tr
@@ -1181,9 +1253,7 @@ export default function ClientDetail() {
                                         ? 'Ver factura'
                                         : 'Ver / editar factura'
                                       : isPayment
-                                        ? canEditPayments
-                                          ? 'Ver / editar pago'
-                                          : 'Ver pago'
+                                        ? 'Ver pago'
                                         : 'Ver recarga'
                                   }
                                 >
@@ -1307,7 +1377,7 @@ export default function ClientDetail() {
                                           className="text-sm font-medium text-indigo-600 hover:text-indigo-700 px-2 py-1 rounded-lg hover:bg-indigo-50"
                                           onClick={() => void handleOpenTransactionDetails(entry)}
                                         >
-                                          {canEditPayments ? 'Ver/editar' : 'Ver detalles'}
+                                          Ver pago
                                         </button>
                                         {canVoidPayments && ledgerEntryIsVoidable(entry) && (
                                           <button
@@ -1472,12 +1542,59 @@ export default function ClientDetail() {
       )}
 
       {walletRechargeViewerDetail ? (
-        <VerRecargaModal
+        <NewRechargeModal
           open
-          detail={walletRechargeViewerDetail}
+          editMode={false}
+          isReadOnly
+          clientSnapshotForEdit={rechargeModalClientSnapshot}
+          readOnlyAuditRequestId={walletRechargeViewerDetail.id}
+          summarySubtotalOverride={walletRechargeViewerDetail.amount_requested}
+          summaryBalancePendingOverride={walletRechargeViewerDetail.balance_pending}
+          discountBilling={
+            walletRechargeViewerDetail.discount != null && Number(walletRechargeViewerDetail.discount) > 0
+              ? String(walletRechargeViewerDetail.discount)
+              : ''
+          }
+          rechargeLineItems={rechargeModalLineItems}
+          onRechargeLineItemsChange={noop}
+          depositUsd=""
+          onDepositUsdChange={noop}
+          rechargeComment={rechargeModalComment}
+          onRechargeCommentChange={noop}
+          salePaymentMethodOptions={[]}
+          depositAccountOptionsByMethodId={{}}
+          selectedPaymentMethodIds={[]}
+          togglePaymentMethodId={noop}
+          selectedDepositAccountIds={[]}
+          toggleDepositAccountId={noop}
+          depositCurrencyMismatch={false}
+          depositAccountCurrencyCode=""
+          linkReceiptFile={null}
+          onLinkReceiptFileChange={noop}
+          generatingLink={false}
+          onSubmitGenerateLink={noop}
+          linkedPaymentsForReadOnly={
+            Array.isArray(walletRechargeViewerDetail.linked_payments)
+              ? walletRechargeViewerDetail.linked_payments
+              : []
+          }
           onClose={() => setWalletRechargeViewerDetail(null)}
+          linkClientId={
+            walletRechargeViewerDetail.client_id != null
+              ? String(walletRechargeViewerDetail.client_id)
+              : ''
+          }
+          onLinkClientIdChange={noop}
         />
       ) : null}
+
+      {paymentViewId != null && (
+        <ViewPaymentModal
+          paymentId={paymentViewId}
+          depositAccounts={depositAccounts}
+          onClose={() => setPaymentViewId(null)}
+        />
+      )}
 
       {editSale && (
         <NuevaVentaModal
