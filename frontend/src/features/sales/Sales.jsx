@@ -46,7 +46,7 @@ import SalesFilters from './components/SalesFilters'
 import SalesTabs from './components/SalesTabs'
 import SalesTableSkeleton from './components/SalesTableSkeleton'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
-import { confirmVoidTransaction } from '../../utils/confirmVoidTransaction'
+import { confirmVoidInvoiceWithMasterPin } from '../../utils/confirmVoidTransaction'
 import {
   useTableResize,
   SALES_TABLE_COLUMN_WIDTHS,
@@ -951,15 +951,15 @@ export default function Sales() {
   async function handleCancelApproved(sale) {
     if (sale.status !== 'approved' && sale.status !== 'partially_paid') return
 
-    const confirmed = await confirmVoidTransaction({
+    const pin = await confirmVoidInvoiceWithMasterPin({
       entityLabel: `factura ${formatSaleDocNo(sale)}`,
       includeInventoryNote: true,
     })
-    if (!confirmed) return
+    if (!pin) return
 
     setCancellingId(sale.id)
     try {
-      await api.post(`/api/v1/sales/${sale.id}/void`)
+      await api.post(`/api/v1/sales/${sale.id}/void`, { pin })
       await fetchSales()
       await refreshInventoryData()
       setFilter('cancelled')

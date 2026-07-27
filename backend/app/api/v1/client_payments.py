@@ -50,6 +50,7 @@ from app.services.client_payment_service import (
     void_client_payment,
     wallet_recharge_ref_number,
 )
+from app.security.master_pin import require_master_pin
 from app.security.money_validation import validate_form_money
 from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
 
@@ -602,6 +603,7 @@ def void_payment(
     body: Optional[VoidTransactionBody] = None,
 ) -> VoidTransactionResponse:
     """Anula un pago CxC: revierte asientos contables y restaura saldos / CxC."""
+    require_master_pin(body.pin if body else None)
     p = db.get(ClientPayment, payment_id)
     if p is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado.")

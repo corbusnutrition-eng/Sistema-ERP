@@ -42,6 +42,7 @@ from app.models.user import User
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.models.wallet_transaction import WalletTransaction
 from app.schemas.client_product_prices import ClientProductPriceItem, FlujoPackageForPricing
+from app.schemas.client_payments import VoidTransactionBody
 from app.schemas.distributors import (
     ApproveWalletRechargePayload,
     ApproveWalletRechargeResponse,
@@ -1747,6 +1748,40 @@ def cancel_wallet_recharge_request(
         )
 
     req.status = REQ_STATUS_CANCELED
+    db.commit()
+    db.refresh(req)
+    return req
+
+
+@router.post("/recharge-requests/{request_id}/void", response_model=WalletRechargeRequestRead)
+def void_wallet_recharge_request(
+    request_id: int,
+    db: DbDep,
+    current_user: BaasRechargeEditDep,
+    body: Optional[VoidTransactionBody] = Body(None),
+) -> WalletRechargeRequest:
+    """
+    Anula una recarga BaaS activada: revierte billetera entregada, pagos CxC vinculados
+    y asientos contables (requiere PIN maestro).
+    """
+    from app.security.master_pin import require_master_pin
+    from app.services.client_payment_service import void_active_wallet_recharge_record
+
+    req = db.get(WalletRechargeRequest, request_id)
+    if req is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
+
+    require_master_pin(body.pin if body else None)
+    reason = (body.reason if body else None) or ""
+
+    try:
+        req = void_active_wallet_recharge_record(db, request_id, reason=reason)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     db.commit()
     db.refresh(req)
     return req

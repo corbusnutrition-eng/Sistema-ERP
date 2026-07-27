@@ -50,6 +50,7 @@ from app.schemas.client import ClientSalePickerRow
 from app.schemas.hotmart_links import hotmart_links_from_model
 from app.schemas.portal_public import PortalInstantActivationResponse
 from app.schemas.client_payments import VoidTransactionBody
+from app.security.master_pin import require_master_pin
 from app.schemas.sales import (
     LinkedPaymentOut,
     PendingReviewPaymentOut,
@@ -3731,6 +3732,7 @@ def void_sale(
     _: SalesInvoicesEditDep,
     body: Optional[VoidTransactionBody] = None,
 ) -> SaleResponse:
+    require_master_pin(body.pin if body else None)
     reason = (body.reason if body else None) or ""
     return _void_active_sale_record(db, sale_id, reason=reason)
 

@@ -14,6 +14,12 @@ class VoidTransactionBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     reason: Optional[str] = Field(default=None, max_length=2000)
+    pin: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=32,
+        description="PIN maestro requerido para anular facturas desde el historial.",
+    )
 
 
 class VoidTransactionResponse(BaseModel):
@@ -21,6 +27,7 @@ class VoidTransactionResponse(BaseModel):
     status: str = "voided"
     sale_id: Optional[int] = None
     payment_id: Optional[int] = None
+    wallet_recharge_id: Optional[int] = None
 
 
 class PaymentAllocationOut(BaseModel):

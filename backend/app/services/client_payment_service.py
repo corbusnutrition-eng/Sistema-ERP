@@ -2783,6 +2783,153 @@ def void_sale_accounting_state(
     db.flush()
 
 
+def linked_client_payment_ids_for_wallet_recharge(db: Session, wallet_recharge_id: int) -> list[int]:
+    """Ids de pagos CxC vinculados a una solicitud BaaS (allocations + meta en notas)."""
+    wr_id = int(wallet_recharge_id)
+    ids: set[int] = set()
+
+    for (pid,) in (
+        db.query(PaymentAllocation.payment_id)
+        .filter(PaymentAllocation.wallet_recharge_id == wr_id)
+        .distinct()
+        .all()
+    ):
+        ids.add(int(pid))
+
+    from app.services.wallet_recharge_client_payment import parse_notes_meta_wallet_recharge_id
+
+    candidates = (
+        db.query(ClientPayment)
+        .filter(
+            ClientPayment.status.in_(
+                (ClientPaymentStatus.pending_review, ClientPaymentStatus.approved)
+            ),
+        )
+        .all()
+    )
+    for cp in candidates:
+        if parse_notes_meta_wallet_recharge_id(cp.notes) == wr_id:
+            ids.add(int(cp.id))
+
+    return sorted(ids)
+
+
+def void_wallet_recharge_linked_client_payments(
+    db: Session,
+    req: WalletRechargeRequest,
+    *,
+    reason: str = "",
+) -> None:
+    """Revierte y rechaza pagos CxC vinculados a una recarga BaaS."""
+    wr_id = int(req.id)
+    ref = wallet_recharge_ref_number(wr_id)
+    base_reason = (reason or "").strip() or f"Reversión por anulación {ref}"
+
+    seen: set[int] = set()
+    for pid in linked_client_payment_ids_for_wallet_recharge(db, wr_id):
+        if pid in seen:
+            continue
+        seen.add(pid)
+        cp = db.get(ClientPayment, pid)
+        if cp is None or cp.status == ClientPaymentStatus.rejected:
+            continue
+        void_client_payment(
+            db,
+            cp,
+            reason=f"{base_reason} — {cp.payment_number or pid}",
+            allow_approved_non_credit=True,
+        )
+
+    req.amount_paid = 0.0
+    req.balance_pending = 0.0
+    db.flush()
+
+
+def void_wallet_recharge_accounting_state(
+    db: Session,
+    req: WalletRechargeRequest,
+    *,
+    reason: str = "",
+) -> None:
+    """Revierte devengo recarga BaaS y pagos vinculados."""
+    wr_id = int(req.id)
+    ref = wallet_recharge_ref_number(wr_id)
+    base_reason = (reason or "").strip() or f"Anulación {ref}"
+
+    void_wallet_recharge_linked_client_payments(db, req, reason=base_reason)
+
+    from app.models.journal_entry import JournalReferenceType
+    from app.services.accounting_engine import reverse_journals_by_reference
+
+    reverse_journals_by_reference(
+        db,
+        JournalReferenceType.recarga.value,
+        wr_id,
+        reason=base_reason,
+    )
+    db.flush()
+
+
+def void_active_wallet_recharge_record(
+    db: Session,
+    request_id: int,
+    *,
+    reason: str = "",
+) -> WalletRechargeRequest:
+    """
+    Anula una recarga BaaS activada: revierte billetera entregada, pagos CxC y asientos contables.
+    """
+    from app.wallet_recharge_helpers import (
+        REQ_STATUS_APPROVED,
+        REQ_STATUS_CANCELED,
+        REQ_STATUS_PARTIALLY_PAID,
+        REQ_STATUS_REJECTED,
+    )
+    from fastapi import HTTPException, status
+
+    req = db.get(WalletRechargeRequest, int(request_id))
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Solicitud de recarga {request_id} no encontrada.",
+        )
+
+    st = str(getattr(req, "status", "") or "")
+    if st in (REQ_STATUS_CANCELED, REQ_STATUS_REJECTED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta factura BaaS ya está anulada o no admite anulación.",
+        )
+    if st not in (REQ_STATUS_APPROVED, REQ_STATUS_PARTIALLY_PAID):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Solo se pueden anular recargas activadas (approved o partially_paid).",
+        )
+
+    client = db.get(Client, int(req.client_id))
+    ref = wallet_recharge_ref_number(int(req.id))
+    rev_reason = (reason or "").strip() or f"Reversión por anulación de {ref}"
+
+    credited = _wallet_credited_for_recharge_request(db, req)
+    if credited > _WR_EPS and client is not None:
+        from app.services.wallet_balance_service import subtract_client_wallet_balance
+
+        cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+        subtract_client_wallet_balance(db, client, cur, credited)
+
+    void_wallet_recharge_accounting_state(db, req, reason=rev_reason)
+
+    req.status = REQ_STATUS_CANCELED
+    req.balance_pending = 0.0
+    req.amount_paid = 0.0
+
+    from app.services.accounting_engine import sync_wallet_recharge_accrual_journal
+
+    sync_wallet_recharge_accrual_journal(db, req, strict=False)
+    db.flush()
+    return req
+
+
 def _is_initial_encapsulated_payment(payment: ClientPayment) -> bool:
     """Solo el cobro encapsulado del checkout / primer depósito de la venta."""
     notes = str(payment.notes or "")

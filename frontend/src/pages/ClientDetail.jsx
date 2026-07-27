@@ -19,7 +19,7 @@ import api from '../api/axios'
 import { useModal } from '../context/ModalContext'
 import usePermissions from '../hooks/usePermissions'
 import { PERMS } from '../lib/permissions'
-import { confirmVoidTransaction } from '../utils/confirmVoidTransaction'
+import { confirmVoidInvoiceWithMasterPin, confirmVoidTransaction } from '../utils/confirmVoidTransaction'
 import NuevaVentaModal from '../features/sales/components/NuevaVentaModal'
 import { buildReceivePaymentPrefill } from '../features/sales/receivePaymentRouting'
 import {
@@ -190,10 +190,17 @@ function ledgerEntryIsVoidable(entry) {
   if (entry.entity_kind === 'sale') {
     return st === 'approved' || st === 'partially_paid'
   }
+  if (entry.entity_kind === 'wallet_recharge') {
+    return st === 'activado' || st === 'approved' || st === 'partially_paid'
+  }
   if (entry.entity_kind === 'payment' || entry.entity_kind === 'wallet_recharge_payment') {
     return st === 'approved' || st === 'aprobado' || st === 'pending_review' || st === 'en revisión'
   }
   return false
+}
+
+function ledgerEntryIsInvoice(entry) {
+  return entry?.entity_kind === 'sale' || entry?.entity_kind === 'wallet_recharge'
 }
 
 function classifyLedgerEntry(entry) {
@@ -264,6 +271,7 @@ export default function ClientDetail() {
   const canEdit = hasPermission(PERMS.CLIENTS_EDIT)
   const canVoidSales = hasPermission(PERMS.SALES_INVOICES_EDIT)
   const canVoidPayments = hasPermission(PERMS.ACCOUNTING_RECEIVABLES_EDIT)
+  const canVoidRecharges = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_EDIT)
   const canViewSalesDetail = hasPermission(PERMS.SALES_INVOICES_VIEW)
   const canViewRechargeDetail = hasPermission(PERMS.BAAS_RECHARGE_REQUESTS_VIEW)
 
@@ -370,21 +378,28 @@ export default function ClientDetail() {
     await Promise.all([fetchClient(), fetchSales(), fetchLedger()])
   }, [fetchClient, fetchSales, fetchLedger])
 
-  const handleVoidLedgerSale = useCallback(
+  const handleVoidLedgerInvoice = useCallback(
     async (entry) => {
-      const saleId = Number(entry?.entity_id)
-      if (!Number.isFinite(saleId) || saleId < 1) return
-      const confirmed = await confirmVoidTransaction({
-        entityLabel: `factura ${entry.ref_number || saleId}`,
-        includeInventoryNote: true,
-      })
-      if (!confirmed) return
+      const isSale = entry?.entity_kind === 'sale'
+      const entityId = Number(entry?.entity_id)
+      if (!Number.isFinite(entityId) || entityId < 1) return
 
-      const rowKey = `sale-${saleId}`
+      const pin = await confirmVoidInvoiceWithMasterPin({
+        entityLabel: `${isSale ? 'factura' : 'recarga'} ${entry.ref_number || entityId}`,
+        includeInventoryNote: isSale,
+      })
+      if (!pin) return
+
+      const rowKey = `${entry.entity_kind}-${entityId}`
       setVoidingKey(rowKey)
       try {
-        await api.post(`/api/v1/sales/${saleId}/void`)
-        toastInfo('Factura anulada. Inventario devuelto y asientos revertidos.')
+        if (isSale) {
+          await api.post(`/api/v1/sales/${entityId}/void`, { pin })
+          toastInfo('Factura anulada. Inventario devuelto y asientos revertidos.')
+        } else {
+          await api.post(`/api/v1/distributors/recharge-requests/${entityId}/void`, { pin })
+          toastInfo('Recarga anulada. Saldo revertido y asientos contables revertidos.')
+        }
         await reloadClientFinancials()
       } catch (err) {
         window.alert(formatApiErrorDetail(err, 'No se pudo anular la factura.'))
@@ -395,20 +410,21 @@ export default function ClientDetail() {
     [reloadClientFinancials, toastInfo],
   )
 
+  const handleVoidLedgerSale = handleVoidLedgerInvoice
+
   const handleVoidLedgerPayment = useCallback(
     async (entry) => {
       const paymentId = Number(entry?.payment_id ?? entry?.entity_id)
       if (!Number.isFinite(paymentId) || paymentId < 1) return
-      const confirmed = await confirmVoidTransaction({
+      const pin = await confirmVoidTransaction({
         entityLabel: `pago ${entry.ref_number || paymentId}`,
-        includeInventoryNote: false,
       })
-      if (!confirmed) return
+      if (!pin) return
 
       const rowKey = `payment-${paymentId}`
       setVoidingKey(rowKey)
       try {
-        await api.post(`/api/v1/payments/${paymentId}/void`)
+        await api.post(`/api/v1/payments/${paymentId}/void`, { pin })
         toastInfo('Pago anulado. Asientos contables revertidos.')
         await reloadClientFinancials()
       } catch (err) {
@@ -1124,6 +1140,7 @@ export default function ClientDetail() {
                     const voidable =
                       ledgerEntryIsVoidable(entry)
                       && ((entry.entity_kind === 'sale' && canVoidSales)
+                        || (entry.entity_kind === 'wallet_recharge' && canVoidRecharges)
                         || ((entry.entity_kind === 'payment' || entry.entity_kind === 'wallet_recharge_payment')
                           && canVoidPayments))
                     const isVoiding = voidingKey === rowKey
@@ -1235,8 +1252,8 @@ export default function ClientDetail() {
                                   disabled={isVoiding}
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    if (entry.entity_kind === 'sale') {
-                                      void handleVoidLedgerSale(entry)
+                                    if (ledgerEntryIsInvoice(entry)) {
+                                      void handleVoidLedgerInvoice(entry)
                                     } else {
                                       void handleVoidLedgerPayment(entry)
                                     }
@@ -1320,21 +1337,40 @@ export default function ClientDetail() {
                                         )}
                                       </div>
                                     ) : isRecharge ? (
-                                      <button
-                                        type="button"
-                                        disabled={walletRechargeModalLoadingId != null}
-                                        className="text-sm font-medium text-fuchsia-700 hover:text-fuchsia-900 px-2 py-1 rounded-lg hover:bg-fuchsia-50 disabled:opacity-45 disabled:pointer-events-none"
-                                        onClick={() => void handleOpenTransactionDetails(entry)}
-                                      >
-                                        {walletRechargeModalLoadingId === Number(entry.entity_id) ? (
-                                          <span className="inline-flex items-center gap-1.5 tabular-nums">
-                                            <Loader2 size={14} className="animate-spin shrink-0" aria-hidden />
-                                            Cargando…
-                                          </span>
-                                        ) : (
-                                          'Ver detalles'
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <button
+                                          type="button"
+                                          disabled={walletRechargeModalLoadingId != null}
+                                          className="text-sm font-medium text-fuchsia-700 hover:text-fuchsia-900 px-2 py-1 rounded-lg hover:bg-fuchsia-50 disabled:opacity-45 disabled:pointer-events-none"
+                                          onClick={() => void handleOpenTransactionDetails(entry)}
+                                        >
+                                          {walletRechargeModalLoadingId === Number(entry.entity_id) ? (
+                                            <span className="inline-flex items-center gap-1.5 tabular-nums">
+                                              <Loader2 size={14} className="animate-spin shrink-0" aria-hidden />
+                                              Cargando…
+                                            </span>
+                                          ) : (
+                                            'Ver detalles'
+                                          )}
+                                        </button>
+                                        {canVoidRecharges && ledgerEntryIsVoidable(entry) && (
+                                          <button
+                                            type="button"
+                                            disabled={voidingKey === rowKey}
+                                            className="inline-flex items-center gap-1 text-xs font-semibold text-red-700
+                                                       hover:text-red-800 px-2 py-1 rounded-lg hover:bg-red-50 ring-1 ring-red-200/80
+                                                       disabled:opacity-45 disabled:pointer-events-none"
+                                            onClick={() => void handleVoidLedgerInvoice(entry)}
+                                          >
+                                            {voidingKey === rowKey ? (
+                                              <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
+                                            ) : (
+                                              <Ban size={13} aria-hidden />
+                                            )}
+                                            Anular
+                                          </button>
                                         )}
-                                      </button>
+                                      </div>
                                     ) : isPayment ? (
                                       <div className="flex flex-wrap items-center gap-2">
                                         <button
