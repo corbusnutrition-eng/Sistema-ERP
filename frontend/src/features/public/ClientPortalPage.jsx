@@ -1142,56 +1142,91 @@ function filterPortalAccountsByCurrency(accounts, currency) {
   return filtered.length > 0 ? filtered : list
 }
 
-/** Árbol padre→hijas: prioriza métodos de la orden; luego asignación CRM del cliente. */
-function buildPortalPaymentTree(data, rowMethods, rowAccounts, currency, rowTree) {
-  const fromTree = Array.isArray(rowTree) ? rowTree : []
-  if (fromTree.length > 0 && fromTree.some((m) => Array.isArray(m?.deposit_accounts))) {
-    return fromTree
-      .map((m) => ({
-        id: Number(m?.id),
-        name: m?.name ?? '',
-        deposit_accounts: filterPortalAccountsByCurrency(m?.deposit_accounts, currency),
-      }))
-      .filter((m) => Number.isFinite(m.id) && (m.deposit_accounts?.length ?? 0) > 0)
-  }
+function normalizePortalPaymentTreeNodes(nodes, currency) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((m) => ({
+      id: Number(m?.id),
+      name: m?.name ?? '',
+      deposit_accounts: filterPortalAccountsByCurrency(m?.deposit_accounts, currency),
+    }))
+    .filter((m) => Number.isFinite(m.id) && (m.deposit_accounts?.length ?? 0) > 0)
+}
 
-  const methods = Array.isArray(rowMethods) ? rowMethods : []
-  if (methods.length > 0) {
-    const accounts = filterPortalAccountsByCurrency(rowAccounts, currency)
-    return methods
-      .map((m) => {
-        const methodId = Number(m?.id)
-        const deposit_accounts = accounts.filter((d) => {
-          const depPmId = d?.payment_method_id
-          if (depPmId != null && String(depPmId).trim() !== '') {
-            return String(depPmId) === String(methodId)
-          }
-          return false
-        })
-        return {
-          id: methodId,
-          name: m?.name ?? '',
-          deposit_accounts,
+function buildPortalPaymentTreeFromFlatMethods(methods, accounts, currency) {
+  const mlist = Array.isArray(methods) ? methods : []
+  if (!mlist.length) return []
+  const accs = filterPortalAccountsByCurrency(accounts, currency)
+  return mlist
+    .map((m) => {
+      const methodId = Number(m?.id)
+      const deposit_accounts = accs.filter((d) => {
+        const depPmId = d?.payment_method_id
+        if (depPmId != null && String(depPmId).trim() !== '') {
+          return String(depPmId) === String(methodId)
         }
+        return false
       })
-      .filter((m) => Number.isFinite(m.id) && (m.deposit_accounts?.length ?? 0) > 0)
+      return { id: methodId, name: m?.name ?? '', deposit_accounts }
+    })
+    .filter((m) => Number.isFinite(m.id) && (m.deposit_accounts?.length ?? 0) > 0)
+}
+
+function buildPortalPaymentTreeFromAssigned(data, currency) {
+  const assignedMethods = data?.assigned_payment_methods
+  if (!Array.isArray(assignedMethods) || !assignedMethods.length) return []
+
+  const hasNested = assignedMethods.some((m) => Array.isArray(m?.deposit_accounts))
+  if (hasNested) {
+    return normalizePortalPaymentTreeNodes(assignedMethods, currency)
   }
 
-  const assigned = data?.assigned_payment_methods
-  if (Array.isArray(assigned) && assigned.length > 0) {
-    const hasNested = assigned.some((m) => Array.isArray(m?.deposit_accounts))
-    if (hasNested) {
-      return assigned
-        .map((m) => ({
-          id: Number(m?.id),
-          name: m?.name ?? '',
-          deposit_accounts: filterPortalAccountsByCurrency(m?.deposit_accounts, currency),
-        }))
-        .filter((m) => Number.isFinite(m.id) && (m.deposit_accounts?.length ?? 0) > 0)
-    }
+  const flatAccounts = data?.assigned_deposit_accounts
+  if (Array.isArray(flatAccounts) && flatAccounts.length) {
+    return buildPortalPaymentTreeFromFlatMethods(assignedMethods, flatAccounts, currency)
   }
 
   return []
+}
+
+function mergePortalPaymentTrees(primary, supplemental) {
+  if (!supplemental.length) return primary
+  if (!primary.length) return supplemental
+
+  const byId = new Map()
+  for (const m of primary) {
+    byId.set(String(m.id), { ...m, deposit_accounts: [...(m.deposit_accounts || [])] })
+  }
+  for (const m of supplemental) {
+    const key = String(m.id)
+    const existing = byId.get(key)
+    if (!existing) {
+      byId.set(key, { ...m, deposit_accounts: [...(m.deposit_accounts || [])] })
+      continue
+    }
+    const seen = new Set((existing.deposit_accounts || []).map((d) => String(d.id)))
+    for (const dep of m.deposit_accounts || []) {
+      if (!seen.has(String(dep.id))) {
+        existing.deposit_accounts.push(dep)
+        seen.add(String(dep.id))
+      }
+    }
+  }
+  return [...byId.values()].filter((m) => (m.deposit_accounts?.length ?? 0) > 0)
+}
+
+/** Árbol padre→hijas: prioriza métodos de la orden; luego asignación CRM del cliente. */
+function buildPortalPaymentTree(data, rowMethods, rowAccounts, currency, rowTree) {
+  const fromTree = Array.isArray(rowTree) ? rowTree : []
+  const treeHasNestedAccounts =
+    fromTree.length > 0 && fromTree.some((m) => Array.isArray(m?.deposit_accounts))
+  const normalizedTree = treeHasNestedAccounts ? normalizePortalPaymentTreeNodes(fromTree, currency) : []
+  const normalizedFlat = buildPortalPaymentTreeFromFlatMethods(rowMethods, rowAccounts, currency)
+  const fromAssigned = buildPortalPaymentTreeFromAssigned(data, currency)
+
+  return mergePortalPaymentTrees(
+    mergePortalPaymentTrees(normalizedTree, normalizedFlat),
+    fromAssigned,
+  )
 }
 
 function portalParentMethods(tree) {
@@ -6109,6 +6144,9 @@ function ClientPortalPageInner() {
       isIllegibleReceiptAi(debtForm.aiResult) &&
       !debtForm.isManuallyEdited &&
       debtReceiptFiles.length > 0
+    const showDebtDepositSection =
+      Boolean(String(debtForm.method || '').trim()) && !isDebtRetiro
+    const needsDebtDepositPick = debtPaymentAccounts.length > 0
     const debtDisableBtn =
       debtForm.submitting ||
       !obligationReady ||
@@ -6120,7 +6158,10 @@ function ClientPortalPageInner() {
             (!Number.isFinite(debtPaidOk) || !(debtPaidOk > 0))) ||
           Boolean(debtMismatchMsg || debtMultiMsg)) ||
       debtPaymentMethods.length === 0 ||
-      debtPaymentAccounts.length === 0
+      debtPaymentAccounts.length === 0 ||
+      (needsDebtDepositPick &&
+        debtPaymentAccounts.length > 1 &&
+        !String(debtForm.account || '').trim())
 
     const debtUxHint = portalDebtPayMissingHint({
       submitting: debtForm.submitting,
@@ -6211,58 +6252,77 @@ function ClientPortalPageInner() {
           id="portal-debt-payment-method"
           disabled={!obligationReady || debtPaymentMethods.length === 0}
           value={debtForm.method}
-          onChange={(mid) =>
+          onChange={(mid) => {
+            const accsForMethod = portalAccountsForMethod(debtPaymentTree, mid)
             setDebtForm((p) => ({
               ...p,
               method: mid,
-              account: '',
+              account:
+                accsForMethod.length === 1 && accsForMethod[0]?.id != null
+                  ? String(accsForMethod[0].id)
+                  : '',
             }))
-          }
+          }}
           options={portalPaymentMethodOptions(debtPaymentMethods)}
           placeholder="Seleccionar…"
         />
       </PortalPaymentSectionShell>
 
-      {/* Account */}
-      {debtPaymentAccounts.length > 1 && (
-        <>
-          <label
-            htmlFor="portal-debt-deposit-account"
-            className="mb-2 block text-[11px] uppercase tracking-[0.07em] text-white/55"
-          >
-            Cuenta donde depositaste
-          </label>
-          <PortalCustomSelect
-            id="portal-debt-deposit-account"
-            disabled={!obligationReady || debtPaymentAccounts.length <= 1}
-            value={debtForm.account}
-            onChange={(depVal) => {
-              setDebtForm((p) => ({ ...p, account: depVal }))
-              const filesNow = debtReceiptFilesRef.current
-              const expected = currentDebtPayObligation?.pendingAmount ?? null
-              if (filesNow?.length) analyzeDebtReceiptWithAI(filesNow, expected, debtCurrency)
-            }}
-            options={portalDepositAccountOptions(debtPaymentAccounts)}
-            placeholder="Seleccionar cuenta…"
-            className="mb-3"
-          />
-          {String(debtForm.account || '').trim() ? (
-            <PortalSelectedDepositAccountPanel
-              account={debtPaymentAccounts.find((d) => String(d.id) === String(debtForm.account))}
-              paymentMethodName={debtPaymentMethods.find((m) => String(m.id) === String(debtForm.method))?.name}
-            />
-          ) : null}
-        </>
-      )}
-      {debtPaymentAccounts.length === 1 && (
-        <div style={{ padding: '12px 14px', borderRadius: 12, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 12, fontSize: 13 }}>
-          <p style={{ margin: 0, fontWeight: 700 }}>{debtPaymentAccounts[0].bank_name}</p>
-          <PortalDepositAccountDetails
-            account={debtPaymentAccounts[0]}
-            paymentMethodName={debtPaymentMethods.find((m) => String(m.id) === String(debtForm.method))?.name}
-          />
+      {showDebtDepositSection ? (
+        <div key={`debt-deposit-${debtForm.method}`}>
+          <PortalPaymentSectionShell layer="deposit">
+            <p className="m-0 mb-1 text-xs uppercase tracking-[0.06em] text-white/50">
+              Cuenta donde depositar
+            </p>
+            <p style={{ margin: '0 0 12px', fontSize: 12, opacity: 0.55, lineHeight: 1.45 }}>
+              Cuentas habilitadas por el proveedor para este abono.
+            </p>
+            {debtPaymentAccounts.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 14, color: '#fbbf24', lineHeight: 1.45 }}>
+                No hay cuentas configuradas. Contacta al proveedor.
+              </p>
+            ) : debtPaymentAccounts.length === 1 ? (
+              <PortalSelectedDepositAccountPanel
+                account={debtPaymentAccounts[0]}
+                paymentMethodName={
+                  debtPaymentMethods.find((m) => String(m.id) === String(debtForm.method))?.name
+                }
+              />
+            ) : (
+              <>
+                <label
+                  htmlFor="portal-debt-deposit-account"
+                  style={{ display: 'block', fontSize: 12, opacity: 0.55, marginBottom: 8 }}
+                >
+                  Elige la cuenta donde transferiste:
+                </label>
+                <PortalCustomSelect
+                  id="portal-debt-deposit-account"
+                  required
+                  disabled={!obligationReady}
+                  value={debtForm.account}
+                  onChange={(depVal) => {
+                    setDebtForm((p) => ({ ...p, account: depVal }))
+                    const filesNow = debtReceiptFilesRef.current
+                    const expected = currentDebtPayObligation?.pendingAmount ?? null
+                    if (filesNow?.length) analyzeDebtReceiptWithAI(filesNow, expected, debtCurrency)
+                  }}
+                  options={portalDepositAccountOptions(debtPaymentAccounts)}
+                  placeholder="Seleccionar cuenta…"
+                />
+                {String(debtForm.account || '').trim() ? (
+                  <PortalSelectedDepositAccountPanel
+                    account={debtPaymentAccounts.find((d) => String(d.id) === String(debtForm.account))}
+                    paymentMethodName={
+                      debtPaymentMethods.find((m) => String(m.id) === String(debtForm.method))?.name
+                    }
+                  />
+                ) : null}
+              </>
+            )}
+          </PortalPaymentSectionShell>
         </div>
-      )}
+      ) : null}
 
       {/* Receipt upload o widget Códigos de Retiro */}
       {isDebtRetiro ? (
