@@ -234,9 +234,48 @@ export function TableActionsContainer({ children, className = '' }) {
   if (items.length === 0) return null
 
   return (
-    <div className={`${TABLE_ACTIONS_WRAP_CLASS} shrink-0 ${className}`.trim()}>
+    <div className={`${TABLE_ACTIONS_WRAP_CLASS} shrink-0 relative z-30 ${className}`.trim()}>
       {items}
     </div>
+  )
+}
+
+/** Botón de acción compacto con stopPropagation (evita conflictos con filas/tablas). */
+export function TableActionButton({
+  onClick,
+  disabled = false,
+  title = '',
+  ariaLabel,
+  variant = 'edit',
+  className = '',
+  children,
+}) {
+  const variantClass = TABLE_ACTION_VARIANT[variant] ?? variant
+
+  const handlePointer = (e) => {
+    e.stopPropagation()
+  }
+
+  const handleClick = (e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (disabled) return
+    onClick?.(e)
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={handleClick}
+      onMouseDown={handlePointer}
+      onPointerDown={handlePointer}
+      title={title}
+      aria-label={ariaLabel ?? title}
+      className={`${TABLE_ACTION_BTN} ${variantClass} relative z-30 pointer-events-auto ${className}`.trim()}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -263,11 +302,17 @@ export function CopyPaymentLinkButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation()
+        e.preventDefault()
+        if (disabled) return
+        onClick?.(e)
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
       disabled={disabled}
       title={title}
       aria-label={copied ? 'Enlace copiado' : title}
-      className={`${TABLE_ACTION_BTN} ${
+      className={`${TABLE_ACTION_BTN} relative z-30 pointer-events-auto ${
                    copied
                      ? 'text-emerald-500 bg-emerald-50'
                      : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'

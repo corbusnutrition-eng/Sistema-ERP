@@ -68,10 +68,9 @@ import {
   CopyPaymentLinkButton,
   copyOrSharePaymentUrl,
   resolveRechargePaymentUrl,
-  TABLE_ACTION_BTN,
   TABLE_ACTION_ICON_SIZE,
   TABLE_ACTION_ICON_STROKE,
-  TABLE_ACTION_VARIANT,
+  TableActionButton,
   TableActionSpinner,
   TableActionsContainer,
 } from '../sales/saleTableHelpers'
@@ -1553,16 +1552,16 @@ export default function DistributorsBaaSPage() {
 
   async function openApproveModal(row) {
     if (!row || row.status !== 'in_review') return
-    if (isSubsequentCxcAbonoForRecharge(row)) {
-      await openReceivePaymentForRechargeAbono(row, openReceivePayment, receivePaymentAfterSave)
-      return
-    }
     let hydrated = row
     try {
       const { data } = await api.get(`/api/v1/distributors/recharge-requests/${row.id}`)
       if (data && typeof data === 'object') hydrated = { ...row, ...data }
     } catch {
       hydrated = row
+    }
+    if (isSubsequentCxcAbonoForRecharge(hydrated)) {
+      await openReceivePaymentForRechargeAbono(hydrated, openReceivePayment, receivePaymentAfterSave)
+      return
     }
     setApproveRow(hydrated)
     setApproveReceived(defaultReceivedAmountForApprove(hydrated))
@@ -1786,21 +1785,21 @@ export default function DistributorsBaaSPage() {
     ) {
       return
     }
-    if (row.status === 'in_review' && isSubsequentCxcAbonoForRecharge(row)) {
-      await openReceivePaymentForRechargeAbono(row, openReceivePayment, receivePaymentAfterSave)
-      return
-    }
-    const email = String(row.client_email ?? '').trim()
-    if (!email.includes('@')) {
-      showToast('Esta solicitud no tiene correo de cliente para editar.')
-      return
-    }
     let hydrated = row
     try {
       const { data } = await api.get(`/api/v1/distributors/recharge-requests/${row.id}`)
       if (data && typeof data === 'object') hydrated = { ...row, ...data }
     } catch {
       hydrated = row
+    }
+    if (hydrated.status === 'in_review' && isSubsequentCxcAbonoForRecharge(hydrated)) {
+      await openReceivePaymentForRechargeAbono(hydrated, openReceivePayment, receivePaymentAfterSave)
+      return
+    }
+    const email = String(hydrated.client_email ?? '').trim()
+    if (!email.includes('@')) {
+      showToast('Esta solicitud no tiene correo de cliente para editar.')
+      return
     }
     applyRechargeRowToLinkModal(hydrated)
     setEditRechargeRow(hydrated)
@@ -2658,66 +2657,62 @@ export default function DistributorsBaaSPage() {
                           : null}
                           <TableActionsContainer>
                             {rechargeTabShowsRestore(rechargeActiveTab) ?
-                              <button
-                                type="button"
+                              <TableActionButton
+                                variant="restore"
                                 disabled={processingReqId === r.id}
                                 onClick={() => handleRestoreRecharge(r)}
-                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.restore} disabled:opacity-40`}
                                 title="Restaurar a pendiente"
                               >
                                 {processingReqId === r.id ?
                                   <TableActionSpinner tone="emerald" />
                                 : <RotateCcw size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
                                 <span className="sr-only">Restaurar</span>
-                              </button>
+                              </TableActionButton>
                             : null}
 
                             {rechargeTabShowsEditDelete(rechargeActiveTab) && r.status === 'pending' && canEditRecharge ?
-                              <button
-                                type="button"
+                              <TableActionButton
+                                variant="activate"
                                 disabled={processingReqId === r.id || generatingLink}
                                 onClick={() => activatePendingRecharge(r)}
-                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate} disabled:opacity-40`}
                                 title="Activar recarga (CxC)"
                               >
                                 {processingReqId === r.id ?
                                   <TableActionSpinner tone="emerald" />
                                 : <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
                                 <span className="sr-only">Activar recarga</span>
-                              </button>
+                              </TableActionButton>
                             : null}
 
                             {rechargeTabShowsEditDelete(rechargeActiveTab) && r.status === 'in_review' && canApproveRecharge ?
-                              <button
-                                type="button"
+                              <TableActionButton
+                                variant="activate"
                                 disabled={processingReqId === r.id}
-                                onClick={() => openApproveModal(r)}
-                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate} disabled:opacity-40`}
+                                onClick={() => void openApproveModal(r)}
                                 title="Aprobar abono / activar recarga"
                               >
                                 {processingReqId === r.id ?
                                   <TableActionSpinner tone="emerald" />
                                 : <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
                                 <span className="sr-only">Aprobar recarga</span>
-                              </button>
+                              </TableActionButton>
                             : null}
 
                             {rechargeTabShowsEditDelete(rechargeActiveTab)
                             && (r.status === 'pending' || r.status === 'in_review') ?
-                              <button
-                                type="button"
+                              <TableActionButton
+                                variant="reject"
                                 disabled={processingReqId === r.id}
                                 onClick={() =>
                                   r.status === 'pending' ? cancelRequest(r.id) : rejectRequest(r.id)
                                 }
-                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.reject} disabled:opacity-40`}
                                 title="Rechazar solicitud"
                               >
                                 {processingReqId === r.id ?
                                   <TableActionSpinner tone="rose" />
                                 : <XCircle size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
                                 <span className="sr-only">Rechazar solicitud</span>
-                              </button>
+                              </TableActionButton>
                             : null}
 
                             {rechargeTabShowsEditDelete(rechargeActiveTab)
@@ -2731,34 +2726,36 @@ export default function DistributorsBaaSPage() {
                               />
                             : null}
 
-                            {rechargeTabShowsEditDelete(rechargeActiveTab) ?
-                              <button
-                                type="button"
-                                disabled={(processingReqId != null && processingReqId === r.id) || generatingLink}
-                                onClick={() => openEditRechargeModal(r)}
-                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.edit} disabled:opacity-40`}
-                                title="Editar solicitud"
+                            {rechargeTabShowsEditDelete(rechargeActiveTab)
+                            && (canEditRecharge || r.status === 'in_review') ?
+                              <TableActionButton
+                                variant="edit"
+                                disabled={
+                                  (processingReqId != null && processingReqId === r.id)
+                                  || (generatingLink && editRechargeRow?.id === r.id)
+                                }
+                                onClick={() => void openEditRechargeModal(r)}
+                                title={r.status === 'in_review' ? 'Revisar comprobante / editar' : 'Editar solicitud'}
                               >
                                 <Pencil size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                                 <span className="sr-only">Editar</span>
-                              </button>
+                              </TableActionButton>
                             : null}
 
                             {rechargeTabShowsEditDelete(rechargeActiveTab)
                             && ['in_review', 'approved', 'partially_paid'].includes(r.status) ?
-                              <button
-                                type="button"
+                              <TableActionButton
+                                variant="note"
                                 disabled={
                                   (processingReqId != null && processingReqId === r.id)
                                   || (savingNote && noteModalRow?.id === r.id)
                                 }
                                 onClick={() => openNoteModal(r)}
-                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.note} disabled:opacity-40`}
                                 title="Nota administrativa"
                               >
                                 <MessageSquare size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                                 <span className="sr-only">Nota</span>
-                              </button>
+                              </TableActionButton>
                             : null}
                           </TableActionsContainer>
 
@@ -2850,24 +2847,22 @@ export default function DistributorsBaaSPage() {
                           </td>
                           <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
                             <TableActionsContainer>
-                              <button
-                                type="button"
+                              <TableActionButton
+                                variant="activate"
                                 onClick={() => handleReviewPayment(p)}
-                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate}`}
                                 title="Revisar abono"
                               >
                                 <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                                 <span className="sr-only">Revisar abono</span>
-                              </button>
-                              <button
-                                type="button"
+                              </TableActionButton>
+                              <TableActionButton
+                                variant="reject"
                                 onClick={() => handleRejectPayment(p.id)}
-                                className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.reject}`}
                                 title="Rechazar pago"
                               >
                                 <XCircle size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                                 <span className="sr-only">Rechazar pago</span>
-                              </button>
+                              </TableActionButton>
                             </TableActionsContainer>
                           </td>
                         </tr>

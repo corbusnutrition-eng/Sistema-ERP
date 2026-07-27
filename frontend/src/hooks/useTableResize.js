@@ -65,9 +65,9 @@ export const TABLE_CELL_TRUNC = `${TABLE_CELL} truncate`
 
 /** Columna ACCIONES fija a la derecha (header y celdas). */
 export const TABLE_STICKY_ACTIONS_TH_CLASS =
-  'sticky right-0 bg-white z-20 shadow-[-4px_0_6px_-1px_rgba(0,0,0,0.05)]'
+  'sticky right-0 bg-white z-30 shadow-[-4px_0_6px_-1px_rgba(0,0,0,0.05)]'
 export const TABLE_STICKY_ACTIONS_TD_CLASS =
-  'sticky right-0 bg-white z-10 shadow-[-4px_0_6px_-1px_rgba(0,0,0,0.05)] px-3 py-2 align-middle overflow-visible'
+  'sticky right-0 bg-white z-30 shadow-[-4px_0_6px_-1px_rgba(0,0,0,0.05)] px-3 py-2 align-middle overflow-visible'
 
 export const TABLE_ACTIONS_COLUMN_MIN_WIDTH = 140
 

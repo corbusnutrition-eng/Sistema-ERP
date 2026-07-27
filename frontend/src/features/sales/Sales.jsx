@@ -39,10 +39,9 @@ import {
   formatSaleTableDate,
   copySalePaymentLink,
   CopyPaymentLinkButton,
-  TABLE_ACTION_BTN,
   TABLE_ACTION_ICON_SIZE,
   TABLE_ACTION_ICON_STROKE,
-  TABLE_ACTION_VARIANT,
+  TableActionButton,
   TableActionSpinner,
   TableActionsContainer,
 } from './saleTableHelpers'
@@ -305,18 +304,17 @@ function SaleRowActions({
     }
     return (
       <TableActionsContainer>
-        <button
-          type="button"
+        <TableActionButton
+          variant="restore"
           onClick={() => onRestore?.(sale)}
           disabled={isRestoring}
-          className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.restore} disabled:opacity-40`}
           title={isExpired ? 'Restaurar reserva caducada' : 'Restaurar a pendiente'}
         >
           {isRestoring ?
             <TableActionSpinner tone="emerald" />
           : <RotateCcw size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
           <span className="sr-only">Restaurar</span>
-        </button>
+        </TableActionButton>
       </TableActionsContainer>
     )
   }
@@ -325,30 +323,28 @@ function SaleRowActions({
     <TableActionsContainer>
       {awaitingStaff && showEditDelete ?
         <>
-          <button
-            type="button"
+          <TableActionButton
+            variant="activate"
             onClick={() => onActivate(sale)}
             disabled={activating || rejectingId === sale.id}
-            className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate}`}
             title={staffPrimaryLabel}
           >
             {activating ?
               <TableActionSpinner tone="emerald" />
             : <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
             <span className="sr-only">{staffPrimaryLabel}</span>
-          </button>
-          <button
-            type="button"
+          </TableActionButton>
+          <TableActionButton
+            variant="reject"
             onClick={() => onReject(sale)}
             disabled={activating || rejectingId === sale.id}
-            className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.reject}`}
             title="Rechazar venta"
           >
             {rejectingId === sale.id ?
               <TableActionSpinner tone="rose" />
             : <XCircle size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
             <span className="sr-only">Rechazar venta</span>
-          </button>
+          </TableActionButton>
         </>
       : null}
 
@@ -361,10 +357,9 @@ function SaleRowActions({
               title="Copiar enlace del portal del cliente"
             />
           : null}
-          <button
-            type="button"
+          <TableActionButton
+            variant="edit"
             onClick={() => onEdit(sale)}
-            className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.edit}`}
             title={
               archived
                 ? 'Ver venta (solo lectura)'
@@ -377,19 +372,18 @@ function SaleRowActions({
           >
             <Pencil size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
             <span className="sr-only">Editar</span>
-          </button>
-          <button
-            type="button"
+          </TableActionButton>
+          <TableActionButton
+            variant="note"
             onClick={() => onComment(sale)}
-            className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.note}`}
             title="Comentario al cliente"
           >
             <MessageSquare size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
             <span className="sr-only">Comentario</span>
-          </button>
+          </TableActionButton>
           {canDeleteReview || canDeletePending || canVoidApproved ?
-            <button
-              type="button"
+            <TableActionButton
+              variant="delete"
               disabled={!deleteEnabled || cancellingId === sale.id}
               onClick={() => {
                 if (!deleteEnabled) return
@@ -397,7 +391,6 @@ function SaleRowActions({
                 else if (canDeleteReview) onReject(sale)
                 else onDelete(sale)
               }}
-              className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.delete} disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400`}
               title={
                 canVoidApproved ?
                   'Anular factura (reverso contable e inventario)'
@@ -410,7 +403,7 @@ function SaleRowActions({
                 <TableActionSpinner tone="red" />
               : <Trash2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />}
               <span className="sr-only">Eliminar</span>
-            </button>
+            </TableActionButton>
           : null}
         </>
       : null}
@@ -1755,24 +1748,22 @@ export default function Sales() {
                         {showRejectReasonCol ? <td className={`${TABLE_CELL} text-gray-400`}>—</td> : null}
                         <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
                           <TableActionsContainer>
-                            <button
-                              type="button"
+                            <TableActionButton
+                              variant="activate"
                               onClick={() => handleReviewPayment(p)}
-                              className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.activate}`}
                               title="Revisar abono"
                             >
                               <CheckCircle2 size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                               <span className="sr-only">Revisar abono</span>
-                            </button>
-                            <button
-                              type="button"
+                            </TableActionButton>
+                            <TableActionButton
+                              variant="reject"
                               onClick={() => handleRejectPayment(p.id)}
-                              className={`${TABLE_ACTION_BTN} ${TABLE_ACTION_VARIANT.reject}`}
                               title="Rechazar pago"
                             >
                               <XCircle size={TABLE_ACTION_ICON_SIZE} strokeWidth={TABLE_ACTION_ICON_STROKE} aria-hidden />
                               <span className="sr-only">Rechazar pago</span>
-                            </button>
+                            </TableActionButton>
                           </TableActionsContainer>
                         </td>
                       </tr>
