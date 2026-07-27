@@ -11,6 +11,7 @@ import {
   XCircle,
   Clock,
   RotateCcw,
+  ClipboardList,
 } from 'lucide-react'
 import { useCopyLinkFeedback } from '../../hooks/useCopyLinkFeedback'
 import api from '../../api/axios'
@@ -316,40 +317,42 @@ function SaleRowActions({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-3">
-      {awaitingStaff && showEditDelete && (
+    <div className="flex items-center justify-end gap-0.5 shrink-0">
+      {awaitingStaff && showEditDelete ?
         <>
           <button
             type="button"
             onClick={() => onActivate(sale)}
             disabled={activating || rejectingId === sale.id}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg
-                       bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm
-                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            className="p-1.5 rounded-md transition-colors focus:outline-none
+                       text-emerald-600 hover:bg-emerald-50
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+            title={staffPrimaryLabel}
           >
-            {activating ? (
-              <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-            ) : null}
-            {staffPrimaryLabel}
+            {activating ?
+              <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+            : <CheckCircle2 size={14} strokeWidth={2.35} aria-hidden />}
+            <span className="sr-only">{staffPrimaryLabel}</span>
           </button>
           <button
             type="button"
             onClick={() => onReject(sale)}
             disabled={activating || rejectingId === sale.id}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg
-                       bg-red-600 text-white hover:bg-red-700 shadow-sm
-                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            className="p-1.5 rounded-md transition-colors focus:outline-none
+                       text-rose-600 hover:bg-rose-50
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Rechazar venta"
           >
-            {rejectingId === sale.id ? (
-              <span className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-            ) : null}
-            Rechazar
+            {rejectingId === sale.id ?
+              <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-rose-400 border-t-transparent animate-spin" />
+            : <XCircle size={14} strokeWidth={2.35} aria-hidden />}
+            <span className="sr-only">Rechazar venta</span>
           </button>
         </>
-      )}
+      : null}
 
       {showEditDelete ?
-        <div className="flex items-center justify-end gap-0.5 shrink-0">
+        <>
           {isPending && (sale.client_portal_token || sale.payment_token) ?
             <CopyPaymentLinkButton
               copied={copiedLinkId === sale.id}
@@ -409,7 +412,7 @@ function SaleRowActions({
             <MessageSquare size={14} strokeWidth={2} aria-hidden />
             <span className="sr-only">Comentario</span>
           </button>
-        </div>
+        </>
       : null}
     </div>
   )
@@ -1751,20 +1754,28 @@ export default function Sales() {
                         </td>
                         {showRejectReasonCol ? <td className={`${TABLE_CELL} text-gray-400`}>—</td> : null}
                         <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
-                          <button
-                            type="button"
-                            onClick={() => handleReviewPayment(p)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm mr-2"
-                          >
-                            Revisar Abono
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRejectPayment(p.id)}
-                            className="inline-flex px-3 py-1.5 text-xs font-bold rounded-lg bg-red-100 text-red-700 hover:bg-red-200"
-                          >
-                            Rechazar
-                          </button>
+                          <div className="flex items-center justify-end gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => handleReviewPayment(p)}
+                              className="p-1.5 rounded-md transition-colors focus:outline-none
+                                         text-indigo-600 hover:bg-indigo-50"
+                              title="Revisar abono"
+                            >
+                              <ClipboardList size={14} strokeWidth={2.35} aria-hidden />
+                              <span className="sr-only">Revisar abono</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectPayment(p.id)}
+                              className="p-1.5 rounded-md transition-colors focus:outline-none
+                                         text-rose-600 hover:bg-rose-50"
+                              title="Rechazar pago"
+                            >
+                              <XCircle size={14} strokeWidth={2.35} aria-hidden />
+                              <span className="sr-only">Rechazar pago</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )

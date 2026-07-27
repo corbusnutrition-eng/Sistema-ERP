@@ -1753,6 +1753,35 @@ def cancel_wallet_recharge_request(
     return req
 
 
+@router.post("/recharge-requests/{request_id}/activate", response_model=WalletRechargeRequestRead)
+def activate_pending_wallet_recharge(
+    request_id: int,
+    db: DbDep,
+    current_user: BaasRechargeEditDep,
+) -> WalletRechargeRequest:
+    """
+    Activa una recarga pendiente a crédito (CxC): entrega saldo virtual y devenga
+    Cuentas por cobrar por el total, sin pago registrado (igual que ventas pending).
+    """
+    from app.services.client_payment_service import activate_pending_wallet_recharge_record
+
+    req = db.get(WalletRechargeRequest, request_id)
+    if req is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solicitud no encontrada.")
+    _assert_recharge_request_in_caller_scope(db, current_user, req)
+
+    try:
+        req = activate_pending_wallet_recharge_record(db, request_id)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(req)
+    return req
+
+
 @router.post("/recharge-requests/{request_id}/void", response_model=WalletRechargeRequestRead)
 def void_wallet_recharge_request(
     request_id: int,

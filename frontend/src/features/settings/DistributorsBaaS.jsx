@@ -17,6 +17,7 @@ import {
   Bell,
   Trash2,
   RotateCcw,
+  XCircle,
 } from 'lucide-react'
 
 import api from '../../api/axios'
@@ -1473,6 +1474,32 @@ export default function DistributorsBaaSPage() {
     }
   }
 
+  async function activatePendingRecharge(row) {
+    if (!row?.id || row.status !== 'pending') return
+    if (
+      !window.confirm(
+        '¿Activar esta recarga a crédito (CxC)? Se entregará el saldo virtual y quedará el total como deuda por cobrar.',
+      )
+    ) {
+      return
+    }
+    setProcessingReqId(row.id)
+    try {
+      await api.post(`/api/v1/distributors/recharge-requests/${row.id}/activate`)
+      showToast('Recarga activada. CxC generada por el total de la solicitud.')
+      setRechargeActiveTab('approved')
+      fetchRechargeRequests()
+      fetchRechargeMetrics()
+      fetchUsers()
+      notifyAccountsReceivableStale()
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      showToast(typeof d === 'string' ? d : 'No se pudo activar la recarga.')
+    } finally {
+      setProcessingReqId(null)
+    }
+  }
+
   async function rejectRequest(reqId) {
     if (!window.confirm('¿Rechazar esta solicitud? El saldo del distribuidor no cambiará.')) return
     setProcessingReqId(reqId)
@@ -2392,22 +2419,6 @@ export default function DistributorsBaaSPage() {
                             </button>
                           : null}
 
-                          {rechargeTabShowsEditDelete(rechargeActiveTab) && r.status === 'in_review' ?
-                            <div className="flex flex-wrap gap-2 justify-end">
-                              {canApproveRecharge ?
-                                <button
-                                  type="button"
-                                  disabled={processingReqId === r.id}
-                                  onClick={() => openApproveModal(r)}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
-                                >
-                                  <CheckCircle size={14} />
-                                  Aprobar
-                                </button>
-                              : null}
-                            </div>
-                          : null}
-
                           {rechargeTabShowsEditDelete(rechargeActiveTab) ?
                             <>
                               {rechargeAwaitingClientReceipt(r) ?
@@ -2424,6 +2435,53 @@ export default function DistributorsBaaSPage() {
                                     title="Copiar enlace del portal del cliente"
                                   />
                                 : null}
+                                {r.status === 'pending' && canEditRecharge ?
+                                  <button
+                                    type="button"
+                                    disabled={processingReqId === r.id || generatingLink}
+                                    onClick={() => activatePendingRecharge(r)}
+                                    className="p-1.5 rounded-md transition-colors focus:outline-none
+                                               text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
+                                    title="Activar recarga (CxC)"
+                                  >
+                                    {processingReqId === r.id ?
+                                      <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+                                    : <CheckCircle size={14} strokeWidth={2.35} aria-hidden />}
+                                    <span className="sr-only">Activar recarga</span>
+                                  </button>
+                                : null}
+                                {r.status === 'in_review' && canApproveRecharge ?
+                                  <button
+                                    type="button"
+                                    disabled={processingReqId === r.id}
+                                    onClick={() => openApproveModal(r)}
+                                    className="p-1.5 rounded-md transition-colors focus:outline-none
+                                               text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
+                                    title="Aprobar abono / activar recarga"
+                                  >
+                                    {processingReqId === r.id ?
+                                      <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
+                                    : <CheckCircle size={14} strokeWidth={2.35} aria-hidden />}
+                                    <span className="sr-only">Aprobar recarga</span>
+                                  </button>
+                                : null}
+                                {(r.status === 'pending' || r.status === 'in_review') ?
+                                  <button
+                                    type="button"
+                                    disabled={processingReqId === r.id}
+                                    onClick={() =>
+                                      r.status === 'pending' ? cancelRequest(r.id) : rejectRequest(r.id)
+                                    }
+                                    className="p-1.5 rounded-md transition-colors focus:outline-none
+                                               text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+                                    title={r.status === 'pending' ? 'Rechazar solicitud' : 'Rechazar solicitud'}
+                                  >
+                                    {processingReqId === r.id ?
+                                      <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-rose-400 border-t-transparent animate-spin" />
+                                    : <XCircle size={14} strokeWidth={2.35} aria-hidden />}
+                                    <span className="sr-only">Rechazar solicitud</span>
+                                  </button>
+                                : null}
                                 <button
                                   type="button"
                                   disabled={(processingReqId != null && processingReqId === r.id) || generatingLink}
@@ -2434,20 +2492,6 @@ export default function DistributorsBaaSPage() {
                                   <Pencil size={14} strokeWidth={2} aria-hidden />
                                   <span className="sr-only">Editar</span>
                                 </button>
-                                {(r.status === 'pending' || r.status === 'in_review') ?
-                                  <button
-                                    type="button"
-                                    disabled={processingReqId === r.id}
-                                    onClick={() =>
-                                      r.status === 'pending' ? cancelRequest(r.id) : rejectRequest(r.id)
-                                    }
-                                    className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors disabled:opacity-40"
-                                    title={r.status === 'pending' ? 'Cancelar solicitud' : 'Rechazar solicitud'}
-                                  >
-                                    <Trash2 size={14} strokeWidth={2} aria-hidden />
-                                    <span className="sr-only">Eliminar</span>
-                                  </button>
-                                : null}
                                 {['in_review', 'approved', 'partially_paid'].includes(r.status) ?
                                   <button
                                     type="button"
@@ -2554,20 +2598,28 @@ export default function DistributorsBaaSPage() {
                             )}
                           </td>
                           <td className={`${TABLE_STICKY_ACTIONS_TD_CLASS} text-right`}>
-                            <button
-                              type="button"
-                              onClick={() => handleReviewPayment(p)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm mr-2"
-                            >
-                              Revisar Abono
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRejectPayment(p.id)}
-                              className="inline-flex px-3 py-1.5 text-xs font-bold rounded-lg bg-red-100 text-red-700 hover:bg-red-200"
-                            >
-                              Rechazar
-                            </button>
+                            <div className="flex items-center justify-end gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => handleReviewPayment(p)}
+                                className="p-1.5 rounded-md transition-colors focus:outline-none
+                                           text-indigo-600 hover:bg-indigo-50"
+                                title="Revisar abono"
+                              >
+                                <ClipboardList size={14} strokeWidth={2.35} aria-hidden />
+                                <span className="sr-only">Revisar abono</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRejectPayment(p.id)}
+                                className="p-1.5 rounded-md transition-colors focus:outline-none
+                                           text-rose-600 hover:bg-rose-50"
+                                title="Rechazar pago"
+                              >
+                                <XCircle size={14} strokeWidth={2.35} aria-hidden />
+                                <span className="sr-only">Rechazar pago</span>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )

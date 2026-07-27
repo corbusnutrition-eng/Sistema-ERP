@@ -2930,6 +2930,71 @@ def void_active_wallet_recharge_record(
     return req
 
 
+def activate_pending_wallet_recharge_record(
+    db: Session,
+    request_id: int,
+) -> WalletRechargeRequest:
+    """
+    Activa una recarga BaaS pendiente sin comprobante: entrega el producto virtual,
+    deja CxC al 100% del total y publica el devengo contable (espejo de ventas pending).
+    """
+    from fastapi import HTTPException, status
+
+    req = db.get(WalletRechargeRequest, int(request_id))
+    if req is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Solicitud de recarga {request_id} no encontrada.",
+        )
+
+    st = str(getattr(req, "status", "") or "")
+    if st != REQ_STATUS_PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Solo se pueden activar solicitudes en estado pendiente (sin comprobante).",
+        )
+
+    from app.services.wallet_recharge_client_payment import find_pending_client_payment_for_wallet_recharge
+
+    pending_cp = find_pending_client_payment_for_wallet_recharge(db, req)
+    if pending_cp is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Esta solicitud tiene un pago en revisión. "
+                "Actívela o apruebe el comprobante desde «En revisión»."
+            ),
+        )
+
+    client = db.get(Client, int(req.client_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado.")
+
+    wr_cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+    wallet_to_add = credit_wallet_recharge_product_if_pending(db, req, client, wr_cur)
+    if wallet_to_add > _WR_EPS:
+        from app.services.client_currency_service import maybe_set_client_base_currency_from_recharge
+
+        maybe_set_client_base_currency_from_recharge(
+            db,
+            client,
+            wr_cur,
+            recharge_request_id=int(req.id),
+        )
+
+    product_total = float(getattr(req, "amount_requested", 0) or 0)
+    req.amount_paid = 0.0
+    req.balance_pending = round(product_total, 2)
+    req.status = REQ_STATUS_APPROVED
+
+    from app.services.accounting_engine import ensure_wallet_recharge_accrual_journal
+
+    ensure_wallet_recharge_accrual_journal(db, req, strict=True)
+    try_sweep_client_credit_on_new_cxc(db, client, currency=wr_cur, strict_accounting=False)
+    db.flush()
+    return req
+
+
 def _is_initial_encapsulated_payment(payment: ClientPayment) -> bool:
     """Solo el cobro encapsulado del checkout / primer depósito de la venta."""
     notes = str(payment.notes or "")
