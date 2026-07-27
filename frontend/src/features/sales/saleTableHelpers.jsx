@@ -203,7 +203,7 @@ export async function copySalePaymentLink(sale) {
 
 /** Columna ACCIONES: botones compactos compartidos (Ventas / BaaS). */
 export const TABLE_ACTION_BTN =
-  'p-1 rounded flex items-center justify-center transition-colors focus:outline-none shrink-0 disabled:opacity-50 disabled:cursor-not-allowed'
+  'w-7 h-7 flex items-center justify-center rounded-md transition-colors focus:outline-none shrink-0 disabled:opacity-50 disabled:cursor-not-allowed'
 
 export const TABLE_ACTION_ICON_SIZE = 16
 export const TABLE_ACTION_ICON_STROKE = 2.25
@@ -218,8 +218,9 @@ export const TABLE_ACTION_VARIANT = {
   restore: 'text-emerald-600 hover:bg-emerald-50',
 }
 
-const TABLE_ACTIONS_WRAP_CLASS =
-  'flex flex-wrap items-center justify-end gap-1.5 ml-auto w-fit max-w-[80px] sm:max-w-[100px]'
+/** Ancho fijo (~3 botones/fila) para forzar salto a 2ª fila con 4+ íconos. */
+export const TABLE_ACTIONS_WRAP_CLASS =
+  'flex flex-wrap items-center justify-end gap-1 ml-auto w-[90px] sm:w-[104px]'
 
 function tableActionChildren(children) {
   return Children.toArray(children).filter(
