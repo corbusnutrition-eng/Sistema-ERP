@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Clock, HelpCircle, MessageSquare, X, ChevronDown, Paperclip, Trash2 } from 'lucide-react'
+import { Clock, HelpCircle, MessageSquare, X, ChevronDown, Paperclip, Trash2, History, ChevronRight } from 'lucide-react'
 import api from '../../../api/axios'
 import { currencyCodeFromAccountId } from '../../../lib/accountCurrencyCascade'
 import useExchangeRateForCurrency from '../../../hooks/useExchangeRateForCurrency'
@@ -8,6 +8,7 @@ import SearchableSelect from '../../../components/ui/SearchableSelect'
 import { normalizeCurrencyCode } from '../../../lib/currencyCode'
 import { isPortalSaldoCrossSinComprobante, parsePortalCreditAppliedAmount } from '../portalCreditMeta'
 import { formatDateEcuador } from '../../../utils/datetime'
+import ViewPaymentModal from './ViewPaymentModal'
 
 const field =
   'h-10 w-full rounded-md border border-gray-300 px-3 text-sm text-gray-800 bg-white shadow-sm ' +
@@ -105,6 +106,23 @@ function fifoDistribute(amount, invoices) {
     }
   }
   return next
+}
+
+/** Suma saldos CxC abiertos agrupados por moneda. */
+function sumOpenBalancesByCurrency(invoices) {
+  const byCur = new Map()
+  for (const inv of invoices || []) {
+    const cur = normalizeCurrencyCode(inv.currency || 'USD', 'USD')
+    const open = Number(inv.open_balance) || 0
+    if (open <= 1e-9) continue
+    byCur.set(cur, (byCur.get(cur) || 0) + open)
+  }
+  return [...byCur.entries()]
+    .map(([currency, amount]) => ({
+      currency,
+      amount: Math.round(amount * 100) / 100,
+    }))
+    .sort((a, b) => a.currency.localeCompare(b.currency))
 }
 
 function ClientCombobox({ clients, value, onChange, onAddNew, disabled }) {
@@ -230,6 +248,10 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   const [depositAccounts, setDepositAccounts] = useState([])
   const [unpaidInvoices, setUnpaidInvoices] = useState([])
   const [loadingInvoices, setLoadingInvoices] = useState(false)
+  const [paymentHistory, setPaymentHistory] = useState([])
+  const [loadingPaymentHistory, setLoadingPaymentHistory] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(true)
+  const [historyViewerPaymentId, setHistoryViewerPaymentId] = useState(null)
 
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [commentsText, setCommentsText] = useState('')
@@ -342,6 +364,40 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   }, [unpaidInvoices, paidBySale])
 
   const unappliedAmount = Math.max(0, Math.round((headerAmount - totalApplied) * 100) / 100)
+
+  const totalDebtByCurrency = useMemo(
+    () => sumOpenBalancesByCurrency(unpaidInvoices),
+    [unpaidInvoices],
+  )
+
+  const totalDebtPrimary = totalDebtByCurrency[0] ?? null
+
+  const loadPaymentHistory = useCallback(async (cid) => {
+    if (!cid) {
+      setPaymentHistory([])
+      return
+    }
+    setLoadingPaymentHistory(true)
+    try {
+      const { data } = await api.get('/api/v1/payments/', {
+        params: {
+          client_id: Number(cid),
+          status_filter: 'approved',
+          limit: 100,
+        },
+      })
+      setPaymentHistory(Array.isArray(data) ? data : [])
+    } catch (err) {
+      console.error(
+        '[ReceivePaymentModal] payment history failed:',
+        err?.response?.status,
+        err?.response?.data ?? err?.message ?? err,
+      )
+      setPaymentHistory([])
+    } finally {
+      setLoadingPaymentHistory(false)
+    }
+  }, [])
 
   const showReceiptUpload = !formReadOnly && !isPendingReviewPayment
   const viewReceiptUrl = receiptFullUrl(
@@ -572,12 +628,19 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
     if (!clientId) {
       setUnpaidInvoices([])
       setPaidBySale({})
+      setPaymentHistory([])
       return
     }
     const fifoAmt =
       reviewMode && prefill?.amount != null ? Number(prefill.amount) : undefined
     loadUnpaidInvoices(clientId, { autoFifoAmount: fifoAmt })
-  }, [clientId, reviewMode, prefill?.amount, isExistingPayment, loadUnpaidInvoices])
+    void loadPaymentHistory(clientId)
+  }, [clientId, reviewMode, prefill?.amount, isExistingPayment, loadUnpaidInvoices, loadPaymentHistory])
+
+  useEffect(() => {
+    if (!isExistingPayment || !clientId) return
+    void loadPaymentHistory(clientId)
+  }, [isExistingPayment, clientId, loadPaymentHistory])
 
   useEffect(() => {
     if (skipFifoRef.current) {
@@ -772,6 +835,20 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 onAddNew={() => openNewClient(loadCatalogs)}
                 disabled={isExistingPayment}
               />
+              {clientId && totalDebtByCurrency.length > 0 && !isHistoricalView ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {totalDebtByCurrency.map(({ currency, amount }) => (
+                    <span
+                      key={currency}
+                      className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-900 ring-1 ring-orange-100"
+                    >
+                      Deuda total: {formatMoneyDisplay(amount, currency)}
+                    </span>
+                  ))}
+                </div>
+              ) : clientId && !loadingInvoices && !isHistoricalView ? (
+                <p className="mt-2 text-xs font-medium text-emerald-700">Sin deuda CxC pendiente</p>
+              ) : null}
               {isExistingPayment ?
                 (() => {
                   const relPath = viewPaymentMeta?.receipt_file_url ?? prefill?.receiptUrl ?? null
@@ -928,10 +1005,17 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
           </div>
 
           <div className="mt-8">
-            <div className="mb-3 flex items-center justify-between gap-4">
-              <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700">
-                {isHistoricalView ? 'Distribución del pago' : 'Facturas pendientes'}
-              </h2>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-bold uppercase tracking-wide text-gray-700">
+                  {isHistoricalView ? 'Distribución del pago' : 'Facturas pendientes'}
+                </h2>
+                {clientId && totalDebtPrimary && !isHistoricalView ? (
+                  <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-800 ring-1 ring-red-100">
+                    Deuda: {formatMoneyDisplay(totalDebtPrimary.amount, totalDebtPrimary.currency)}
+                  </span>
+                ) : null}
+              </div>
               {(loadingInvoices || loadingPaymentView) && (
                 <span className="text-xs text-gray-500">Cargando facturas…</span>
               )}
@@ -1020,6 +1104,106 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
               </div>
             )}
           </div>
+
+          {clientId && !isHistoricalView ? (
+            <div className="mt-8">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen((v) => !v)}
+                className="mb-3 flex w-full items-center justify-between gap-2 text-left"
+              >
+                <span className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-gray-700">
+                  <History className="h-4 w-4 text-gray-500" aria-hidden />
+                  Abonos previos
+                  {paymentHistory.length > 0 ? (
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600 normal-case">
+                      {paymentHistory.length}
+                    </span>
+                  ) : null}
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 text-gray-500 transition-transform ${historyOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                />
+              </button>
+
+              {historyOpen ? (
+                loadingPaymentHistory ? (
+                  <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+                    Cargando historial de pagos…
+                  </p>
+                ) : paymentHistory.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+                    Este cliente aún no tiene abonos confirmados.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    <table className="w-full min-w-[480px] text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 bg-gray-50 text-left text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                          <th className="px-3 py-2">Fecha</th>
+                          <th className="px-3 py-2">Referencia</th>
+                          <th className="px-3 py-2 text-right">Importe</th>
+                          <th className="w-8 px-2 py-2" aria-hidden />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {paymentHistory.map((p) => {
+                          const refLabel =
+                            p.reference_number?.trim()
+                            || p.payment_method?.trim()
+                            || p.payment_number
+                            || `#${p.id}`
+                          return (
+                            <tr key={p.id}>
+                              <td className="px-3 py-2 whitespace-nowrap text-gray-700">
+                                <button
+                                  type="button"
+                                  onClick={() => setHistoryViewerPaymentId(p.id)}
+                                  className="w-full text-left rounded px-1 py-1 -mx-1 hover:bg-sky-50 hover:text-sky-900 transition-colors cursor-pointer"
+                                >
+                                  {formatDateEcuador(p.approved_at || p.created_at)}
+                                </button>
+                              </td>
+                              <td className="px-3 py-2 text-gray-800 truncate max-w-[12rem]">
+                                <button
+                                  type="button"
+                                  onClick={() => setHistoryViewerPaymentId(p.id)}
+                                  className="w-full text-left rounded px-1 py-1 -mx-1 hover:bg-sky-50 hover:text-sky-900 transition-colors cursor-pointer truncate"
+                                  title={refLabel}
+                                >
+                                  {refLabel}
+                                </button>
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-900">
+                                <button
+                                  type="button"
+                                  onClick={() => setHistoryViewerPaymentId(p.id)}
+                                  className="w-full text-right rounded px-1 py-1 -mx-1 hover:bg-sky-50 hover:text-sky-900 transition-colors cursor-pointer"
+                                >
+                                  {formatMoneyDisplay(p.amount, p.currency || displayCurrency)}
+                                </button>
+                              </td>
+                              <td className="px-2 py-2 text-gray-400">
+                                <button
+                                  type="button"
+                                  onClick={() => setHistoryViewerPaymentId(p.id)}
+                                  className="p-1 rounded hover:bg-sky-50 hover:text-sky-700"
+                                  aria-label="Ver detalle del pago"
+                                >
+                                  <ChevronRight className="h-4 w-4" aria-hidden />
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              ) : null}
+            </div>
+          ) : null}
 
           {showReceiptUpload && (
             <div className="mt-6">
@@ -1136,6 +1320,14 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
           </div>
         </footer>
       </div>
+
+      {historyViewerPaymentId != null ? (
+        <ViewPaymentModal
+          paymentId={historyViewerPaymentId}
+          depositAccounts={depositAccounts}
+          onClose={() => setHistoryViewerPaymentId(null)}
+        />
+      ) : null}
     </div>
   )
 }
