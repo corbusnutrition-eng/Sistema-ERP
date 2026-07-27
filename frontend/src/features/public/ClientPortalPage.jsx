@@ -955,6 +955,18 @@ function portalCanShowPayFormForRecharge(recharge) {
   return portalRechargeOpenBalance(recharge) > 1e-9
 }
 
+/** Solo solicitudes pending/partially_paid admiten PATCH de método en checkout (paridad backend). */
+function portalRechargeAllowsPaymentMethodSync(recharge) {
+  const st = String(recharge?.status ?? '').toLowerCase()
+  if (st !== 'pending' && st !== 'partially_paid') return false
+  return portalRechargeOpenBalance(recharge) > 1e-9
+}
+
+/** Recarga activada con CxC vivo: usar catálogo CRM global, no snapshot de checkout. */
+function portalRechargePreferGlobalPaymentCatalog(recharge) {
+  return !portalRechargeAllowsPaymentMethodSync(recharge) && portalRechargeOpenBalance(recharge) > 1e-9
+}
+
 function portalRechargeLastPaymentRejected(recharge) {
   const st = String(recharge?.status ?? '').toLowerCase()
   return st === 'rejected' || st === 'failed'
@@ -1215,17 +1227,35 @@ function mergePortalPaymentTrees(primary, supplemental) {
 }
 
 /** Árbol padre→hijas: prioriza métodos de la orden; luego asignación CRM del cliente. */
-function buildPortalPaymentTree(data, rowMethods, rowAccounts, currency, rowTree) {
+function buildPortalPaymentTree(data, rowMethods, rowAccounts, currency, rowTree, options = {}) {
+  const preferGlobalCatalog = Boolean(options?.preferGlobalCatalog)
   const fromTree = Array.isArray(rowTree) ? rowTree : []
   const treeHasNestedAccounts =
     fromTree.length > 0 && fromTree.some((m) => Array.isArray(m?.deposit_accounts))
   const normalizedTree = treeHasNestedAccounts ? normalizePortalPaymentTreeNodes(fromTree, currency) : []
   const normalizedFlat = buildPortalPaymentTreeFromFlatMethods(rowMethods, rowAccounts, currency)
   const fromAssigned = buildPortalPaymentTreeFromAssigned(data, currency)
+  const rowMerged = mergePortalPaymentTrees(normalizedTree, normalizedFlat)
 
-  return mergePortalPaymentTrees(
-    mergePortalPaymentTrees(normalizedTree, normalizedFlat),
-    fromAssigned,
+  if (preferGlobalCatalog) {
+    return mergePortalPaymentTrees(fromAssigned, rowMerged)
+  }
+  return mergePortalPaymentTrees(rowMerged, fromAssigned)
+}
+
+/** Árbol de pago para una recarga BaaS (CxC usa catálogo CRM global). */
+function buildPortalPaymentTreeForRecharge(data, rechargeRow, currency) {
+  const cur =
+    currency != null && String(currency).trim().length >= 3
+      ? String(currency).trim().toUpperCase().slice(0, 10)
+      : 'USD'
+  return buildPortalPaymentTree(
+    data,
+    rechargeRow?.allowed_payment_methods,
+    rechargeRow?.allowed_deposit_accounts,
+    cur,
+    rechargeRow?.payment_methods_tree,
+    { preferGlobalCatalog: portalRechargePreferGlobalPaymentCatalog(rechargeRow) },
   )
 }
 
@@ -1238,7 +1268,8 @@ function portalParentMethods(tree) {
 function portalAccountsForMethod(tree, methodId) {
   if (methodId == null || String(methodId).trim() === '') return []
   const node = (Array.isArray(tree) ? tree : []).find((m) => String(m.id) === String(methodId))
-  return Array.isArray(node?.deposit_accounts) ? node.deposit_accounts : []
+  const accounts = node?.deposit_accounts
+  return Array.isArray(accounts) && accounts.length > 0 ? accounts : []
 }
 
 /** Método de pago persistido en la recarga (backend ``payment_method_id``). */
@@ -2055,6 +2086,8 @@ function ClientPortalPageInner() {
   const payAccountBySaleRef = useRef({})
   payAccountBySaleRef.current = payAccountBySale
   const [rechargePaymentPrefsPatchingById, setRechargePaymentPrefsPatchingById] = useState({})
+  const [rechargeHotmartLinksById, setRechargeHotmartLinksById] = useState({})
+  const rechargeHotmartLinksAbortRef = useRef({})
   const [rechargeHotmartBlocksLoadingById, setRechargeHotmartBlocksLoadingById] = useState({})
   const [saleHotmartLinksFetchingById, setSaleHotmartLinksFetchingById] = useState({})
   const [saleHotmartBlocksLoadingById, setSaleHotmartBlocksLoadingById] = useState({})
@@ -2499,11 +2532,51 @@ function ClientPortalPageInner() {
     return true
   }, [])
 
+  const fetchPortalRechargeBaasLinkBlocks = useCallback(
+    async (rechargeId, paymentMethodId) => {
+      const rid = Number(rechargeId)
+      const pm = Number(paymentMethodId)
+      if (!token || !Number.isFinite(rid) || rid < 1 || !Number.isFinite(pm) || pm < 1) {
+        clearRechargeHotmartBlocksLoading(rid)
+        return
+      }
+
+      rechargeHotmartLinksAbortRef.current[rid]?.abort()
+      const controller = new AbortController()
+      rechargeHotmartLinksAbortRef.current[rid] = controller
+      setRechargeHotmartBlocksLoadingById((prev) => ({ ...prev, [rid]: true }))
+
+      try {
+        const { data } = await api.get(
+          `/api/v1/portal/${encodeURIComponent(token)}/payment-methods/${pm}/baas-link-blocks`,
+          { signal: controller.signal },
+        )
+        setRechargeHotmartLinksById((prev) => ({
+          ...prev,
+          [rid]: Array.isArray(data?.hotmart_links) ? data.hotmart_links : [],
+        }))
+      } catch (err) {
+        if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return
+        console.error('portal baas link blocks fetch failed', err)
+        setRechargeHotmartLinksById((prev) => ({ ...prev, [rid]: [] }))
+      } finally {
+        if (rechargeHotmartLinksAbortRef.current[rid] === controller) {
+          delete rechargeHotmartLinksAbortRef.current[rid]
+        }
+        clearRechargeHotmartBlocksLoading(rid)
+      }
+    },
+    [api, clearRechargeHotmartBlocksLoading, token],
+  )
+
   const syncPortalRechargePaymentPrefs = useCallback(
     async (rechargeRow, { paymentMethodId, depositAccountId, clearHotmartLinks = false, rollbackOnError = false } = {}) => {
       const rid = Number(rechargeRow?.id)
       const pm = Number(paymentMethodId)
-      if (!token || !Number.isFinite(rid) || rid < 1 || !Number.isFinite(pm) || pm < 1) return
+      if (!token || !Number.isFinite(rid) || rid < 1 || !Number.isFinite(pm) || pm < 1) {
+        clearRechargeHotmartBlocksLoading(rid)
+        return
+      }
 
       rechargePaymentPrefsAbortRef.current[rid]?.abort()
       const controller = new AbortController()
@@ -2555,6 +2628,7 @@ function ClientPortalPageInner() {
         if (rechargePaymentPrefsAbortRef.current[rid] === controller) {
           delete rechargePaymentPrefsAbortRef.current[rid]
         }
+        clearRechargeHotmartBlocksLoading(rid)
         if (rechargePaymentPrefsRequestGenRef.current[rid] === requestGen) {
           setRechargePaymentPrefsPatchingById((prev) => {
             if (!prev[rid]) return prev
@@ -2562,7 +2636,6 @@ function ClientPortalPageInner() {
             delete next[rid]
             return next
           })
-          clearRechargeHotmartBlocksLoading(rid)
         }
       }
     },
@@ -4036,6 +4109,9 @@ function ClientPortalPageInner() {
       o.kind === 'recharge'
         ? o.rechargeRow?.payment_methods_tree
         : o.saleRow?.payment_methods_tree
+    if (o.kind === 'recharge') {
+      return buildPortalPaymentTreeForRecharge(data, o.rechargeRow, o.currency)
+    }
     return buildPortalPaymentTree(data, rowMethods, rowAccounts, o.currency, rowTree)
   }, [currentDebtPayObligation, data])
 
@@ -4538,13 +4614,7 @@ function ClientPortalPageInner() {
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
             : 'USD'
-        const tree = buildPortalPaymentTree(
-          data,
-          r?.allowed_payment_methods,
-          r?.allowed_deposit_accounts,
-          cur,
-          r?.payment_methods_tree,
-        )
+        const tree = buildPortalPaymentTreeForRecharge(data, r, cur)
         const methods = portalParentMethods(tree)
         const featPaid = Math.max(0, parseMoneyNum(r?.amount_paid) || 0)
         const pend = portalRechargeOpenBalance(r)
@@ -4568,13 +4638,7 @@ function ClientPortalPageInner() {
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
             : 'USD'
-        const tree = buildPortalPaymentTree(
-          data,
-          r?.allowed_payment_methods,
-          r?.allowed_deposit_accounts,
-          cur,
-          r?.payment_methods_tree,
-        )
+        const tree = buildPortalPaymentTreeForRecharge(data, r, cur)
         const methodId = userPick || storedPmId || next[rid] || prev[rid] || ''
         if (userPick) {
           if (next[rid] != null && next[rid] !== '') continue
@@ -4629,13 +4693,7 @@ function ClientPortalPageInner() {
             r.recharge_currency && String(r.recharge_currency).trim().length >= 3
               ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
               : 'USD'
-          const tree = buildPortalPaymentTree(
-            data,
-            r?.allowed_payment_methods,
-            r?.allowed_deposit_accounts,
-            cur,
-            r?.payment_methods_tree,
-          )
+          const tree = buildPortalPaymentTreeForRecharge(data, r, cur)
           const accs = portalAccountsForMethod(tree, storedPmId)
           if (!curForm.account && accs.length === 1 && accs[0]?.id != null) {
             patch.account = String(accs[0].id)
@@ -4650,13 +4708,7 @@ function ClientPortalPageInner() {
           r.recharge_currency && String(r.recharge_currency).trim().length >= 3
             ? String(r.recharge_currency).trim().toUpperCase().slice(0, 10)
             : 'USD'
-        const tree = buildPortalPaymentTree(
-          data,
-          r?.allowed_payment_methods,
-          r?.allowed_deposit_accounts,
-          cur,
-          r?.payment_methods_tree,
-        )
+        const tree = buildPortalPaymentTreeForRecharge(data, r, cur)
         const methods = portalParentMethods(tree)
         const featPaid = Math.max(0, parseMoneyNum(r?.amount_paid) || 0)
         const pend = portalRechargeOpenBalance(r)
@@ -5559,13 +5611,7 @@ function ClientPortalPageInner() {
         row?.recharge_currency && String(row.recharge_currency).trim().length >= 3
           ? String(row.recharge_currency).trim().toUpperCase().slice(0, 10)
           : 'USD'
-      const payTree = buildPortalPaymentTree(
-        data,
-        row?.allowed_payment_methods,
-        row?.allowed_deposit_accounts,
-        cur,
-        row?.payment_methods_tree,
-      )
+      const payTree = buildPortalPaymentTreeForRecharge(data, row, cur)
       const paySel = resolvePortalPaymentSelection({
         tree: payTree,
         formMethod: form.method,
@@ -5791,13 +5837,7 @@ function ClientPortalPageInner() {
         row?.recharge_currency && String(row.recharge_currency).trim().length >= 3
           ? String(row.recharge_currency).trim().toUpperCase().slice(0, 10)
           : 'USD'
-      const payTree = buildPortalPaymentTree(
-        data,
-        row?.allowed_payment_methods,
-        row?.allowed_deposit_accounts,
-        cur,
-        row?.payment_methods_tree,
-      )
+      const payTree = buildPortalPaymentTreeForRecharge(data, row, cur)
       const pmList = portalParentMethods(payTree)
       const selectedMethodId = payMethodByRecharge[rid] ?? rechargePayFormFromMap(rechargeFormById, rid).method
       const isSelectedCodigosRetiro = isCodigosRetiroMethodId(pmList, selectedMethodId)
@@ -5988,13 +6028,7 @@ function ClientPortalPageInner() {
         fr?.recharge_currency && String(fr.recharge_currency).trim().length >= 3
           ? String(fr.recharge_currency).trim().toUpperCase().slice(0, 10)
           : 'USD'
-      const tree = buildPortalPaymentTree(
-        data,
-        fr?.allowed_payment_methods,
-        fr?.allowed_deposit_accounts,
-        frCur,
-        fr?.payment_methods_tree,
-      )
+      const tree = buildPortalPaymentTreeForRecharge(data, fr, frCur)
       const pmList = portalParentMethods(tree)
       const mid = payMethodByRecharge[rid] ?? rechargePayFormFromMap(rechargeFormById, rid).method
       if (isCodigosRetiroMethodId(pmList, mid)) {
@@ -6763,13 +6797,7 @@ function ClientPortalPageInner() {
               fr?.recharge_currency && String(fr.recharge_currency).trim().length >= 3
                 ? String(fr.recharge_currency).trim().toUpperCase().slice(0, 10)
                 : 'USD'
-            const payTree = buildPortalPaymentTree(
-              data,
-              fr?.allowed_payment_methods,
-              fr?.allowed_deposit_accounts,
-              cur,
-              fr?.payment_methods_tree,
-            )
+            const payTree = buildPortalPaymentTreeForRecharge(data, fr, cur)
             const rechargePaymentMethods = portalParentMethods(payTree)
             const selectedRechargePaymentMethodId = String(
               payMethodByRecharge[frId]
@@ -6777,7 +6805,10 @@ function ClientPortalPageInner() {
                 ?? portalRechargeStoredPaymentMethodId(fr)
                 ?? '',
             ).trim()
-            const rechargeHotmartLinks = Array.isArray(fr.hotmart_links) ? fr.hotmart_links : []
+            const rechargeAllowsMethodSync = portalRechargeAllowsPaymentMethodSync(fr)
+            const rechargeHotmartLinks = rechargeAllowsMethodSync
+              ? (Array.isArray(fr?.hotmart_links) ? fr.hotmart_links : [])
+              : (Array.isArray(rechargeHotmartLinksById[frId]) ? rechargeHotmartLinksById[frId] : [])
             const showRechargeHotmartLinks =
               Boolean(selectedRechargePaymentMethodId)
               && rechargeHotmartLinks.some(paymentLinkBlockHasPortalContent)
@@ -7063,12 +7094,23 @@ function ClientPortalPageInner() {
                         value={selectedRechargePaymentMethodId}
                         onChange={(mid) => {
                           rechargePaymentMethodUserPickRef.current[frId] = mid
-                          clearRechargeHotmartLinksOptimistic(frId, mid)
-                          setRechargeHotmartBlocksLoadingById((p) => ({ ...p, [frId]: true }))
                           setPayMethodByRecharge((p) => ({ ...p, [frId]: mid }))
-                          setRechargeForm({ method: mid, account: '', error: null })
-                          setPayAccountByRecharge((p) => ({ ...p, [frId]: '' }))
-                          scheduleDebouncedRechargePaymentMethodSync(fr, mid)
+                          const accsForMethod = portalAccountsForMethod(payTree, mid)
+                          const autoAccount =
+                            accsForMethod.length === 1 && accsForMethod[0]?.id != null
+                              ? String(accsForMethod[0].id)
+                              : ''
+                          setRechargeForm({ method: mid, account: autoAccount, error: null })
+                          setPayAccountByRecharge((p) => ({ ...p, [frId]: autoAccount }))
+
+                          if (portalRechargeAllowsPaymentMethodSync(fr)) {
+                            clearRechargeHotmartLinksOptimistic(frId, mid)
+                            setRechargeHotmartBlocksLoadingById((p) => ({ ...p, [frId]: true }))
+                            scheduleDebouncedRechargePaymentMethodSync(fr, mid)
+                          } else {
+                            setRechargeHotmartLinksById((p) => ({ ...p, [frId]: [] }))
+                            void fetchPortalRechargeBaasLinkBlocks(frId, mid)
+                          }
                         }}
                         options={portalPaymentMethodOptions(rechargePaymentMethods)}
                         placeholder="Seleccionar…"
