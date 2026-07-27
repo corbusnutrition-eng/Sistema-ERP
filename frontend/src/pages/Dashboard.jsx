@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Users, TrendingUp, ShoppingBag, RefreshCw, AlertCircle, Package } from 'lucide-react'
+import { Users, Banknote, Clock, Bell, ShoppingBag, RefreshCw, AlertCircle, Package } from 'lucide-react'
 import InventorySummaryCards from '../features/inventory/components/InventorySummaryCards'
 import { formatDateEcuador } from '../utils/datetime'
 
@@ -97,7 +97,7 @@ export default function Dashboard() {
     fetchSummary()
   }, [fetchSummary])
 
-  const netPositive = data && Number(data.financials?.net_profit) >= 0
+  const pendingReviews = Number(data?.pending_reviews) || 0
 
   return (
     <div className="p-6 space-y-8">
@@ -131,15 +131,52 @@ export default function Dashboard() {
       )}
 
       {/* ── Metric cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
         {loading ? (
           <>
+            <MetricCardSkeleton />
+            <MetricCardSkeleton />
             <MetricCardSkeleton />
             <MetricCardSkeleton />
           </>
         ) : (
           <>
-            {/* Clientes */}
+            <MetricCard
+              icon={Banknote}
+              label="Ingresos del Mes"
+              value={data ? currency(data.monthly_revenue) : '—'}
+              sub="Abonos aprobados (mes actual)"
+              iconBg="bg-emerald-50"
+              iconColor="text-emerald-600"
+              badgeText="Finanzas"
+              badgeBg="bg-emerald-50"
+              badgeColor="text-emerald-700"
+            />
+
+            <MetricCard
+              icon={Clock}
+              label="Cuentas por Cobrar"
+              value={data ? currency(data.accounts_receivable) : '—'}
+              sub="Saldo pendiente global (USD)"
+              iconBg="bg-amber-50"
+              iconColor="text-amber-600"
+              badgeText="CxC"
+              badgeBg="bg-amber-50"
+              badgeColor="text-amber-700"
+            />
+
+            <MetricCard
+              icon={Bell}
+              label="Pendientes de Revisión"
+              value={data != null ? pendingReviews : '—'}
+              sub={pendingReviews > 0 ? 'Requieren atención' : 'Bandeja al día'}
+              iconBg="bg-rose-50"
+              iconColor="text-rose-600"
+              badgeText="Operaciones"
+              badgeBg={pendingReviews > 0 ? 'bg-rose-100' : 'bg-rose-50'}
+              badgeColor={pendingReviews > 0 ? 'text-rose-700' : 'text-rose-600'}
+            />
+
             <MetricCard
               icon={Users}
               label="Clientes Totales"
@@ -150,19 +187,6 @@ export default function Dashboard() {
               badgeText="Clientes"
               badgeBg="bg-blue-50"
               badgeColor="text-blue-600"
-            />
-
-            {/* Beneficio neto */}
-            <MetricCard
-              icon={TrendingUp}
-              label="Beneficio Neto"
-              value={data ? currency(data.financials.net_profit) : '—'}
-              sub={`Ingresos: ${data ? currency(data.financials.total_income) : '—'}`}
-              iconBg={netPositive ? 'bg-green-50' : 'bg-orange-50'}
-              iconColor={netPositive ? 'text-green-600' : 'text-orange-500'}
-              badgeText={netPositive ? 'Ganancia' : 'Pérdida'}
-              badgeBg={netPositive ? 'bg-green-50' : 'bg-orange-50'}
-              badgeColor={netPositive ? 'text-green-600' : 'text-orange-500'}
             />
           </>
         )}

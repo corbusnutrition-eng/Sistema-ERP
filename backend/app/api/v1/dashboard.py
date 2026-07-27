@@ -14,10 +14,14 @@ from app.permissions import DASHBOARD_OVERVIEW_VIEW
 
 from app.database import get_db
 from app.models.client import Client
-from app.models.expense import Expense
 from app.models.iptv_account import IPTVAccount
 from app.models.iptv_screen import IPTVScreen
 from app.models.sale import Sale
+from app.services.dashboard_metrics_service import (
+    compute_accounts_receivable_usd,
+    compute_monthly_revenue_usd,
+    compute_pending_reviews_count,
+)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -35,16 +39,13 @@ class RecentSale(BaseModel):
     date: str
 
 
-class Financials(BaseModel):
-    total_income: Decimal
-    net_profit: Decimal
-
-
 class DashboardSummary(BaseModel):
     total_clients: int
+    monthly_revenue: Decimal
+    accounts_receivable: Decimal
+    pending_reviews: int
     available_screens_flujo: int
     available_screens_stella: int
-    financials: Financials
     recent_sales: list[RecentSale]
 
 
@@ -70,12 +71,9 @@ def get_dashboard_summary(db: DbDep, _: DashboardViewDep) -> DashboardSummary:
         or 0
     )
 
-    total_income: Decimal = db.query(func.coalesce(func.sum(Sale.amount), 0)).scalar()
-    total_expenses: Decimal = (
-        db.query(func.coalesce(func.sum(Expense.total_amount), 0)).filter(Expense.status == "posted").scalar()
-        or 0
-    )
-    net_profit: Decimal = total_income - total_expenses
+    monthly_revenue = compute_monthly_revenue_usd(db)
+    accounts_receivable = compute_accounts_receivable_usd(db)
+    pending_reviews = compute_pending_reviews_count(db)
 
     recent_sales_rows = (
         db.query(Sale)
@@ -98,11 +96,10 @@ def get_dashboard_summary(db: DbDep, _: DashboardViewDep) -> DashboardSummary:
 
     return DashboardSummary(
         total_clients=total_clients,
+        monthly_revenue=monthly_revenue,
+        accounts_receivable=accounts_receivable,
+        pending_reviews=pending_reviews,
         available_screens_flujo=available_screens_flujo,
         available_screens_stella=available_screens_stella,
-        financials=Financials(
-            total_income=total_income,
-            net_profit=net_profit,
-        ),
         recent_sales=recent_sales,
     )
