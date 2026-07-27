@@ -8,7 +8,6 @@ import SearchableSelect from '../../../components/ui/SearchableSelect'
 import { normalizeCurrencyCode } from '../../../lib/currencyCode'
 import { isPortalSaldoCrossSinComprobante, parsePortalCreditAppliedAmount } from '../portalCreditMeta'
 import { formatDateEcuador } from '../../../utils/datetime'
-import ViewPaymentModal from './ViewPaymentModal'
 
 const field =
   'h-10 w-full rounded-md border border-gray-300 px-3 text-sm text-gray-800 bg-white shadow-sm ' +
@@ -251,7 +250,6 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   const [paymentHistory, setPaymentHistory] = useState([])
   const [loadingPaymentHistory, setLoadingPaymentHistory] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(true)
-  const [historyViewerPaymentId, setHistoryViewerPaymentId] = useState(null)
 
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [commentsText, setCommentsText] = useState('')
@@ -259,7 +257,6 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   const saveMenuRef = useRef(null)
 
   const [clientId, setClientId] = useState(() => {
-    if (prefill?.viewMode && prefill?.paymentId) return ''
     if (prefill?.clientId != null) return String(prefill.clientId)
     return ''
   })
@@ -567,10 +564,20 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
     setExistingPaymentLoaded(false)
     prefillAppliedRef.current = false
     setViewPaymentMeta(null)
-    if (!prefill?.viewMode && prefill?.clientId != null && !prefill?.paymentId) {
-      setClientId(String(prefill.clientId))
-    }
+    if (prefill?.clientId != null) setClientId(String(prefill.clientId))
   }, [prefill?.paymentId, prefill?.clientId, prefill?.viewMode])
+
+  const openHistoricalPayment = useCallback(
+    (pid) => {
+      paymentLoadedRef.current = false
+      setExistingPaymentLoaded(false)
+      setViewPaymentMeta(null)
+      setPaidBySale({})
+      setUnpaidInvoices([])
+      void loadPaymentView(pid)
+    },
+    [loadPaymentView],
+  )
 
   useEffect(() => {
     if (isExistingPayment && !paymentLoadedRef.current) {
@@ -1159,7 +1166,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                               <td className="px-3 py-2 whitespace-nowrap text-gray-700">
                                 <button
                                   type="button"
-                                  onClick={() => setHistoryViewerPaymentId(p.id)}
+                                  onClick={() => openHistoricalPayment(p.id)}
                                   className="w-full text-left rounded px-1 py-1 -mx-1 hover:bg-sky-50 hover:text-sky-900 transition-colors cursor-pointer"
                                 >
                                   {formatDateEcuador(p.approved_at || p.created_at)}
@@ -1168,7 +1175,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                               <td className="px-3 py-2 text-gray-800 truncate max-w-[12rem]">
                                 <button
                                   type="button"
-                                  onClick={() => setHistoryViewerPaymentId(p.id)}
+                                  onClick={() => openHistoricalPayment(p.id)}
                                   className="w-full text-left rounded px-1 py-1 -mx-1 hover:bg-sky-50 hover:text-sky-900 transition-colors cursor-pointer truncate"
                                   title={refLabel}
                                 >
@@ -1178,7 +1185,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                               <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-900">
                                 <button
                                   type="button"
-                                  onClick={() => setHistoryViewerPaymentId(p.id)}
+                                  onClick={() => openHistoricalPayment(p.id)}
                                   className="w-full text-right rounded px-1 py-1 -mx-1 hover:bg-sky-50 hover:text-sky-900 transition-colors cursor-pointer"
                                 >
                                   {formatMoneyDisplay(p.amount, p.currency || displayCurrency)}
@@ -1187,7 +1194,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                               <td className="px-2 py-2 text-gray-400">
                                 <button
                                   type="button"
-                                  onClick={() => setHistoryViewerPaymentId(p.id)}
+                                  onClick={() => openHistoricalPayment(p.id)}
                                   className="p-1 rounded hover:bg-sky-50 hover:text-sky-700"
                                   aria-label="Ver detalle del pago"
                                 >
@@ -1320,14 +1327,6 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
           </div>
         </footer>
       </div>
-
-      {historyViewerPaymentId != null ? (
-        <ViewPaymentModal
-          paymentId={historyViewerPaymentId}
-          depositAccounts={depositAccounts}
-          onClose={() => setHistoryViewerPaymentId(null)}
-        />
-      ) : null}
     </div>
   )
 }

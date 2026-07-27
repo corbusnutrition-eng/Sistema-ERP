@@ -21,7 +21,7 @@ import usePermissions from '../hooks/usePermissions'
 import { PERMS } from '../lib/permissions'
 import { confirmVoidTransaction } from '../utils/confirmVoidTransaction'
 import NuevaVentaModal from '../features/sales/components/NuevaVentaModal'
-import ViewPaymentModal from '../features/sales/components/ViewPaymentModal'
+import { buildReceivePaymentPrefill } from '../features/sales/receivePaymentRouting'
 import {
   ClientDetailNotesCell,
   SaleAmountCell,
@@ -34,11 +34,7 @@ import {
 } from '../features/sales/saleTableHelpers'
 import { EditModal } from './Clientes'
 import { formatDateTimeEcuador } from '../utils/datetime'
-import NewRechargeModal, {
-  newRechargeLineRow,
-  normalizeClienteDesdeWebhook,
-} from '../features/settings/NewRechargeModal'
-import { normalizeCurrencyCode } from '../lib/currencyCode'
+import ClientHistoryRechargeModal from '../features/clients/ClientHistoryRechargeModal'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -235,35 +231,6 @@ function formatApiErrorDetail(err, fallback) {
   return fallback
 }
 
-const noop = () => {}
-
-/** Líneas de conceptos para `NewRechargeModal` (solo lectura) desde detalle ERP. */
-function rechargeLinesFromAdminDetail(row) {
-  if (!row || typeof row !== 'object') return []
-  const cur = normalizeCurrencyCode(row.recharge_currency, 'USD')
-  const stored = row.recharge_detail_lines
-  if (!Array.isArray(stored) || stored.length === 0) {
-    const base = newRechargeLineRow()
-    base.producto = 'Recarga de saldo BaaS'
-    base.tipo_moneda = cur
-    base.saldo_recargar = row.amount_requested != null ? String(row.amount_requested) : ''
-    return [base]
-  }
-  return stored.map((li, idx) => {
-    const line = newRechargeLineRow()
-    const rawId = li?.id ?? li?.line_id ?? li?.concept_id
-    line.id =
-      rawId != null && String(rawId).trim() !== ''
-        ? `wr-li-${String(rawId)}`
-        : `wr-ro-${String(row?.id ?? 'x')}-${idx}`
-    line.producto = String(li.product_name ?? li.producto ?? 'Saldo BaaS')
-    line.tipo_moneda = normalizeCurrencyCode(li.tipo_moneda ?? li.balance_currency ?? cur, cur)
-    const imp = li.importe ?? li.saldo_recargar ?? li.line_amount ?? li.balance_to_recharge
-    line.saldo_recargar = imp != null ? String(imp) : ''
-    return line
-  })
-}
-
 export default function ClientDetail() {
   const { clientId } = useParams()
   const navigate = useNavigate()
@@ -289,9 +256,7 @@ export default function ClientDetail() {
   const [menuSaleId, setMenuSaleId] = useState(null)
   const [txnMenuOpen, setTxnMenuOpen] = useState(false)
   const [walletRechargeModalLoadingId, setWalletRechargeModalLoadingId] = useState(null)
-  const [walletRechargeViewerDetail, setWalletRechargeViewerDetail] = useState(null)
-  const [paymentViewId, setPaymentViewId] = useState(null)
-  const [depositAccounts, setDepositAccounts] = useState([])
+  const [rechargeModalId, setRechargeModalId] = useState(null)
   const [devToast, setDevToast] = useState(null)
   const [detailTab, setDetailTab] = useState('historial')
   const [subClients, setSubClients] = useState([])
@@ -331,19 +296,11 @@ export default function ClientDetail() {
     setRevertTarget(null)
   }, [revertLoading])
 
-  const openWalletRechargeViewer = useCallback(async (requestId) => {
+  const openWalletRechargeFromHistory = useCallback((requestId) => {
     const rid = Number(requestId)
     if (!Number.isFinite(rid) || rid < 1) return
     setWalletRechargeModalLoadingId(rid)
-    try {
-      const { data } = await api.get(`/api/v1/distributors/recharge-requests/${rid}`)
-      setWalletRechargeViewerDetail(data)
-    } catch (err) {
-      const d = err?.response?.data?.detail
-      window.alert(typeof d === 'string' ? d : 'No se pudo cargar el detalle de la recarga.')
-    } finally {
-      setWalletRechargeModalLoadingId(null)
-    }
+    setRechargeModalId(rid)
   }, [])
 
   const copyCredToClipboard = useCallback(async (label, raw) => {
@@ -495,52 +452,8 @@ export default function ClientDetail() {
   useEffect(() => {
     setRevertConfirmOpen(false)
     setRevertTarget(null)
-    setPaymentViewId(null)
-    setWalletRechargeViewerDetail(null)
+    setRechargeModalId(null)
   }, [idNum])
-
-  useEffect(() => {
-    if (!paymentViewId) return undefined
-    let cancelled = false
-    ;(async () => {
-      try {
-        const { data } = await api.get('/api/v1/accounts/deposit-options')
-        if (!cancelled) setDepositAccounts(Array.isArray(data) ? data : [])
-      } catch {
-        if (!cancelled) setDepositAccounts([])
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [paymentViewId])
-
-  const rechargeModalClientSnapshot = useMemo(() => {
-    const detail = walletRechargeViewerDetail
-    if (!detail) return null
-    const rawName = detail.client_name != null ? String(detail.client_name).trim() : ''
-    return normalizeClienteDesdeWebhook({
-      id: detail.client_id,
-      name: rawName || 'Cliente',
-      full_name: rawName || 'Cliente',
-      email: detail.client_email,
-      username: detail.client_username,
-      iptv_username: detail.client_username,
-    })
-  }, [walletRechargeViewerDetail])
-
-  const rechargeModalLineItems = useMemo(
-    () => rechargeLinesFromAdminDetail(walletRechargeViewerDetail),
-    [walletRechargeViewerDetail],
-  )
-
-  const rechargeModalComment = useMemo(() => {
-    const detail = walletRechargeViewerDetail
-    if (!detail) return ''
-    const a = detail.admin_note != null ? String(detail.admin_note).trim() : ''
-    const n = detail.notes_preview != null ? String(detail.notes_preview).trim() : ''
-    return [a, n].filter(Boolean).join('\n\n')
-  }, [walletRechargeViewerDetail])
 
   useEffect(() => {
     if (menuSaleId == null) return
@@ -666,7 +579,24 @@ export default function ClientDetail() {
       if (kind === 'payment' || kind === 'wallet_recharge_payment') {
         const paymentId = Number(entry.payment_id ?? entry.entity_id)
         if (!Number.isFinite(paymentId) || paymentId < 1) return
-        setPaymentViewId(paymentId)
+        const st = String(entry.status || '').toLowerCase()
+        const isApproved = st === 'approved' || st === 'aprobado'
+        openReceivePayment(
+          refreshAfterClientTransaction,
+          buildReceivePaymentPrefill(
+            {
+              id: paymentId,
+              payment_id: paymentId,
+              client_id: idNum,
+              payment_number: entry.ref_number,
+              receipt_file_url: entry.receipt_file_url,
+            },
+            {
+              clientId: idNum,
+              viewMode: isApproved,
+            },
+          ),
+        )
         return
       }
 
@@ -675,7 +605,7 @@ export default function ClientDetail() {
           toastInfo('No tienes permiso para ver recargas BaaS.')
           return
         }
-        await openWalletRechargeViewer(Number(entry.entity_id))
+        openWalletRechargeFromHistory(Number(entry.entity_id))
         return
       }
 
@@ -684,7 +614,10 @@ export default function ClientDetail() {
     [
       canViewRechargeDetail,
       canViewSalesDetail,
-      openWalletRechargeViewer,
+      idNum,
+      openReceivePayment,
+      openWalletRechargeFromHistory,
+      refreshAfterClientTransaction,
       sales,
       toastInfo,
     ],
@@ -1541,58 +1474,17 @@ export default function ClientDetail() {
         />
       )}
 
-      {walletRechargeViewerDetail ? (
-        <NewRechargeModal
-          open
-          editMode={false}
-          isReadOnly
-          clientSnapshotForEdit={rechargeModalClientSnapshot}
-          readOnlyAuditRequestId={walletRechargeViewerDetail.id}
-          summarySubtotalOverride={walletRechargeViewerDetail.amount_requested}
-          summaryBalancePendingOverride={walletRechargeViewerDetail.balance_pending}
-          discountBilling={
-            walletRechargeViewerDetail.discount != null && Number(walletRechargeViewerDetail.discount) > 0
-              ? String(walletRechargeViewerDetail.discount)
-              : ''
-          }
-          rechargeLineItems={rechargeModalLineItems}
-          onRechargeLineItemsChange={noop}
-          depositUsd=""
-          onDepositUsdChange={noop}
-          rechargeComment={rechargeModalComment}
-          onRechargeCommentChange={noop}
-          salePaymentMethodOptions={[]}
-          depositAccountOptionsByMethodId={{}}
-          selectedPaymentMethodIds={[]}
-          togglePaymentMethodId={noop}
-          selectedDepositAccountIds={[]}
-          toggleDepositAccountId={noop}
-          depositCurrencyMismatch={false}
-          depositAccountCurrencyCode=""
-          linkReceiptFile={null}
-          onLinkReceiptFileChange={noop}
-          generatingLink={false}
-          onSubmitGenerateLink={noop}
-          linkedPaymentsForReadOnly={
-            Array.isArray(walletRechargeViewerDetail.linked_payments)
-              ? walletRechargeViewerDetail.linked_payments
-              : []
-          }
-          onClose={() => setWalletRechargeViewerDetail(null)}
-          linkClientId={
-            walletRechargeViewerDetail.client_id != null
-              ? String(walletRechargeViewerDetail.client_id)
-              : ''
-          }
-          onLinkClientIdChange={noop}
-        />
-      ) : null}
-
-      {paymentViewId != null && (
-        <ViewPaymentModal
-          paymentId={paymentViewId}
-          depositAccounts={depositAccounts}
-          onClose={() => setPaymentViewId(null)}
+      {rechargeModalId != null && (
+        <ClientHistoryRechargeModal
+          requestId={rechargeModalId}
+          onClose={() => {
+            setRechargeModalId(null)
+            setWalletRechargeModalLoadingId(null)
+          }}
+          onAfterSave={refreshAfterClientTransaction}
+          onLoadingChange={(loading) => {
+            setWalletRechargeModalLoadingId(loading ? rechargeModalId : null)
+          }}
         />
       )}
 
