@@ -219,6 +219,31 @@ function ledgerEntrySupportsDetailModal(entry) {
   return isPayment || isRecharge || isSale
 }
 
+/** Etiqueta contable visible en columna TIPO (no altera entity_kind ni enrutamiento). */
+function ledgerTypeDisplayLabel(entry) {
+  const kind = entry?.entity_kind
+  if (kind === 'payment' || kind === 'wallet_recharge_payment') return 'PAGO'
+  if (kind === 'sale' || kind === 'wallet_recharge') return 'FACTURA'
+  return String(entry?.type || '—')
+}
+
+function ledgerTypeBadgeClass(entry) {
+  const kind = entry?.entity_kind
+  if (kind === 'payment' || kind === 'wallet_recharge_payment') {
+    return 'bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200/80'
+  }
+  if (kind === 'sale' || kind === 'wallet_recharge') {
+    return 'bg-violet-100 text-violet-900 ring-1 ring-violet-200/80'
+  }
+  const typeLower = String(entry?.type || '').toLowerCase()
+  if (kind === 'wallet_transfer') {
+    if (typeLower.includes('transferencia baas') || typeLower.includes('reversión')) {
+      return 'bg-orange-100 text-orange-900 ring-1 ring-orange-200/80'
+    }
+  }
+  return 'bg-slate-100 text-slate-700'
+}
+
 function formatApiErrorDetail(err, fallback) {
   const d = err?.response?.data?.detail
   if (typeof d === 'string') return d
@@ -1141,17 +1166,9 @@ export default function ClientDetail() {
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             <span
-                              className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${
-                                isPayment
-                                  ? 'bg-indigo-100 text-indigo-800'
-                                  : isRecharge
-                                    ? 'bg-fuchsia-100 text-fuchsia-900 ring-1 ring-fuchsia-200/80'
-                                    : isBaasTransfer || isTransferRevert
-                                      ? 'bg-orange-100 text-orange-900 ring-1 ring-orange-200/80'
-                                      : 'bg-slate-100 text-slate-700'
-                              }`}
+                              className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${ledgerTypeBadgeClass(entry)}`}
                             >
-                              {entry.type}
+                              {ledgerTypeDisplayLabel(entry)}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-gray-900 font-medium whitespace-nowrap tabular-nums">
