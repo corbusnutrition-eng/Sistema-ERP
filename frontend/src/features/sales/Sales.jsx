@@ -13,6 +13,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { useCopyLinkFeedback } from '../../hooks/useCopyLinkFeedback'
+import api from '../../api/axios'
 import Swal from 'sweetalert2'
 import { useInventoryData } from '../../context/InventoryDataContext'
 import { useModal } from '../../context/ModalContext'
