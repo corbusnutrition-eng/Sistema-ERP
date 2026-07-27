@@ -258,7 +258,6 @@ export function TableActionButton({
 
   const handleClick = (e) => {
     e.stopPropagation()
-    e.preventDefault()
     if (disabled) return
     onClick?.(e)
   }

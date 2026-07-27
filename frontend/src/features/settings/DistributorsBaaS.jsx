@@ -87,6 +87,12 @@ import RechargeKPIs from './RechargeKPIs'
 import SalesFilters from '../sales/components/SalesFilters'
 import { SALES_CURRENCIES } from '../sales/salesCurrencies'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
+import {
+  buildReceivePaymentPrefill,
+  isSubsequentCxcAbonoForRecharge,
+  openReceivePaymentForRechargeAbono,
+  pickRechargePendingReviewPayment,
+} from '../sales/receivePaymentRouting'
 
 const NotificationManagementPanel = lazy(() => import('./NotificationManagementPanel'))
 
@@ -738,16 +744,11 @@ export default function DistributorsBaaSPage() {
           } catch {
             hydrated = row
           }
-          if (isSubsequentCxcAbonoForRecharge(hydrated)) {
-            await openReceivePaymentForRechargeAbono(
-              hydrated,
-              openReceivePayment,
-              receivePaymentAfterSave,
-            )
-          } else {
-            setApproveRow(hydrated)
-            setApproveReceived(defaultReceivedAmountForApprove(hydrated))
-            setApproveModalOpen(true)
+          setApproveRow(hydrated)
+          setApproveReceived(defaultReceivedAmountForApprove(hydrated))
+          setApproveModalOpen(true)
+          if (await tryRouteRechargeAbonoToReceivePayment(hydrated)) {
+            closeApproveModal()
           }
         } else if (
           ['pending', 'partially_paid', 'approved'].includes(status)
@@ -1550,19 +1551,60 @@ export default function DistributorsBaaSPage() {
     return decl != null && Number(decl) > 0
   }
 
+  function resolveRechargeRowClientEmail(row) {
+    let email = String(row?.client_email ?? '').trim()
+    if (email.includes('@')) return email
+    const clientId = Number(row?.client_id)
+    if (Number.isFinite(clientId) && clientId > 0 && Array.isArray(clientes)) {
+      const match = clientes.find((c) => Number(c?.id) === clientId)
+      email = String(match?.email ?? '').trim()
+    }
+    return email
+  }
+
+  async function tryRouteRechargeAbonoToReceivePayment(hydrated) {
+    if (!isSubsequentCxcAbonoForRecharge(hydrated)) return false
+    const pendingPay = pickRechargePendingReviewPayment(hydrated)
+    if (!pendingPay?.payment_id) return false
+    const opened = await openReceivePaymentForRechargeAbono(
+      hydrated,
+      openReceivePayment,
+      receivePaymentAfterSave,
+    )
+    if (!opened) {
+      showToast('No se pudo abrir el modal de recibir pago; usa aprobar o editar la solicitud.')
+    }
+    return opened
+  }
+
   async function openApproveModal(row) {
-    if (!row || row.status !== 'in_review') return
+    if (!row?.id) {
+      showToast('No se pudo identificar la solicitud de recarga.')
+      return
+    }
+    const status = normalizeRechargeStatus(row.status)
+    if (status !== 'in_review') {
+      showToast('Solo se pueden aprobar solicitudes en revisión.')
+      return
+    }
+
+    setApproveRow(row)
+    setApproveReceived(defaultReceivedAmountForApprove(row))
+    setApproveModalOpen(true)
+
     let hydrated = row
     try {
       const { data } = await api.get(`/api/v1/distributors/recharge-requests/${row.id}`)
       if (data && typeof data === 'object') hydrated = { ...row, ...data }
     } catch {
-      hydrated = row
+      showToast('No se pudo refrescar el detalle; se usan los datos visibles en la tabla.')
     }
-    if (isSubsequentCxcAbonoForRecharge(hydrated)) {
-      await openReceivePaymentForRechargeAbono(hydrated, openReceivePayment, receivePaymentAfterSave)
+
+    if (await tryRouteRechargeAbonoToReceivePayment(hydrated)) {
+      closeApproveModal()
       return
     }
+
     setApproveRow(hydrated)
     setApproveReceived(defaultReceivedAmountForApprove(hydrated))
     setApproveModalOpen(true)
@@ -1778,31 +1820,52 @@ export default function DistributorsBaaSPage() {
   }
 
   async function openEditRechargeModal(row) {
-    if (
-      !row
-      || !['pending', 'in_review', 'partially_paid', 'approved'].includes(row.status)
-      || (row.status === 'approved' && !rechargeHasOpenCxcBalance(row))
-    ) {
+    if (!row?.id) {
+      showToast('No se pudo identificar la solicitud de recarga.')
       return
     }
+    const status = normalizeRechargeStatus(row.status)
+    const editableStatuses = ['pending', 'in_review', 'partially_paid', 'approved']
+    if (!editableStatuses.includes(status)) {
+      showToast('Esta solicitud no se puede editar en su estado actual.')
+      return
+    }
+    if (status === 'approved' && !rechargeHasOpenCxcBalance(row)) {
+      showToast('La recarga ya está liquidada; no hay saldo CxC pendiente para editar.')
+      return
+    }
+
+    const bootstrap = {
+      ...row,
+      client_email: resolveRechargeRowClientEmail(row) || row.client_email,
+    }
+    applyRechargeRowToLinkModal(bootstrap)
+    setEditRechargeRow(bootstrap)
+    setLinkModalOpen(true)
+
     let hydrated = row
     try {
       const { data } = await api.get(`/api/v1/distributors/recharge-requests/${row.id}`)
       if (data && typeof data === 'object') hydrated = { ...row, ...data }
     } catch {
-      hydrated = row
+      showToast('No se pudo refrescar el detalle; se usan los datos visibles en la tabla.')
     }
-    if (hydrated.status === 'in_review' && isSubsequentCxcAbonoForRecharge(hydrated)) {
-      await openReceivePaymentForRechargeAbono(hydrated, openReceivePayment, receivePaymentAfterSave)
-      return
+
+    if (normalizeRechargeStatus(hydrated.status) === 'in_review') {
+      if (await tryRouteRechargeAbonoToReceivePayment(hydrated)) {
+        setLinkModalOpen(false)
+        setEditRechargeRow(null)
+        return
+      }
     }
-    const email = String(hydrated.client_email ?? '').trim()
+
+    const email = resolveRechargeRowClientEmail(hydrated)
     if (!email.includes('@')) {
-      showToast('Esta solicitud no tiene correo de cliente para editar.')
-      return
+      showToast('Falta correo del cliente; selecciónalo en el formulario.')
     }
-    applyRechargeRowToLinkModal(hydrated)
-    setEditRechargeRow(hydrated)
+    const ready = { ...hydrated, client_email: email || hydrated.client_email }
+    applyRechargeRowToLinkModal(ready)
+    setEditRechargeRow(ready)
     setLinkModalOpen(true)
   }
 
