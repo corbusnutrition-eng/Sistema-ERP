@@ -84,11 +84,10 @@ import OcrSecurityBadges, {
   pickPendingReviewLinkedPayment,
 } from '../../components/OcrSecurityBadges'
 import { isPortalSaldoCrossSinComprobante } from '../sales/portalCreditMeta'
-import {
-  buildReceivePaymentPrefill,
-  isSubsequentCxcAbonoForRecharge,
-  openReceivePaymentForRechargeAbono,
-} from '../sales/receivePaymentRouting'
+import RechargeKPIs from './RechargeKPIs'
+import SalesFilters from '../sales/components/SalesFilters'
+import { SALES_CURRENCIES } from '../sales/salesCurrencies'
+import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
 
 const NotificationManagementPanel = lazy(() => import('./NotificationManagementPanel'))
 
@@ -168,6 +167,119 @@ function upsertRechargeRequestInList(prev, updated) {
     return dedupeRechargeRequestsById(prev.map((r) => (r.id === id ? { ...r, ...updated } : r)))
   }
   return dedupeRechargeRequestsById([updated, ...prev])
+}
+
+function rechargeRowAmountUsd(row) {
+  const amt = Number(row?.total_amount ?? row?.amount_requested ?? 0)
+  const cur = String(row?.recharge_currency || 'USD').trim().toUpperCase()
+  const xr = Number(row?.recharge_exchange_rate ?? 1)
+  if (!Number.isFinite(amt)) return 0
+  if (cur === 'USD' || cur === 'USDT') return amt
+  if (Number.isFinite(xr) && xr > 0) return amt / xr
+  return amt
+}
+
+function computeRechargeDashboardMetrics(rows) {
+  const list = Array.isArray(rows) ? rows : []
+  const activated = list.filter((r) => {
+    const st = normalizeRechargeStatus(r?.status)
+    return st === 'approved' || st === 'partially_paid'
+  })
+  return {
+    total: list.length,
+    activated: activated.length,
+    pending: list.filter((r) => normalizeRechargeStatus(r?.status) === 'pending').length,
+    review: list.filter((r) => normalizeRechargeStatus(r?.status) === 'in_review').length,
+    voided: list.filter((r) => {
+      const st = normalizeRechargeStatus(r?.status)
+      return st === 'rejected' || st === 'canceled'
+    }).length,
+    revenueUsd: activated.reduce((acc, r) => acc + rechargeRowAmountUsd(r), 0),
+  }
+}
+
+function applyRechargeListFilters(rows, filters) {
+  let result = Array.isArray(rows) ? [...rows] : []
+  const {
+    filterDateFrom,
+    filterDateTo,
+    filterClientOrUser,
+    filterNumber,
+    filterPaymentMethod,
+    filterCurrency,
+    filterTags,
+  } = filters
+
+  if (filterClientOrUser.trim()) {
+    const term = filterClientOrUser.trim().toLowerCase()
+    result = result.filter((r) => {
+      const name = String(r?.client_name ?? '').toLowerCase()
+      const email = String(r?.client_email ?? '').toLowerCase()
+      const username = String(r?.client_username ?? '').toLowerCase()
+      return name.includes(term) || email.includes(term) || username.includes(term)
+    })
+  }
+
+  if (filterNumber.trim()) {
+    const raw = filterNumber.trim().toLowerCase().replace(/\s+/g, '')
+    result = result.filter((r) => {
+      const id = String(r?.id ?? '')
+      const padded = id.padStart(5, '0')
+      return id.includes(raw) || padded.includes(raw) || `rec-${padded}`.includes(raw)
+    })
+  }
+
+  if (filterDateFrom) {
+    const fromMs = ecuadorDayStartMs(filterDateFrom)
+    if (fromMs != null) {
+      result = result.filter((r) => new Date(r?.created_at).getTime() >= fromMs)
+    }
+  }
+
+  if (filterDateTo) {
+    const toMs = ecuadorDayEndMs(filterDateTo)
+    if (toMs != null) {
+      result = result.filter((r) => new Date(r?.created_at).getTime() <= toMs)
+    }
+  }
+
+  if (filterPaymentMethod) {
+    const pmId = Number(filterPaymentMethod)
+    if (Number.isFinite(pmId)) {
+      result = result.filter((r) => {
+        const ids = Array.isArray(r?.allowed_payment_methods) ? r.allowed_payment_methods : []
+        if (ids.some((x) => Number(x) === pmId)) return true
+        const pmName = String(
+          paymentMethodsCatalogName(filters.paymentMethodsById, pmId) ?? '',
+        ).toLowerCase()
+        if (!pmName) return false
+        return String(r?.payment_methods_display ?? '').toLowerCase().includes(pmName)
+      })
+    }
+  }
+
+  if (filterCurrency) {
+    const cur = filterCurrency.toUpperCase()
+    result = result.filter(
+      (r) => String(r?.recharge_currency || 'USD').toUpperCase() === cur,
+    )
+  }
+
+  if (filterTags.trim()) {
+    const term = filterTags.trim().toLowerCase()
+    result = result.filter((r) => {
+      const note = String(r?.notes_preview ?? r?.admin_note ?? '').toLowerCase()
+      const pm = String(r?.payment_methods_display ?? '').toLowerCase()
+      return `${note} ${pm} recarga baas`.includes(term)
+    })
+  }
+
+  return result
+}
+
+function paymentMethodsCatalogName(byId, pmId) {
+  if (!byId || pmId == null) return ''
+  return byId.get(Number(pmId)) ?? ''
 }
 
 function rechargeHasOpenCxcBalance(row) {
@@ -350,6 +462,13 @@ export default function DistributorsBaaSPage() {
   const [baasSearch, setBaasSearch] = useState('')
   const [usersPage, setUsersPage] = useState(1)
   const [rechargePage, setRechargePage] = useState(1)
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo, setFilterDateTo] = useState('')
+  const [filterClientOrUser, setFilterClientOrUser] = useState('')
+  const [filterNumber, setFilterNumber] = useState('')
+  const [filterPaymentMethod, setFilterPaymentMethod] = useState('')
+  const [filterCurrency, setFilterCurrency] = useState('')
+  const [filterTags, setFilterTags] = useState('')
 
   /** Estado maestro: todas las solicitudes; cada pestaña filtra en derivado. */
   const [rechargeRequests, setRechargeRequests] = useState([])
@@ -760,6 +879,27 @@ export default function DistributorsBaaSPage() {
       setClientesLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    if (tab !== 'requests') return
+    let cancelled = false
+    api
+      .get('/api/v1/payment-methods/')
+      .then(({ data }) => {
+        if (cancelled) return
+        const list = Array.isArray(data) ? data : []
+        list.sort((a, b) =>
+          String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'es', { sensitivity: 'base' }),
+        )
+        setPaymentMethods(list)
+      })
+      .catch(() => {
+        if (!cancelled) setPaymentMethods([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [tab])
 
   useEffect(() => {
     if (!linkModalOpen) return
@@ -1855,18 +1995,87 @@ export default function DistributorsBaaSPage() {
     [users],
   )
 
+  const paymentMethodsById = useMemo(() => {
+    const map = new Map()
+    for (const pm of paymentMethods) {
+      if (pm?.id != null) map.set(Number(pm.id), String(pm.name ?? ''))
+    }
+    return map
+  }, [paymentMethods])
+
   const visibleRechargeRequests = useMemo(
-    () => rechargeRequests.filter((r) => rechargeRequestMatchesTab(r, rechargeActiveTab)),
-    [rechargeRequests, rechargeActiveTab],
+    () =>
+      applyRechargeListFilters(
+        rechargeRequests.filter((r) => rechargeRequestMatchesTab(r, rechargeActiveTab)),
+        {
+          filterDateFrom,
+          filterDateTo,
+          filterClientOrUser,
+          filterNumber,
+          filterPaymentMethod,
+          filterCurrency,
+          filterTags,
+          paymentMethodsById,
+        },
+      ),
+    [
+      rechargeRequests,
+      rechargeActiveTab,
+      filterDateFrom,
+      filterDateTo,
+      filterClientOrUser,
+      filterNumber,
+      filterPaymentMethod,
+      filterCurrency,
+      filterTags,
+      paymentMethodsById,
+    ],
   )
+
+  const rechargeDashboardMetrics = useMemo(
+    () => computeRechargeDashboardMetrics(rechargeRequests),
+    [rechargeRequests],
+  )
+
+  const rechargePaymentMethodFilterOptions = useMemo(
+    () =>
+      paymentMethods
+        .filter((m) => m?.is_active !== false)
+        .map((m) => ({ value: String(m.id), label: m.name })),
+    [paymentMethods],
+  )
+
+  const rechargeCurrencyFilterOptions = useMemo(
+    () => SALES_CURRENCIES.map((c) => ({ value: c.code, label: c.code })),
+    [],
+  )
+
+  function clearRechargeFilters() {
+    setFilterDateFrom('')
+    setFilterDateTo('')
+    setFilterClientOrUser('')
+    setFilterNumber('')
+    setFilterPaymentMethod('')
+    setFilterCurrency('')
+    setFilterTags('')
+  }
+
+  useEffect(() => {
+    setRechargePage(1)
+  }, [
+    rechargeActiveTab,
+    filterDateFrom,
+    filterDateTo,
+    filterClientOrUser,
+    filterNumber,
+    filterPaymentMethod,
+    filterCurrency,
+    filterTags,
+  ])
 
   useEffect(() => {
     setUsersPage(1)
   }, [baasSearch])
-
-  useEffect(() => {
-    setRechargePage(1)
-  }, [rechargeActiveTab])
 
   const usersTotalPages = Math.max(1, Math.ceil(filteredUsers.length / ITEMS_PER_PAGE))
   const safeUsersPage = Math.min(usersPage, usersTotalPages)
@@ -2187,6 +2396,30 @@ export default function DistributorsBaaSPage() {
       )}
 
       {tab === 'requests' && (
+        <div className="space-y-6">
+          <RechargeKPIs metrics={rechargeDashboardMetrics} />
+
+          <SalesFilters
+            filterDateFrom={filterDateFrom}
+            filterDateTo={filterDateTo}
+            filterClientOrUser={filterClientOrUser}
+            filterNumber={filterNumber}
+            filterPaymentMethod={filterPaymentMethod}
+            filterCurrency={filterCurrency}
+            filterTags={filterTags}
+            onFilterDateFromChange={setFilterDateFrom}
+            onFilterDateToChange={setFilterDateTo}
+            onFilterClientOrUserChange={setFilterClientOrUser}
+            onFilterNumberChange={setFilterNumber}
+            onFilterPaymentMethodChange={setFilterPaymentMethod}
+            onFilterCurrencyChange={setFilterCurrency}
+            onFilterTagsChange={setFilterTags}
+            onClearFilters={clearRechargeFilters}
+            paymentMethodOptions={rechargePaymentMethodFilterOptions}
+            currencyOptions={rechargeCurrencyFilterOptions}
+            ariaLabel="Filtros de solicitudes de recarga"
+          />
+
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
             <div className="flex items-center gap-2">
@@ -2194,7 +2427,15 @@ export default function DistributorsBaaSPage() {
               <h2 className="text-base font-semibold text-gray-800">Solicitudes de recarga</h2>
             </div>
             <span className="text-xs text-gray-400">
-              {loadingRequests ? '…' : `${visibleTableRowCount} solicitudes`}
+              {loadingRequests
+                ? '…'
+                : `${visibleTableRowCount} solicitud${visibleTableRowCount !== 1 ? 'es' : ''}${
+                    visibleTableRowCount !== rechargeRequests.filter((r) =>
+                      rechargeRequestMatchesTab(r, rechargeActiveTab),
+                    ).length
+                      ? ' (filtradas)'
+                      : ''
+                  }`}
             </span>
           </div>
 
@@ -2642,6 +2883,7 @@ export default function DistributorsBaaSPage() {
             />
             </>
           )}
+        </div>
         </div>
       )}
 

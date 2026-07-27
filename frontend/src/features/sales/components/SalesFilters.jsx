@@ -24,11 +24,12 @@ export default function SalesFilters({
   onClearFilters,
   paymentMethodOptions,
   currencyOptions,
+  ariaLabel = 'Filtros de ventas',
 }) {
   return (
     <div
       className="flex flex-wrap items-end gap-3 mb-4 bg-white rounded-xl px-4 py-3 ring-1 ring-gray-100 shadow-sm min-h-[4.75rem]"
-      aria-label="Filtros de ventas"
+      aria-label={ariaLabel}
     >
       <label className="flex flex-col w-36 shrink-0">
         <span className={filterLabelCls}>Desde</span>
