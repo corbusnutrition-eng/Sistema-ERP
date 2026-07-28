@@ -87,6 +87,7 @@ import RechargeKPIs from './RechargeKPIs'
 import SalesFilters from '../sales/components/SalesFilters'
 import { SALES_CURRENCIES } from '../sales/salesCurrencies'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
+import { formatSystemNote } from '../../utils/formatters'
 import {
   buildReceivePaymentPrefill,
   isSubsequentCxcAbonoForRecharge,
@@ -2858,8 +2859,8 @@ export default function DistributorsBaaSPage() {
                           <td className={`${TABLE_CELL_NOWRAP} font-mono text-sm font-semibold text-indigo-800`}>
                             {p.payment_number || `PAG-${p.id}`}
                           </td>
-                          <td className={`${TABLE_CELL_TRUNC} text-xs text-gray-600`} title={p.notes}>
-                            {p.notes || 'Abono portal'}
+                          <td className={`${TABLE_CELL_TRUNC} text-xs text-slate-500 font-medium`} title={formatSystemNote(p.notes) || 'Abono portal'}>
+                            {formatSystemNote(p.notes) || 'Abono portal'}
                           </td>
                           <td className={`${TABLE_CELL_NOWRAP} text-sm truncate`} title={p.payment_method || undefined}>
                             {p.payment_method || '—'}

@@ -6,6 +6,7 @@ import {
   formatSaleLedgerDateParts,
   formatSaleTableDate,
 } from '../../utils/datetime'
+import { formatSystemNote } from '../../utils/formatters'
 
 export { formatSaleLedgerDateParts, formatSaleTableDate }
 
@@ -394,9 +395,12 @@ export function SaleAmountCell({ sale }) {
 
 export function SaleListNotesCell({ notes }) {
   const raw = notes != null ? String(notes).trim() : ''
-  const display = raw || '—'
+  const display = raw ? formatSystemNote(raw) : '—'
   return (
-    <span className="text-gray-700 max-w-full min-w-0 truncate block text-sm" title={raw || undefined}>
+    <span
+      className="text-xs text-slate-500 font-medium max-w-full min-w-0 truncate block"
+      title={display !== '—' ? display : undefined}
+    >
       {display}
     </span>
   )

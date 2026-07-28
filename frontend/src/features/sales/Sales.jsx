@@ -52,6 +52,7 @@ import SalesFilters from './components/SalesFilters'
 import SalesTabs from './components/SalesTabs'
 import SalesTableSkeleton from './components/SalesTableSkeleton'
 import { ecuadorDayEndMs, ecuadorDayStartMs } from '../../utils/datetime'
+import { formatSystemNote } from '../../utils/formatters'
 import { confirmVoidInvoiceWithMasterPin } from '../../utils/confirmVoidTransaction'
 import {
   useTableResize,
@@ -1695,8 +1696,8 @@ export default function Sales() {
                         <td className={`${TABLE_CELL_NOWRAP} font-mono text-sm font-semibold text-indigo-800`}>
                           {p.payment_number || `PAG-${p.id}`}
                         </td>
-                        <td className={`${TABLE_CELL_TRUNC} text-xs text-gray-600`} title={p.notes}>
-                          {p.notes || 'Abono portal'}
+                        <td className={`${TABLE_CELL_TRUNC} text-xs text-slate-500 font-medium`} title={formatSystemNote(p.notes) || 'Abono portal'}>
+                          {formatSystemNote(p.notes) || 'Abono portal'}
                         </td>
                         <td className={`${TABLE_CELL_NOWRAP} text-sm truncate`} title={p.payment_method || undefined}>
                           {p.payment_method || '—'}
