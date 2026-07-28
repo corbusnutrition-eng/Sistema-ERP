@@ -167,6 +167,11 @@ from app.wallet_recharge_helpers import (
     payment_methods_display,
     wallet_recharge_accepts_client_receipt,
 )
+from app.services.telegram_service import (
+    resolve_wallet_recharge_payment_method_label,
+    schedule_baas_new_request_notification,
+    schedule_receipt_received_notification,
+)
 
 router = APIRouter(prefix="/portal", tags=["public-client-portal"])
 
@@ -1987,6 +1992,7 @@ def portal_create_wallet_recharge(
     portal_token: uuid_pkg.UUID,
     payload: PortalCreateWalletRechargeRequest,
     db: DbDep,
+    background_tasks: BackgroundTasks,
 ) -> PortalCreateWalletRechargeResponse:
     """El cliente crea una solicitud BaaS en estado pending y recibe la URL de pago del portal."""
     client = _portal_client_from_token(db, portal_token)
@@ -2008,6 +2014,13 @@ def portal_create_wallet_recharge(
     portal_path = f"/portal/{token_out}"
     payment_url = f"{portal_path}?open_recharge={int(req.id)}"
     cur = normalize_currency_code(getattr(req, "recharge_currency", None), "USD")
+    schedule_baas_new_request_notification(
+        background_tasks,
+        client=client,
+        amount=float(req.amount_requested or 0),
+        currency=cur,
+        payment_method=resolve_wallet_recharge_payment_method_label(db, req),
+    )
     return PortalCreateWalletRechargeResponse(
         request_id=int(req.id),
         status=str(req.status or REQ_STATUS_PENDING),
@@ -2917,7 +2930,24 @@ async def portal_pay_wallet_recharge(
         is_manually_edited=_portal_form_bool(is_manually_edited),
         ai_confidence_score=_portal_form_confidence_score(ai_confidence_score),
     )
-    return _portal_commit_wallet_recharge_after_receipt(db, req_out)
+    req_out = _portal_commit_wallet_recharge_after_receipt(db, req_out)
+    paid_notify = float(getattr(req_out, "portal_declared_payment_amount", 0) or 0)
+    if paid_notify <= 0:
+        for raw_amt in (paid_amount, monto_declarado):
+            try:
+                paid_notify = float(str(raw_amt or "").strip().replace(",", "."))
+            except (TypeError, ValueError):
+                continue
+            if paid_notify > 0:
+                break
+    wr_cur = normalize_currency_code(getattr(req_out, "recharge_currency", None), "USD")
+    schedule_receipt_received_notification(
+        background_tasks,
+        client=client,
+        amount=paid_notify,
+        currency=wr_cur,
+    )
+    return req_out
 
 
 def _portal_package_label_for_screen(db: Session, row: ScreenStock, sale: Sale) -> str:
@@ -4283,6 +4313,12 @@ async def portal_submit_payment(
             )
             req_done = _portal_commit_wallet_recharge_after_receipt(db, req_done)
             receipt_out = str(req_done.receipt_url or "").strip() or None
+            schedule_receipt_received_notification(
+                background_tasks,
+                client=client,
+                amount=amt,
+                currency=normalize_currency_code(getattr(req_done, "recharge_currency", None), abono_cur),
+            )
             return PortalPaymentSubmitResponse(
                 message="Recibimos tu comprobante para la recarga solicitada. Un operador lo validará pronto.",
                 status=str(req_done.status or REQ_STATUS_IN_REVIEW),
@@ -4407,6 +4443,12 @@ async def portal_submit_payment(
                 detail="Error al registrar el abono y el asiento contable.",
             ) from exc
         db.refresh(payment)
+        schedule_receipt_received_notification(
+            background_tasks,
+            client=client,
+            amount=amt,
+            currency=abono_cur,
+        )
         return PortalPaymentSubmitResponse(
             message="Recibimos tu abono. Un operador lo aplicará a tu saldo pendiente.",
             status=payment.status.value,
@@ -4720,6 +4762,13 @@ async def portal_submit_payment(
     db.refresh(sale)
     db.refresh(client)
     db.refresh(deposit_pay)
+
+    schedule_receipt_received_notification(
+        background_tasks,
+        client=client,
+        amount=float(total_pay),
+        currency=cur_norm,
+    )
 
     return PortalPaymentSubmitResponse(
         status=sale.status.value,

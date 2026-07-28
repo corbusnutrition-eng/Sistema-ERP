@@ -23,6 +23,7 @@ from app.api.v1.sales import _persist_receipt_upload, _resolve_deposit_account_i
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.models.client import Client
+from app.services.telegram_service import schedule_receipt_received_notification
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
 from app.models.payment_method import PaymentMethod
 from app.models.sale import Sale, SaleStatus
@@ -173,6 +174,7 @@ def _allocations_to_dicts(rows: list) -> list[dict]:
 @router.post("/portal-abono", response_model=PortalAbonoResponse)
 async def portal_abono(
     db: DbDep,
+    background_tasks: BackgroundTasks,
     portal_token: Annotated[str, Form(...)],
     payment_method_id: Annotated[int, Form(...)],
     deposit_account_id: Annotated[int, Form(...)],
@@ -224,6 +226,13 @@ async def portal_abono(
     db.add(payment)
     db.commit()
     db.refresh(payment)
+
+    schedule_receipt_received_notification(
+        background_tasks,
+        client=client,
+        amount=float(paid_dec),
+        currency=cur,
+    )
 
     return PortalAbonoResponse(
         message="Recibimos tu abono. Un operador lo revisará y lo aplicará a tu saldo.",

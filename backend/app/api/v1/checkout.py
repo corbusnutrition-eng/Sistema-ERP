@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
@@ -21,6 +21,7 @@ from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.rate_limit import PORTAL_FINANCIAL_LIMIT, PORTAL_GET_LIMIT, limiter
 from app.models.account import Account
+from app.models.client import Client
 from app.models.payment_method import PaymentMethod
 from app.models.product import Product
 from app.models.sale import Sale, SaleStatus
@@ -42,6 +43,7 @@ from app.services.client_payment_service import (
     dedupe_notes_portal_general_abono_chunks,
     next_payment_number,
 )
+from app.services.telegram_service import schedule_receipt_received_notification
 
 router = APIRouter(prefix="/checkout", tags=["public-checkout"])
 
@@ -428,6 +430,7 @@ async def checkout_pay(
     request: Request,
     payment_token: uuid_pkg.UUID,
     db: DbDep,
+    background_tasks: BackgroundTasks,
     payment_method_id: Annotated[int, Form(...)],
     payment_receipt: Annotated[UploadFile, File(...)],
     deposit_account_id: Annotated[Optional[int], Form()] = None,
@@ -524,6 +527,18 @@ async def checkout_pay(
             detail="Error al registrar el comprobante y el asiento contable.",
         ) from exc
     db.refresh(sale)
+
+    client = db.get(Client, int(sale.client_id)) if sale.client_id is not None else None
+    if client is not None:
+        lines = _checkout_lines_public(db, sale, product=sale.product, stock_row=sale.screen_stock_row)
+        amt_opt = _infer_local_amount_for_checkout(sale, lines)
+        if amt_opt is not None and amt_opt > Decimal("0.0001"):
+            schedule_receipt_received_notification(
+                background_tasks,
+                client=client,
+                amount=float(amt_opt),
+                currency=normalize_currency_code(str(sale.currency or "USD")),
+            )
 
     return CheckoutPayResponse(
         status=sale.status.value,
