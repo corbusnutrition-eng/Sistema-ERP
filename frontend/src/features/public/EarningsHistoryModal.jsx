@@ -109,7 +109,7 @@ export default function EarningsHistoryModal({ open, onClose, token, api }) {
         className="absolute inset-0 bg-slate-950/72 backdrop-blur-sm"
         onClick={() => onClose?.()}
       />
-      <div className="relative z-10 flex max-h-[90vh] w-full max-w-lg flex-col rounded-t-3xl border border-emerald-400/30 bg-slate-900 shadow-2xl sm:rounded-2xl">
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col rounded-t-3xl border border-emerald-400/30 bg-slate-900 shadow-2xl sm:max-w-4xl sm:rounded-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-slate-700/50 px-5 py-4">
           <div>
             <h2 id="earnings-history-title" className="m-0 text-lg font-extrabold text-emerald-50">
@@ -147,34 +147,41 @@ export default function EarningsHistoryModal({ open, onClose, token, api }) {
               Aún no tienes comisiones registradas por tu red.
             </p>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-white/10">
-              <table className="w-full border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 bg-slate-950/60 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="px-3 py-2.5 font-semibold">Fecha</th>
-                    <th className="px-3 py-2.5 font-semibold">Detalle</th>
-                    <th className="px-3 py-2.5 text-right font-semibold">Monto</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((row) => {
-                    const rid = Number(row?.id)
-                    return (
-                      <tr key={`earnings-${rid}`} className="border-b border-white/5 last:border-b-0">
-                        <td className="px-3 py-3 align-top text-[11px] tabular-nums text-slate-400 whitespace-nowrap">
-                          {formatDateTime(row?.date)}
-                        </td>
-                        <td className="px-3 py-3 align-top text-[13px] leading-snug text-slate-100">
-                          {String(row?.description || 'Comisión por red')}
-                        </td>
-                        <td className="px-3 py-3 align-top text-right text-[13px] font-bold tabular-nums text-emerald-300 whitespace-nowrap">
-                          +{formatMoney(row?.amount, row?.currency || currency)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+            <div className="-mx-1 overflow-x-auto px-1 sm:mx-0 sm:overflow-x-visible sm:px-0">
+              <div className="min-w-[520px] overflow-hidden rounded-xl border border-white/10 sm:min-w-0">
+                <table className="w-full table-fixed border-collapse text-left text-sm">
+                  <colgroup>
+                    <col className="w-[112px] sm:w-[128px]" />
+                    <col />
+                    <col className="w-[100px] sm:w-[120px]" />
+                  </colgroup>
+                  <thead>
+                    <tr className="border-b border-white/10 bg-slate-950/60 text-[11px] uppercase tracking-wide text-slate-400">
+                      <th className="px-3 py-2.5 font-semibold">Fecha</th>
+                      <th className="px-3 py-2.5 font-semibold">Detalle</th>
+                      <th className="px-3 py-2.5 text-right font-semibold">Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((row) => {
+                      const rid = Number(row?.id)
+                      return (
+                        <tr key={`earnings-${rid}`} className="border-b border-white/5 last:border-b-0">
+                          <td className="px-3 py-3 align-top text-[11px] tabular-nums leading-snug text-slate-400">
+                            {formatDateTime(row?.date)}
+                          </td>
+                          <td className="break-words px-3 py-3 align-top text-sm leading-snug whitespace-normal text-slate-100">
+                            {String(row?.description || 'Comisión por red')}
+                          </td>
+                          <td className="min-w-[100px] px-3 py-3 align-top text-right text-sm font-bold tabular-nums whitespace-nowrap text-green-400">
+                            +{formatMoney(row?.amount, row?.currency || currency)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
