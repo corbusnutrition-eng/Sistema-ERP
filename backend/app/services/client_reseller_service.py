@@ -104,8 +104,17 @@ def _persist_client_product_prices_for_child(
     *,
     child_id: int,
     items: list[ClientProductPriceItem],
+    price_currency: Optional[str] = None,
 ) -> int:
     """Persiste precios del hijo sin validar costo de bodega (margen ya validado vs padre)."""
+    from app.services.client_currency_service import get_client_currency
+    from app.services.currency_consolidation import get_last_exchange_rate
+
+    child = db.get(Client, int(child_id))
+    cur = normalize_currency_code(
+        price_currency or (get_client_currency(child) if child else "USD"),
+        "USD",
+    )
     touched = 0
     for item in items:
         line, product = _get_package_catalog_line(db, int(item.package_catalog_id))
@@ -122,19 +131,39 @@ def _persist_client_product_prices_for_child(
             )
             .first()
         )
-        price_f = round(float(item.custom_price), 4)
+        local_price = round(float(item.custom_price), 4)
+        if item.local_price is not None:
+            try:
+                lp = round(float(item.local_price), 4)
+                if lp > 0:
+                    local_price = lp
+            except (TypeError, ValueError):
+                pass
+        item_cur = normalize_currency_code(item.price_currency or cur, cur)
+        if item_cur == "USD":
+            custom_usd = local_price
+        else:
+            xr, _ = get_last_exchange_rate(db, item_cur)
+            if xr <= 0:
+                xr = 1.0
+            custom_usd = round(local_price / float(xr), 4)
+
         if row is None:
             db.add(
                 ClientProductPrice(
                     client_id=int(child_id),
                     product_id=int(product.id),
                     package_catalog_id=int(line.id),
-                    custom_price=price_f,
+                    custom_price=custom_usd,
+                    sale_price_local=local_price,
+                    price_currency=item_cur,
                 )
             )
         else:
             row.product_id = int(product.id)
-            row.custom_price = price_f
+            row.custom_price = custom_usd
+            row.sale_price_local = local_price
+            row.price_currency = item_cur
             db.add(row)
         touched += 1
     return touched
@@ -358,7 +387,12 @@ def create_subclient_with_prices(
         db.add(child)
         db.flush()
 
-        _persist_client_product_prices_for_child(db, child_id=int(child.id), items=validated)
+        _persist_client_product_prices_for_child(
+            db,
+            child_id=int(child.id),
+            items=validated,
+            price_currency=parent_cur,
+        )
 
         _apply_baas_transfer_parent_to_child(db, parent, child, amt, currency=parent_cur)
 
@@ -635,7 +669,14 @@ def upsert_subclient_product_prices(
     validated = _validate_subclient_price_items_for_parent(
         db, parent, items, require_all_authorized=False
     )
-    touched = _persist_client_product_prices_for_child(db, child_id=int(child.id), items=validated)
+    from app.services.client_currency_service import get_client_currency
+
+    touched = _persist_client_product_prices_for_child(
+        db,
+        child_id=int(child.id),
+        items=validated,
+        price_currency=get_client_currency(parent),
+    )
     db.commit()
     return touched
 

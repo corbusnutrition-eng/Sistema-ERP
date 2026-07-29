@@ -216,13 +216,20 @@ def execute_portal_auto_purchase(
         client_id=int(client.id),
         package_catalog_id=int(package_catalog_id),
     )
+    catalog_line, product = _get_package_catalog_line(db, int(package_catalog_id))
+    if price_row is None:
+        price_row = get_client_package_price_row(
+            db,
+            client_id=int(client.id),
+            package_catalog_id=int(package_catalog_id),
+            product_id=int(product.id),
+        )
     if price_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Este paquete Flujo no tiene un precio de venta asignado para tu cuenta.",
         )
 
-    catalog_line, product = _get_package_catalog_line(db, int(package_catalog_id))
     pkg_label = (catalog_line.package_label or "").strip()
     if not pkg_label:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Paquete sin etiqueta válida.")

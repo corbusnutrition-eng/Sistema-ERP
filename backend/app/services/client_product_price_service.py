@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import re
+import unicodedata
 from typing import Optional
 
 from sqlalchemy import and_, func
@@ -19,6 +22,25 @@ from app.schemas.client_product_prices import (
     FlujoPackageForPricing,
     PortalAutoPurchaseProduct,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_package_label_key(label: Optional[str]) -> str:
+    """
+    Clave estable para emparejar paquetes entre catálogo, bodega y precios.
+
+    Normaliza espacios, mayúsculas y variantes con «+» / «PRO GRATIS» para evitar
+    fallos de match cuando el label incluye caracteres como «6 MESES + 1 MES».
+    """
+    raw = unicodedata.normalize("NFKC", str(label or "")).strip().lower()
+    if not raw:
+        return ""
+    raw = raw.replace("(", " ").replace(")", " ")
+    raw = re.sub(r"\bpro\s*gratis\b", " ", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"\s*\+\s*", " + ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw
 
 
 def margin_below_cost_message(cost_usd: float) -> str:
@@ -170,6 +192,65 @@ def _package_display_name_for_product(product: Product, package_label: str) -> s
     return prod_name or pkg or "—"
 
 
+def _product_package_line_count(product: Product) -> int:
+    lines = list(getattr(product, "package_catalog_lines", None) or [])
+    return sum(1 for ln in lines if str(getattr(ln, "package_label", "") or "").strip())
+
+
+def _avg_screen_stock_cost_for_package_label(
+    db: Session,
+    *,
+    product_id: int,
+    package_label: str,
+    inventory_provider: Optional[str] = None,
+) -> Optional[float]:
+    """Costo promedio en bodega para un paquete (match exacto y normalizado)."""
+    pkg = (package_label or "").strip()
+    if not pkg:
+        return None
+    inv_prov = _norm_provider(inventory_provider)
+    target_norm = normalize_package_label_key(pkg)
+
+    exact_avg = (
+        db.query(func.avg(ScreenStock.cost_per_package))
+        .filter(
+            ScreenStock.product_id == int(product_id),
+            func.lower(func.trim(ScreenStock.provider)) == inv_prov,
+            func.lower(func.trim(ScreenStock.package)) == pkg.lower(),
+            ScreenStock.cost_per_package.isnot(None),
+        )
+        .scalar()
+    )
+    if exact_avg is not None:
+        try:
+            val = float(exact_avg)
+            if val >= 0:
+                return val
+        except (TypeError, ValueError):
+            pass
+
+    if not target_norm:
+        return None
+
+    q = db.query(ScreenStock.package, ScreenStock.cost_per_package).filter(
+        ScreenStock.product_id == int(product_id),
+        ScreenStock.cost_per_package.isnot(None),
+    )
+    if inv_prov:
+        q = q.filter(func.lower(func.trim(ScreenStock.provider)) == inv_prov)
+    costs: list[float] = []
+    for row_pkg, row_cost in q.all():
+        if normalize_package_label_key(row_pkg) != target_norm:
+            continue
+        try:
+            costs.append(float(row_cost))
+        except (TypeError, ValueError):
+            continue
+    if not costs:
+        return None
+    return sum(costs) / len(costs)
+
+
 def _package_base_cost_usd(
     db: Session,
     *,
@@ -182,30 +263,28 @@ def _package_base_cost_usd(
         ref = None
     if ref is not None and ref >= 0:
         return ref
-    try:
-        prod_cost = float(product.purchase_cost_usd or 0)
-    except (TypeError, ValueError):
-        prod_cost = 0.0
-    if prod_cost > 0:
-        return prod_cost
+
+    inv_prov = _inventory_provider_for_product(product)
     pkg = (catalog_line.package_label or "").strip()
-    inv_prov = _norm_provider(_inventory_provider_for_product(product))
-    if pkg:
-        avg = (
-            db.query(func.avg(ScreenStock.cost_per_package))
-            .filter(
-                ScreenStock.product_id == int(product.id),
-                func.lower(func.trim(ScreenStock.provider)) == inv_prov,
-                func.lower(func.trim(ScreenStock.package)) == pkg.lower(),
-                ScreenStock.cost_per_package.isnot(None),
-            )
-            .scalar()
-        )
-        if avg is not None:
-            try:
-                return float(avg)
-            except (TypeError, ValueError):
-                pass
+    avg = _avg_screen_stock_cost_for_package_label(
+        db,
+        product_id=int(product.id),
+        package_label=pkg,
+        inventory_provider=inv_prov,
+    )
+    if avg is not None and avg >= 0:
+        return float(avg)
+
+    # Evitar usar purchase_cost_usd del producto cuando hay matriz multi-paquete:
+    # un costo global suele corresponder al paquete más caro y anula márgenes en 6/12 meses.
+    if _product_package_line_count(product) <= 1:
+        try:
+            prod_cost = float(product.purchase_cost_usd or 0)
+        except (TypeError, ValueError):
+            prod_cost = 0.0
+        if prod_cost > 0:
+            return prod_cost
+
     return 0.0
 
 
@@ -632,12 +711,73 @@ def get_client_package_price_row(
     *,
     client_id: int,
     package_catalog_id: int,
+    product_id: Optional[int] = None,
 ) -> ClientProductPrice | None:
-    return (
-        db.query(ClientProductPrice)
-        .filter(
-            ClientProductPrice.client_id == int(client_id),
-            ClientProductPrice.package_catalog_id == int(package_catalog_id),
-        )
-        .first()
+    """
+    Precio asignado al cliente por ``package_catalog_id`` (y opcionalmente ``product_id``).
+
+    La búsqueda es estrictamente por IDs de catálogo/producto; nunca por nombre de paquete.
+    """
+    q = db.query(ClientProductPrice).filter(
+        ClientProductPrice.client_id == int(client_id),
+        ClientProductPrice.package_catalog_id == int(package_catalog_id),
     )
+    if product_id is not None:
+        row = q.filter(ClientProductPrice.product_id == int(product_id)).first()
+        if row is not None:
+            return row
+        logger.warning(
+            "ClientProductPrice sin product_id=%s para client_id=%s package_catalog_id=%s; "
+            "usando fila legacy por package_catalog_id.",
+            product_id,
+            client_id,
+            package_catalog_id,
+        )
+    return q.first()
+
+
+def resolve_client_assigned_package_price(
+    db: Session,
+    *,
+    client: Client,
+    package_catalog_id: int,
+    product_id: Optional[int] = None,
+    catalog_line: Optional[ProductPackageCatalog] = None,
+    product: Optional[Product] = None,
+) -> tuple[Optional[float], str, str]:
+    """
+    Resuelve precio asignado al cliente para un paquete.
+
+    Returns:
+        (amount, currency, source) donde source ∈ assigned|reference_cost|base_cost|missing
+    """
+    from app.services.client_currency_service import get_client_currency
+
+    row = get_client_package_price_row(
+        db,
+        client_id=int(client.id),
+        package_catalog_id=int(package_catalog_id),
+        product_id=product_id,
+    )
+    if row is not None:
+        local_price, price_cur = resolve_client_package_sale_price(db, client=client, cpp=row)
+        if local_price > 0:
+            return float(local_price), price_cur, "assigned"
+
+    line = catalog_line
+    prod = product
+    if line is None or prod is None:
+        line, prod = _get_package_catalog_line(db, int(package_catalog_id))
+    if product_id is not None and int(line.product_id) != int(product_id):
+        logger.warning(
+            "package_catalog_id=%s pertenece a product_id=%s (esperado=%s)",
+            package_catalog_id,
+            line.product_id,
+            product_id,
+        )
+
+    ref_cost = _package_base_cost_usd(db, product=prod, catalog_line=line)
+    cur = get_client_currency(client)
+    if ref_cost > 0:
+        return float(ref_cost), cur, "reference_cost"
+    return None, cur, "missing"
