@@ -2535,7 +2535,7 @@ def portal_auto_purchase(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"No se pudo completar la compra: {exc}",
+            detail="Error interno al procesar la compra. No se realizaron cargos.",
         ) from exc
 
 

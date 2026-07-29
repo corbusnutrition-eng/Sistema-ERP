@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from decimal import Decimal
 from urllib.parse import quote as url_quote
@@ -37,6 +38,8 @@ from app.services.client_product_price_service import (
     validate_custom_price_vs_package_cost,
 )
 from app.services.sale_accounting_sync import sync_sale_accounting_ledgers
+
+logger = logging.getLogger(__name__)
 
 TX_AUTO_PURCHASE = "auto_purchase"
 
@@ -380,18 +383,32 @@ def execute_portal_auto_purchase(
 
         from app.services.baas_commission_cascade_service import distribute_baas_commission_cascade
 
-        distribute_baas_commission_cascade(
-            db,
-            buyer=client,
-            package_catalog_id=int(package_catalog_id),
-            quantity=qty,
-            sale_id=int(sale.id),
-            purchase_currency=purchase_currency,
-            unit_price_paid=float(unit_price),
-            product_name=display,
-            product=product,
-            catalog_line=catalog_line,
-        )
+        try:
+            distribute_baas_commission_cascade(
+                db,
+                buyer=client,
+                package_catalog_id=int(package_catalog_id),
+                quantity=qty,
+                sale_id=int(sale.id),
+                purchase_currency=purchase_currency,
+                unit_price_paid=float(unit_price),
+                product_name=display,
+                product=product,
+                catalog_line=catalog_line,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Cascada de comisiones falló en autocompra portal sale_id=%s client_id=%s package_catalog_id=%s",
+                sale.id,
+                client.id,
+                package_catalog_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error interno al procesar comisiones",
+            ) from exc
 
         if len(picked) >= qty:
             _verify_screen_stock_rows_eligible_for_pending_reserve(db, picked)
@@ -453,9 +470,18 @@ def execute_portal_auto_purchase(
     except HTTPException:
         db.rollback()
         raise
-    except Exception:
+    except Exception as exc:
         db.rollback()
-        raise
+        logger.exception(
+            "Autocompra portal falló client_id=%s package_catalog_id=%s qty=%s",
+            client.id,
+            package_catalog_id,
+            qty,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al procesar la compra. No se realizaron cargos.",
+        ) from exc
 
     db.refresh(client)
     db.refresh(sale)

@@ -3580,9 +3580,9 @@ function ClientPortalPageInner() {
       )
       setConfirmingPurchase(null)
       setAutoPurchaseFeedback(normalizeAutoPurchaseFeedback(res))
-      await loadPortal()
-      await loadAutoPurchaseCatalog()
-      if (isTrackedPurchasesOpen) await loadTrackedPurchases()
+      await loadPortal({ silent: true })
+      await loadAutoPurchaseCatalog({ silent: true })
+      if (isTrackedPurchasesOpen) await loadTrackedPurchases({ silent: true })
     } catch (err) {
       const d = err?.response?.data?.detail
       setConfirmingPurchase(null)
@@ -3592,6 +3592,7 @@ function ClientPortalPageInner() {
       })
     } finally {
       setAutoPurchaseBusyId(null)
+      setLoading(false)
     }
   }, [
     api,
