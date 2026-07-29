@@ -312,6 +312,51 @@ def count_free_screen_stock_for_flujo_package(
     return int(n or 0)
 
 
+def _batch_free_screen_stock_counts(db: Session) -> dict[tuple[int, str, str], int]:
+    """Stock libre agrupado por (product_id, package_lower, provider_norm) — evita N+1 en catálogo."""
+    rows = (
+        db.query(
+            ScreenStock.product_id,
+            func.lower(func.trim(ScreenStock.package)).label("pkg"),
+            func.lower(func.trim(ScreenStock.provider)).label("prov"),
+            func.count(ScreenStock.id).label("cnt"),
+        )
+        .filter(
+            ScreenStock.status == "free",
+            ScreenStock.sale_id.is_(None),
+        )
+        .group_by(
+            ScreenStock.product_id,
+            func.lower(func.trim(ScreenStock.package)),
+            func.lower(func.trim(ScreenStock.provider)),
+        )
+        .all()
+    )
+    out: dict[tuple[int, str, str], int] = {}
+    for row in rows:
+        pid = int(row.product_id)
+        pkg = str(row.pkg or "").strip()
+        prov = str(row.prov or "").strip()
+        if not pkg:
+            continue
+        out[(pid, pkg, prov)] = int(row.cnt or 0)
+    return out
+
+
+def _free_stock_from_batch(
+    stock_map: dict[tuple[int, str, str], int],
+    *,
+    product_id: int,
+    package_label: str,
+    inventory_provider: Optional[str] = None,
+) -> int:
+    pkg = (package_label or "").strip().lower()
+    if not pkg:
+        return 0
+    prov = _norm_provider(inventory_provider)
+    return int(stock_map.get((int(product_id), pkg, prov), 0))
+
+
 def list_screen_credit_packages_for_pricing(db: Session) -> list[FlujoPackageForPricing]:
     """Catálogo global: todos los paquetes activos de productos «crédito por pantalla»."""
     products = (
@@ -321,6 +366,7 @@ def list_screen_credit_packages_for_pricing(db: Session) -> list[FlujoPackageFor
         .order_by(Product.name.asc(), Product.id.asc())
         .all()
     )
+    stock_map = _batch_free_screen_stock_counts(db)
     out: list[FlujoPackageForPricing] = []
     for product in products:
         if not _is_credito_pantalla_product(product):
@@ -342,8 +388,8 @@ def list_screen_credit_packages_for_pricing(db: Session) -> list[FlujoPackageFor
                     package_label=pkg_label,
                     display_name=_package_display_name_for_product(product, pkg_label),
                     reference_cost_usd=_package_base_cost_usd(db, product=product, catalog_line=line),
-                    free_stock=count_free_screen_stock_for_flujo_package(
-                        db,
+                    free_stock=_free_stock_from_batch(
+                        stock_map,
                         product_id=int(product.id),
                         package_label=pkg_label,
                         inventory_provider=inv_prov,
@@ -362,6 +408,7 @@ def list_flujo_packages_for_pricing(db: Session) -> list[FlujoPackageForPricing]
         .order_by(Product.name.asc(), Product.id.asc())
         .all()
     )
+    stock_map = _batch_free_screen_stock_counts(db)
     out: list[FlujoPackageForPricing] = []
     for product in products:
         if not _is_credito_pantalla_product(product):
@@ -385,8 +432,8 @@ def list_flujo_packages_for_pricing(db: Session) -> list[FlujoPackageForPricing]
                     package_label=pkg_label,
                     display_name=_package_display_name(pkg_label),
                     reference_cost_usd=_package_base_cost_usd(db, product=product, catalog_line=line),
-                    free_stock=count_free_screen_stock_for_flujo_package(
-                        db,
+                    free_stock=_free_stock_from_batch(
+                        stock_map,
                         product_id=int(product.id),
                         package_label=pkg_label,
                         inventory_provider=inv_prov,

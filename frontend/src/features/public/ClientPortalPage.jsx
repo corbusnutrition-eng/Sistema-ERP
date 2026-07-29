@@ -2350,6 +2350,16 @@ function ClientPortalPageInner() {
     setExpandedMisComprasKey(null)
   }, [])
 
+  const loadPortalCxcBalance = useCallback(async () => {
+    if (!token) return
+    try {
+      const { data } = await api.get(`/api/v1/portal/${encodeURIComponent(token)}/cxc-balance`)
+      setCxcBalance(data ?? null)
+    } catch {
+      setCxcBalance(null)
+    }
+  }, [api, token])
+
   const loadPortal = useCallback(async (opts = {}) => {
     const silent = Boolean(opts?.silent)
     if (!token) {
@@ -2362,13 +2372,12 @@ function ClientPortalPageInner() {
       setLoadError(null)
     }
     try {
-      const [portalRes, cxcRes] = await Promise.all([
-        api.get(`/api/v1/portal/${token}`),
-        api.get(`/api/v1/portal/${encodeURIComponent(token)}/cxc-balance`).catch(() => null),
-      ])
-      setData(portalRes.data)
-      setCxcBalance(cxcRes?.data ?? null)
+      const { data: portalData } = await api.get(`/api/v1/portal/${token}`)
+      setData(portalData)
       setIsBlocked(false)
+      if (opts?.withCxc !== false) {
+        void loadPortalCxcBalance()
+      }
     } catch (err) {
       if (isAccountBlockedError(err)) {
         setIsBlocked(true)
@@ -2383,6 +2392,90 @@ function ClientPortalPageInner() {
       }
     } finally {
       if (!silent) setLoading(false)
+    }
+  }, [api, loadPortalCxcBalance, token])
+
+  /** Carga inicial: dispara todas las peticiones en paralelo; el spinner solo espera GET /portal. */
+  const loadPortalInitial = useCallback(async () => {
+    if (!token) {
+      setLoadError('Enlace incompleto.')
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    setLoadError(null)
+    setWalletRechargesErr(null)
+    setAutoPurchaseErr(null)
+    setPortalNotificationsErr(null)
+
+    const enc = encodeURIComponent(token)
+    const portalPromise = api.get(`/api/v1/portal/${token}`)
+    const cxcPromise = api.get(`/api/v1/portal/${enc}/cxc-balance`)
+    const rechargesPromise = api.get(`/api/v1/portal/${enc}/recharges`)
+    const notificationsPromise = api.get(`/api/v1/portal/${enc}/notifications`)
+    const catalogPromise = api.get(`/api/v1/portal/${enc}/auto-purchase/catalog`)
+
+    try {
+      const portalRes = await portalPromise
+      setData(portalRes.data)
+      setIsBlocked(false)
+    } catch (err) {
+      if (isAccountBlockedError(err)) {
+        setIsBlocked(true)
+        setLoadError(null)
+        setData(null)
+        setCxcBalance(null)
+      } else {
+        const d = err?.response?.data?.detail
+        setLoadError(typeof d === 'string' ? d : 'No se pudo cargar el portal.')
+        setData(null)
+        setCxcBalance(null)
+      }
+    } finally {
+      setLoading(false)
+    }
+
+    const [cxcRes, rechargesRes, notificationsRes, catalogRes] = await Promise.allSettled([
+      cxcPromise,
+      rechargesPromise,
+      notificationsPromise,
+      catalogPromise,
+    ])
+
+    if (cxcRes.status === 'fulfilled') {
+      setCxcBalance(cxcRes.value?.data ?? null)
+    } else {
+      setCxcBalance(null)
+    }
+
+    if (rechargesRes.status === 'fulfilled') {
+      setWalletRecharges(Array.isArray(rechargesRes.value?.data) ? rechargesRes.value.data : [])
+    } else {
+      const d = rechargesRes.reason?.response?.data?.detail
+      setWalletRechargesErr(
+        typeof d === 'string' ? d : 'No se pudieron cargar las solicitudes de recarga.',
+      )
+      setWalletRecharges([])
+    }
+
+    if (notificationsRes.status === 'fulfilled') {
+      setPortalNotifications(
+        Array.isArray(notificationsRes.value?.data) ? notificationsRes.value.data : [],
+      )
+    } else {
+      const d = notificationsRes.reason?.response?.data?.detail
+      setPortalNotificationsErr(
+        typeof d === 'string' ? d : 'No se pudieron cargar las notificaciones.',
+      )
+      setPortalNotifications([])
+    }
+
+    if (catalogRes.status === 'fulfilled') {
+      setAutoPurchaseProducts(Array.isArray(catalogRes.value?.data) ? catalogRes.value.data : [])
+    } else {
+      const d = catalogRes.reason?.response?.data?.detail
+      setAutoPurchaseErr(typeof d === 'string' ? d : 'No se pudo cargar el catálogo de compra.')
+      setAutoPurchaseProducts([])
     }
   }, [api, token])
 
@@ -2964,7 +3057,8 @@ function ClientPortalPageInner() {
     portalRefreshInFlightRef.current = true
     try {
       const tasks = [
-        loadPortal({ silent }),
+        loadPortal({ silent, withCxc: false }),
+        loadPortalCxcBalance(),
         loadWalletRecharges(),
         loadPortalNotifications({ silent }),
         loadAutoPurchaseCatalog({ silent }),
@@ -2974,7 +3068,7 @@ function ClientPortalPageInner() {
         tasks.push(loadSubClients({ silent }))
         if (activeFilter === 'team') tasks.push(loadNetworkTree({ silent }))
       }
-      await Promise.all(tasks)
+      await Promise.allSettled(tasks)
     } finally {
       portalRefreshInFlightRef.current = false
     }
@@ -2985,6 +3079,7 @@ function ClientPortalPageInner() {
     loadAutoPurchaseCatalog,
     loadNetworkTree,
     loadPortal,
+    loadPortalCxcBalance,
     loadPortalNotifications,
     loadSubClients,
     loadTrackedPurchases,
@@ -3580,9 +3675,13 @@ function ClientPortalPageInner() {
       )
       setConfirmingPurchase(null)
       setAutoPurchaseFeedback(normalizeAutoPurchaseFeedback(res))
-      await loadPortal({ silent: true })
-      await loadAutoPurchaseCatalog({ silent: true })
-      if (isTrackedPurchasesOpen) await loadTrackedPurchases({ silent: true })
+      const refreshTasks = [
+        loadPortal({ silent: true }),
+        loadPortalCxcBalance(),
+        loadAutoPurchaseCatalog({ silent: true }),
+      ]
+      if (isTrackedPurchasesOpen) refreshTasks.push(loadTrackedPurchases({ silent: true }))
+      await Promise.allSettled(refreshTasks)
     } catch (err) {
       const d = err?.response?.data?.detail
       setConfirmingPurchase(null)
@@ -3598,6 +3697,7 @@ function ClientPortalPageInner() {
     api,
     token,
     loadPortal,
+    loadPortalCxcBalance,
     loadAutoPurchaseCatalog,
     confirmingPurchase,
     isTrackedPurchasesOpen,
@@ -3605,8 +3705,8 @@ function ClientPortalPageInner() {
   ])
 
   useEffect(() => {
-    loadPortal()
-  }, [loadPortal])
+    void loadPortalInitial()
+  }, [loadPortalInitial])
 
   useEffect(() => {
     if (!token || !data || isBlocked) return undefined
@@ -3638,23 +3738,6 @@ function ClientPortalPageInner() {
     },
     [token],
   )
-
-  useEffect(() => {
-    if (!token || loading || loadError || !data || isBlocked) return undefined
-    loadWalletRecharges()
-    loadAutoPurchaseCatalog()
-    loadPortalNotifications()
-    return undefined
-  }, [
-    token,
-    loading,
-    loadError,
-    data,
-    isBlocked,
-    loadWalletRecharges,
-    loadAutoPurchaseCatalog,
-    loadPortalNotifications,
-  ])
 
   useEffect(() => {
     if (!isResellerNetworkOpen || !token) return undefined

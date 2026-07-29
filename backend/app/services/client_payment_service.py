@@ -512,10 +512,6 @@ def _sale_invoice_total(db: Session, sale: Sale) -> Decimal:
     raw_total = _real_total_from_raw_lines(sale)
     if raw_total > _FP_EPS:
         return raw_total
-    lines = _checkout_lines_public(db, sale, product=sale.product, stock_row=sale.screen_stock_row)
-    inferred = _infer_local_amount_for_checkout(sale, lines)
-    if inferred and inferred > _FP_EPS:
-        return inferred
     for attr in ("local_amount", "amount"):
         val = getattr(sale, attr, None)
         if val is None:
@@ -526,6 +522,10 @@ def _sale_invoice_total(db: Session, sale: Sale) -> Decimal:
                 return fallback
         except Exception:
             continue
+    lines = _checkout_lines_public(db, sale, product=sale.product, stock_row=sale.screen_stock_row)
+    inferred = _infer_local_amount_for_checkout(sale, lines)
+    if inferred and inferred > _FP_EPS:
+        return inferred
     return Decimal("0")
 
 
