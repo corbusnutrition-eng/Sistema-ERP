@@ -783,3 +783,27 @@ class PortalTransferHistoryItem(BaseModel):
 class PortalTransferHistoryResponse(BaseModel):
     items: list[PortalTransferHistoryItem] = Field(default_factory=list)
     count: int = Field(default=0, ge=0)
+
+
+class PortalEarningsHistorySummaries(BaseModel):
+    daily: float = Field(default=0.0, ge=0, description="Comisiones últimas 24 h.")
+    weekly: float = Field(default=0.0, ge=0, description="Comisiones últimos 7 días.")
+    monthly: float = Field(default=0.0, ge=0, description="Comisiones últimos 30 días.")
+    currency: str = Field(default="USD", max_length=10)
+
+
+class PortalEarningsHistoryItem(BaseModel):
+    id: int
+    date: datetime.datetime
+    description: str
+    amount: float = Field(..., ge=0)
+    currency: str = Field(default="USD", max_length=10)
+
+
+class PortalEarningsHistoryResponse(BaseModel):
+    summaries: PortalEarningsHistorySummaries
+    items: list[PortalEarningsHistoryItem] = Field(default_factory=list)
+    page: int = Field(default=1, ge=1)
+    limit: int = Field(default=10, ge=1, le=50)
+    total_pages: int = Field(default=1, ge=1)
+    total_items: int = Field(default=0, ge=0)

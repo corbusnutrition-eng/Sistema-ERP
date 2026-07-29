@@ -47,6 +47,7 @@ import {
   isPortalCryptoDepositAccount,
 } from '../accounting/accountStructure'
 import WalletHistoryModal from './WalletHistoryModal'
+import EarningsHistoryModal from './EarningsHistoryModal'
 import { portalRechargeDiscount, portalRechargeGross, portalRechargeNet } from './portalRechargeMoney'
 import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
@@ -2333,6 +2334,7 @@ function ClientPortalPageInner() {
   const [rechargeEditTarget, setRechargeEditTarget] = useState(null)
   const [rechargeCancelBusyId, setRechargeCancelBusyId] = useState(null)
   const [walletHistoryModalOpen, setWalletHistoryModalOpen] = useState(false)
+  const [earningsHistoryModalOpen, setEarningsHistoryModalOpen] = useState(false)
   const [transferHistoryModalOpen, setTransferHistoryModalOpen] = useState(false)
   const [contactDialCode, setContactDialCode] = useState('+593')
   const [contactLocalNumber, setContactLocalNumber] = useState('')
@@ -6669,7 +6671,10 @@ function ClientPortalPageInner() {
           </button>
         </div>
 
-        <MiniDashboard metrics={data?.dashboard_metrics} />
+        <MiniDashboard
+          metrics={data?.dashboard_metrics}
+          onEarningsClick={() => setEarningsHistoryModalOpen(true)}
+        />
 
         {cxcBalanceLoading ? (
           <p className="mb-3 flex items-center justify-center gap-2 text-[12px] text-slate-400/90 md:mb-4">
@@ -10548,6 +10553,15 @@ function ClientPortalPageInner() {
         <WalletHistoryModal
           open={walletHistoryModalOpen}
           onClose={() => setWalletHistoryModalOpen(false)}
+          token={token}
+          api={api}
+        />
+      ) : null}
+
+      {earningsHistoryModalOpen ? (
+        <EarningsHistoryModal
+          open={earningsHistoryModalOpen}
+          onClose={() => setEarningsHistoryModalOpen(false)}
           token={token}
           api={api}
         />

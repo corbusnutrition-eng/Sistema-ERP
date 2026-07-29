@@ -20,9 +20,15 @@ function formatMoney(amount, currency) {
   }
 }
 
-function DashboardCard({ title, value, sub, icon: Icon, iconClassName, valueClassName }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-slate-950/55 px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm">
+function DashboardCard({ title, value, sub, icon: Icon, iconClassName, valueClassName, onClick, clickable }) {
+  const className =
+    'rounded-xl border border-white/10 bg-slate-950/55 px-3 py-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm transition ' +
+    (clickable
+      ? 'cursor-pointer hover:border-emerald-400/35 hover:bg-slate-950/75 hover:shadow-[0_0_20px_rgba(52,211,153,0.12)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400/60'
+      : '')
+
+  const inner = (
+    <>
       <div className="flex items-start justify-between gap-2">
         <p className="m-0 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{title}</p>
         {Icon ? (
@@ -33,14 +39,24 @@ function DashboardCard({ title, value, sub, icon: Icon, iconClassName, valueClas
         {value}
       </p>
       {sub ? <p className="mt-1 mb-0 text-[10px] tabular-nums text-slate-500">{sub}</p> : null}
-    </div>
+    </>
   )
+
+  if (clickable && onClick) {
+    return (
+      <button type="button" onClick={onClick} className={className} aria-label={`${title}: ver historial`}>
+        {inner}
+      </button>
+    )
+  }
+
+  return <div className={className}>{inner}</div>
 }
 
 /**
  * Mini-dashboard 2×2 del portal del distribuidor (debajo del saludo).
  */
-export default function MiniDashboard({ metrics }) {
+export default function MiniDashboard({ metrics, onEarningsClick }) {
   if (!metrics) return null
 
   const ganancias = metrics.ganancias_totales ?? {}
@@ -64,6 +80,8 @@ export default function MiniDashboard({ metrics }) {
         icon={TrendingUp}
         iconClassName="text-emerald-400"
         valueClassName="text-emerald-50"
+        onClick={onEarningsClick}
+        clickable={Boolean(onEarningsClick)}
       />
       <DashboardCard
         title="Saldo Billetera"

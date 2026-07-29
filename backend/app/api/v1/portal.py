@@ -113,6 +113,7 @@ from app.schemas.portal_public import (
     PortalWalletRechargeHistoryItem,
     PortalWalletRechargeHistoryPayment,
     PortalWalletHistoryResponse,
+    PortalEarningsHistoryResponse,
     PortalTransferHistoryItem,
     PortalTransferHistoryResponse,
     ReceiptAnalysisResponse,
@@ -3562,6 +3563,27 @@ def portal_wallet_history(
 
     items = [_portal_wallet_recharge_history_item(db, r) for r in rows]
     return PortalWalletHistoryResponse(items=items, count=len(items))
+
+
+@router.get(
+    "/{portal_token}/earnings-history",
+    response_model=PortalEarningsHistoryResponse,
+    summary="Historial paginado de comisiones por red",
+)
+@limiter.limit(PORTAL_GET_LIMIT)
+def portal_earnings_history(
+    request: Request,
+    portal_token: uuid_pkg.UUID,
+    db: DbDep,
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=10, ge=1, le=50),
+) -> PortalEarningsHistoryResponse:
+    """Comisiones de red del distribuidor con acumulados rolling y lista paginada."""
+    from app.services.portal_earnings_history_service import list_portal_earnings_history
+
+    client = _portal_client_from_token(db, portal_token)
+    payload = list_portal_earnings_history(db, client, page=int(page), limit=int(limit))
+    return PortalEarningsHistoryResponse.model_validate(payload)
 
 
 def _portal_transfer_history_recipient(
