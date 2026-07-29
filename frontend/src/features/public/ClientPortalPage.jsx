@@ -2001,11 +2001,13 @@ function ClientPortalPageInner() {
 
   const [data, setData] = useState(null)
   const [cxcBalance, setCxcBalance] = useState(null)
+  const [cxcBalanceLoading, setCxcBalanceLoading] = useState(false)
   const [loadError, setLoadError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isBlocked, setIsBlocked] = useState(false)
   const portalRefreshInFlightRef = useRef(false)
+  const portalInitialLoadTokenRef = useRef(null)
 
   const [payMethodBySale, setPayMethodBySale] = useState({})
   const [payAccountBySale, setPayAccountBySale] = useState({})
@@ -2260,6 +2262,7 @@ function ClientPortalPageInner() {
 
   /** Recargas saldo BaaS (portal público). */
   const [walletRecharges, setWalletRecharges] = useState([])
+  const [walletRechargesLoading, setWalletRechargesLoading] = useState(false)
   const [walletRechargesErr, setWalletRechargesErr] = useState(null)
   const [walletRechargePatchById, setWalletRechargePatchById] = useState({})
   const [autoPurchaseProducts, setAutoPurchaseProducts] = useState([])
@@ -2350,13 +2353,17 @@ function ClientPortalPageInner() {
     setExpandedMisComprasKey(null)
   }, [])
 
-  const loadPortalCxcBalance = useCallback(async () => {
+  const loadPortalCxcBalance = useCallback(async (opts = {}) => {
     if (!token) return
+    const withLoading = opts?.withLoading === true
+    if (withLoading) setCxcBalanceLoading(true)
     try {
       const { data } = await api.get(`/api/v1/portal/${encodeURIComponent(token)}/cxc-balance`)
       setCxcBalance(data ?? null)
     } catch {
       setCxcBalance(null)
+    } finally {
+      if (withLoading) setCxcBalanceLoading(false)
     }
   }, [api, token])
 
@@ -2395,100 +2402,24 @@ function ClientPortalPageInner() {
     }
   }, [api, loadPortalCxcBalance, token])
 
-  /** Carga inicial: dispara todas las peticiones en paralelo; el spinner solo espera GET /portal. */
-  const loadPortalInitial = useCallback(async () => {
-    if (!token) {
-      setLoadError('Enlace incompleto.')
-      setLoading(false)
-      return
-    }
-    setLoading(true)
-    setLoadError(null)
-    setWalletRechargesErr(null)
-    setAutoPurchaseErr(null)
-    setPortalNotificationsErr(null)
-
-    const enc = encodeURIComponent(token)
-    const portalPromise = api.get(`/api/v1/portal/${token}`)
-    const cxcPromise = api.get(`/api/v1/portal/${enc}/cxc-balance`)
-    const rechargesPromise = api.get(`/api/v1/portal/${enc}/recharges`)
-    const notificationsPromise = api.get(`/api/v1/portal/${enc}/notifications`)
-    const catalogPromise = api.get(`/api/v1/portal/${enc}/auto-purchase/catalog`)
-
-    try {
-      const portalRes = await portalPromise
-      setData(portalRes.data)
-      setIsBlocked(false)
-    } catch (err) {
-      if (isAccountBlockedError(err)) {
-        setIsBlocked(true)
-        setLoadError(null)
-        setData(null)
-        setCxcBalance(null)
-      } else {
-        const d = err?.response?.data?.detail
-        setLoadError(typeof d === 'string' ? d : 'No se pudo cargar el portal.')
-        setData(null)
-        setCxcBalance(null)
-      }
-    } finally {
-      setLoading(false)
-    }
-
-    const [cxcRes, rechargesRes, notificationsRes, catalogRes] = await Promise.allSettled([
-      cxcPromise,
-      rechargesPromise,
-      notificationsPromise,
-      catalogPromise,
-    ])
-
-    if (cxcRes.status === 'fulfilled') {
-      setCxcBalance(cxcRes.value?.data ?? null)
-    } else {
-      setCxcBalance(null)
-    }
-
-    if (rechargesRes.status === 'fulfilled') {
-      setWalletRecharges(Array.isArray(rechargesRes.value?.data) ? rechargesRes.value.data : [])
-    } else {
-      const d = rechargesRes.reason?.response?.data?.detail
-      setWalletRechargesErr(
-        typeof d === 'string' ? d : 'No se pudieron cargar las solicitudes de recarga.',
-      )
-      setWalletRecharges([])
-    }
-
-    if (notificationsRes.status === 'fulfilled') {
-      setPortalNotifications(
-        Array.isArray(notificationsRes.value?.data) ? notificationsRes.value.data : [],
-      )
-    } else {
-      const d = notificationsRes.reason?.response?.data?.detail
-      setPortalNotificationsErr(
-        typeof d === 'string' ? d : 'No se pudieron cargar las notificaciones.',
-      )
-      setPortalNotifications([])
-    }
-
-    if (catalogRes.status === 'fulfilled') {
-      setAutoPurchaseProducts(Array.isArray(catalogRes.value?.data) ? catalogRes.value.data : [])
-    } else {
-      const d = catalogRes.reason?.response?.data?.detail
-      setAutoPurchaseErr(typeof d === 'string' ? d : 'No se pudo cargar el catálogo de compra.')
-      setAutoPurchaseProducts([])
-    }
-  }, [api, token])
-
-  const loadWalletRecharges = useCallback(async () => {
+  const loadWalletRecharges = useCallback(async (opts = {}) => {
+    const silent = Boolean(opts?.silent)
     if (!token) return
-    setWalletRechargesErr(null)
+    if (!silent) {
+      setWalletRechargesLoading(true)
+      setWalletRechargesErr(null)
+    }
     try {
       const { data: rows } = await api.get(`/api/v1/portal/${encodeURIComponent(token)}/recharges`)
       setWalletRecharges(Array.isArray(rows) ? rows : [])
     } catch (err) {
       const d = err?.response?.data?.detail
-      setWalletRechargesErr(typeof d === 'string' ? d : 'No se pudieron cargar las solicitudes de recarga.')
+      if (!silent) {
+        setWalletRechargesErr(typeof d === 'string' ? d : 'No se pudieron cargar las solicitudes de recarga.')
+      }
       setWalletRecharges([])
+    } finally {
+      if (!silent) setWalletRechargesLoading(false)
     }
   }, [api, token])
 
@@ -3044,6 +2975,70 @@ function ClientPortalPageInner() {
     }
   }, [api, token])
 
+  /** Widgets secundarios: en background; no bloquean setLoading del layout principal. */
+  const loadPortalSecondaryWidgets = useCallback(async () => {
+    if (!token) return
+    await Promise.allSettled([
+      loadPortalCxcBalance({ withLoading: true }),
+      loadWalletRecharges({ silent: false }),
+      loadPortalNotifications({ silent: false }),
+      loadAutoPurchaseCatalog({ silent: false }),
+    ])
+  }, [
+    loadAutoPurchaseCatalog,
+    loadPortalCxcBalance,
+    loadPortalNotifications,
+    loadWalletRecharges,
+    token,
+  ])
+
+  /** Carga inicial: solo GET /portal desbloquea la UI; widgets secundarios van después. */
+  const loadPortalInitial = useCallback(async () => {
+    if (!token) {
+      setLoadError('Enlace incompleto.')
+      setLoading(false)
+      return
+    }
+
+    const loadToken = token
+    portalInitialLoadTokenRef.current = loadToken
+    setLoading(true)
+    setLoadError(null)
+
+    let portalOk = false
+    let accountBlocked = false
+
+    try {
+      const { data: portalData } = await api.get(`/api/v1/portal/${token}`)
+      if (portalInitialLoadTokenRef.current !== loadToken) return
+      setData(portalData)
+      setIsBlocked(false)
+      portalOk = true
+    } catch (err) {
+      if (portalInitialLoadTokenRef.current !== loadToken) return
+      if (isAccountBlockedError(err)) {
+        accountBlocked = true
+        setIsBlocked(true)
+        setLoadError(null)
+        setData(null)
+        setCxcBalance(null)
+      } else {
+        const d = err?.response?.data?.detail
+        setLoadError(typeof d === 'string' ? d : 'No se pudo cargar el portal.')
+        setData(null)
+        setCxcBalance(null)
+      }
+    } finally {
+      if (portalInitialLoadTokenRef.current === loadToken) {
+        setLoading(false)
+      }
+    }
+
+    if (portalOk && !accountBlocked && portalInitialLoadTokenRef.current === loadToken) {
+      void loadPortalSecondaryWidgets()
+    }
+  }, [api, loadPortalSecondaryWidgets, token])
+
   const refreshResellerNetwork = useCallback(async () => {
     await loadSubClients()
     if (activeFilter === 'team') {
@@ -3058,10 +3053,7 @@ function ClientPortalPageInner() {
     try {
       const tasks = [
         loadPortal({ silent, withCxc: false }),
-        loadPortalCxcBalance(),
-        loadWalletRecharges(),
-        loadPortalNotifications({ silent }),
-        loadAutoPurchaseCatalog({ silent }),
+        loadPortalSecondaryWidgets(),
       ]
       if (isTrackedPurchasesOpen) tasks.push(loadTrackedPurchases({ silent }))
       if (isResellerNetworkOpen) {
@@ -3076,14 +3068,11 @@ function ClientPortalPageInner() {
     activeFilter,
     isResellerNetworkOpen,
     isTrackedPurchasesOpen,
-    loadAutoPurchaseCatalog,
     loadNetworkTree,
     loadPortal,
-    loadPortalCxcBalance,
-    loadPortalNotifications,
+    loadPortalSecondaryWidgets,
     loadSubClients,
     loadTrackedPurchases,
-    loadWalletRecharges,
     token,
   ])
 
@@ -3677,8 +3666,7 @@ function ClientPortalPageInner() {
       setAutoPurchaseFeedback(normalizeAutoPurchaseFeedback(res))
       const refreshTasks = [
         loadPortal({ silent: true }),
-        loadPortalCxcBalance(),
-        loadAutoPurchaseCatalog({ silent: true }),
+        loadPortalSecondaryWidgets(),
       ]
       if (isTrackedPurchasesOpen) refreshTasks.push(loadTrackedPurchases({ silent: true }))
       await Promise.allSettled(refreshTasks)
@@ -3697,8 +3685,7 @@ function ClientPortalPageInner() {
     api,
     token,
     loadPortal,
-    loadPortalCxcBalance,
-    loadAutoPurchaseCatalog,
+    loadPortalSecondaryWidgets,
     confirmingPurchase,
     isTrackedPurchasesOpen,
     loadTrackedPurchases,
@@ -6684,6 +6671,13 @@ function ClientPortalPageInner() {
 
         <MiniDashboard metrics={data?.dashboard_metrics} />
 
+        {cxcBalanceLoading ? (
+          <p className="mb-3 flex items-center justify-center gap-2 text-[12px] text-slate-400/90 md:mb-4">
+            <Loader2 size={14} className="animate-spin" aria-hidden />
+            Verificando saldo pendiente…
+          </p>
+        ) : null}
+
         {showCxcDebtBanner ? (
           <div
             role="alert"
@@ -6866,6 +6860,13 @@ function ClientPortalPageInner() {
             Solicitar Nueva Recarga BaaS
           </button>
         </div>
+
+        {walletRechargesLoading ? (
+          <p className="mb-3 flex items-center gap-2 text-sm text-slate-400">
+            <Loader2 size={15} className="animate-spin" aria-hidden />
+            Actualizando recargas…
+          </p>
+        ) : null}
 
         {newOrderWalletRecharges.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 32, marginBottom: 28 }}>
