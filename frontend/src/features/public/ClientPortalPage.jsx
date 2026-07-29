@@ -2296,6 +2296,7 @@ function ClientPortalPageInner() {
   const [portalNotificationsLoading, setPortalNotificationsLoading] = useState(false)
   const [portalNotificationsErr, setPortalNotificationsErr] = useState(null)
   const [markingNotificationId, setMarkingNotificationId] = useState(null)
+  const [markingAllNotifications, setMarkingAllNotifications] = useState(false)
   const [createSubClientOpen, setCreateSubClientOpen] = useState(false)
   const [createSubClientBusy, setCreateSubClientBusy] = useState(false)
   const [createSubClientErr, setCreateSubClientErr] = useState(null)
@@ -3090,11 +3091,11 @@ function ClientPortalPageInner() {
 
   const markPortalNotificationRead = useCallback(
     async (notificationId) => {
-      if (!token || !notificationId) return
+      if (!token || !notificationId || markingAllNotifications) return
       const nid = Number(notificationId)
       setMarkingNotificationId(nid)
       try {
-        const { data } = await api.put(
+        await api.put(
           `/api/v1/portal/${encodeURIComponent(token)}/notifications/${nid}/read`,
         )
         setPortalNotifications((prev) => {
@@ -3108,8 +3109,25 @@ function ClientPortalPageInner() {
         setMarkingNotificationId(null)
       }
     },
-    [api, token],
+    [api, markingAllNotifications, token],
   )
+
+  const markAllPortalNotificationsRead = useCallback(async () => {
+    if (!token || markingAllNotifications) return
+    setMarkingAllNotifications(true)
+    try {
+      await api.put(`/api/v1/portal/${encodeURIComponent(token)}/notifications/read-all`)
+      setPortalNotifications((prev) => {
+        if (!Array.isArray(prev)) return prev
+        return prev.filter((row) => row?.is_read)
+      })
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      window.alert(typeof d === 'string' ? d : 'No se pudieron marcar todas como leídas.')
+    } finally {
+      setMarkingAllNotifications(false)
+    }
+  }, [api, markingAllNotifications, token])
 
   const clientBaseCurrency = useMemo(() => {
     const fromClient = data?.client?.currency
@@ -6748,19 +6766,48 @@ function ClientPortalPageInner() {
               margin: 0.35em 0 0.65em 1.25em;
               padding: 0;
             }
+            .portal-notif-scroll {
+              scrollbar-width: thin;
+              scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+            }
+            .portal-notif-scroll::-webkit-scrollbar {
+              width: 6px;
+            }
+            .portal-notif-scroll::-webkit-scrollbar-track {
+              background: transparent;
+            }
+            .portal-notif-scroll::-webkit-scrollbar-thumb {
+              background: rgba(148, 163, 184, 0.35);
+              border-radius: 9999px;
+            }
+            .portal-notif-scroll::-webkit-scrollbar-thumb:hover {
+              background: rgba(148, 163, 184, 0.55);
+            }
           `}</style>
           {isNotificationsOpen ? (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[12px] text-slate-400/90">Bandeja de mensajes del administrador</span>
-                <button
-                  type="button"
-                  onClick={() => void loadPortalNotifications()}
-                  disabled={portalNotificationsLoading}
-                  className="shrink-0 rounded-lg border border-slate-500/40 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-800/60 disabled:opacity-45"
-                >
-                  Actualizar
-                </button>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {unreadCount > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => void markAllPortalNotificationsRead()}
+                      disabled={portalNotificationsLoading || markingAllNotifications}
+                      className="shrink-0 rounded-lg border border-slate-500/40 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-800/60 disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {markingAllNotifications ? 'Marcando…' : 'Marcar todas como leídas'}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void loadPortalNotifications()}
+                    disabled={portalNotificationsLoading || markingAllNotifications}
+                    className="shrink-0 rounded-lg border border-slate-500/40 px-2.5 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-800/60 disabled:opacity-45"
+                  >
+                    Actualizar
+                  </button>
+                </div>
               </div>
 
               {portalNotificationsLoading ? (
@@ -6776,8 +6823,9 @@ function ClientPortalPageInner() {
                 <p className="m-0 text-sm text-slate-400/90">No tienes mensajes pendientes por leer.</p>
               ) : (
                 <>
-                  <ul className="m-0 list-none space-y-3 p-0">
-                    {visiblePortalNotifications.map((row) => {
+                  <div className="portal-notif-scroll max-h-[400px] overflow-y-auto overflow-x-hidden pr-1 sm:max-h-96">
+                    <ul className="m-0 list-none space-y-3 p-0">
+                      {visiblePortalNotifications.map((row) => {
                       const isAdmin = String(row?.source ?? '').toLowerCase() === 'admin'
                       const nid = Number(row?.id)
                       const createdLabel = row?.created_at
@@ -6818,7 +6866,10 @@ function ClientPortalPageInner() {
                             </div>
                             <button
                               type="button"
-                              disabled={markingNotificationId === nid}
+                              disabled={
+                                markingNotificationId === nid ||
+                                markingAllNotifications
+                              }
                               onClick={() => void markPortalNotificationRead(nid)}
                               className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold disabled:opacity-50 ${
                                 isAdmin
@@ -6838,7 +6889,14 @@ function ClientPortalPageInner() {
                         </li>
                       )
                     })}
-                  </ul>
+                    </ul>
+                  </div>
+                  {visiblePortalNotifications.length > 3 ? (
+                    <p className="m-0 text-center text-[11px] text-slate-500/90">
+                      {unreadCount} mensaje{unreadCount !== 1 ? 's' : ''} pendiente
+                      {unreadCount !== 1 ? 's' : ''}. Desplácese para ver más.
+                    </p>
+                  ) : null}
                   {sortedPortalNotifications.filter((row) => !row?.is_read).length <
                   sortedPortalNotifications.length ? (
                     <p className="m-0 text-center text-[11px] text-slate-500/90">

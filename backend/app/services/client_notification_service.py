@@ -442,3 +442,17 @@ def mark_client_notification_read(
     db.commit()
     db.refresh(row)
     return row
+
+
+def mark_all_client_notifications_read(db: Session, *, client_id: int) -> int:
+    """Marca como leídas todas las notificaciones pendientes del cliente."""
+    updated = (
+        db.query(ClientNotification)
+        .filter(
+            ClientNotification.client_id == int(client_id),
+            ClientNotification.is_read.is_(False),
+        )
+        .update({ClientNotification.is_read: True}, synchronize_session=False)
+    )
+    db.commit()
+    return int(updated)

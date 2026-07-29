@@ -65,7 +65,11 @@ from app.models.sale import Sale, SaleStatus
 from app.models.screen_stock import ScreenStock
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.models.wallet_transaction import WalletTransaction
-from app.schemas.client_notifications import PortalNotificationMarkReadResponse, PortalNotificationRead
+from app.schemas.client_notifications import (
+    PortalNotificationMarkAllReadResponse,
+    PortalNotificationMarkReadResponse,
+    PortalNotificationRead,
+)
 from app.schemas.client_product_prices import (
     PortalAutoPurchaseProduct,
     PortalAutoPurchaseRequest,
@@ -123,6 +127,7 @@ from app.schemas.portal_public import (
 from app.services.client_notification_service import (
     client_notification_source,
     list_client_notifications,
+    mark_all_client_notifications_read,
     mark_client_notification_read,
 )
 from app.services.client_product_price_service import _package_display_name
@@ -2433,6 +2438,27 @@ def portal_mark_notification_read(
         notification_id=int(notification_id),
     )
     return PortalNotificationMarkReadResponse(id=int(row.id))
+
+
+@router.put(
+    "/{portal_token}/notifications/read-all",
+    response_model=PortalNotificationMarkAllReadResponse,
+)
+def portal_mark_all_notifications_read(
+    portal_token: uuid_pkg.UUID,
+    db: DbDep,
+) -> PortalNotificationMarkAllReadResponse:
+    """Marca como leídas todas las notificaciones pendientes del cliente."""
+    client = _portal_client_from_token(db, portal_token)
+    updated = mark_all_client_notifications_read(db, client_id=int(client.id))
+    return PortalNotificationMarkAllReadResponse(
+        updated=updated,
+        message=(
+            f"{updated} notificación(es) marcada(s) como leída(s)."
+            if updated
+            else "No había notificaciones pendientes."
+        ),
+    )
 
 
 @router.put("/{portal_token}/sub-clients/{child_client_id}", response_model=PortalSubClientBrief)

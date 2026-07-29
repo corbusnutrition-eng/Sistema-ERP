@@ -81,3 +81,9 @@ class PortalNotificationMarkReadResponse(BaseModel):
     ok: bool = True
     id: int
     is_read: bool = True
+
+
+class PortalNotificationMarkAllReadResponse(BaseModel):
+    ok: bool = True
+    updated: int = Field(ge=0)
+    message: str = "Notificaciones marcadas como leídas."
