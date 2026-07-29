@@ -70,121 +70,48 @@ def _add_profit_bucket(
         buckets["diario"] += converted
 
 
+from app.services.portal_home_fast_service import compute_portal_dashboard_metrics_fast
+
+
 def compute_portal_dashboard_metrics(
     db: Session,
     client_id: int,
     *,
     wallet_balance: float,
     wallet_balance_currency: str,
-    tracked_purchase_items: list,
+    tracked_purchase_items: list | None = None,
 ) -> dict[str, object]:
-    """
-    Mini-dashboard del distribuidor:
-    - Ganancias (margen propio + comisiones de red) por día/semana/mes.
-    - Pantallas activas y vencimientos próximos (desde «Mis compras»).
-    - Saldo BaaS actual.
-    """
-    target_cur = normalize_currency_code(wallet_balance_currency, "USD")
-    now = now_ecuador()
-    day_start, week_start, month_start = _period_starts_ecuador(now)
-    profit_buckets = {"diario": 0.0, "semanal": 0.0, "mensual": 0.0}
-
-    sales = (
-        db.query(Sale)
-        .filter(
-            Sale.client_id == int(client_id),
-            Sale.end_customer_name.isnot(None),
-            func.trim(Sale.end_customer_name) != "",
-            Sale.end_customer_sale_price.isnot(None),
+    """Mini-dashboard del distribuidor (delega a versión optimizada)."""
+    if tracked_purchase_items:
+        target_cur = normalize_currency_code(wallet_balance_currency, "USD")
+        pantallas_activas = 0
+        vencimientos_semana = 0
+        for item in tracked_purchase_items:
+            days = getattr(item, "days_remaining", None)
+            if days is None:
+                days = getattr(item, "days_until_expiration", None)
+            if days is None:
+                continue
+            try:
+                days_i = int(days)
+            except (TypeError, ValueError):
+                continue
+            if days_i > 0:
+                pantallas_activas += 1
+            if 0 <= days_i <= 7:
+                vencimientos_semana += 1
+        fast = compute_portal_dashboard_metrics_fast(
+            db,
+            client_id,
+            wallet_balance=wallet_balance,
+            wallet_balance_currency=wallet_balance_currency,
         )
-        .all()
+        fast["pantallas_activas"] = pantallas_activas
+        fast["vencimientos_semana"] = vencimientos_semana
+        return fast
+    return compute_portal_dashboard_metrics_fast(
+        db,
+        client_id,
+        wallet_balance=wallet_balance,
+        wallet_balance_currency=wallet_balance_currency,
     )
-    for sale in sales:
-        if not is_baas_wallet_auto_purchase_sale(sale):
-            continue
-        try:
-            charged = float(sale.end_customer_sale_price or 0)
-            cost = float(sale.local_amount if sale.local_amount is not None else sale.amount or 0)
-        except (TypeError, ValueError):
-            continue
-        profit = round(charged - cost, 4)
-        if profit <= 1e-9:
-            continue
-        sale_cur = normalize_currency_code(str(getattr(sale, "currency", None) or "USD"))
-        created = getattr(sale, "created_at", None)
-        if created is None:
-            continue
-        _add_profit_bucket(
-            profit_buckets,
-            amount=profit,
-            currency=sale_cur,
-            target_currency=target_cur,
-            ts=created,
-            day_start=day_start,
-            week_start=week_start,
-            month_start=month_start,
-            db=db,
-        )
-
-    commission_txs = (
-        db.query(WalletTransaction)
-        .filter(
-            WalletTransaction.client_id == int(client_id),
-            WalletTransaction.transaction_type.in_((TX_WALLET_DEPOSIT, TX_NETWORK_PROFIT)),
-        )
-        .all()
-    )
-    for tx in commission_txs:
-        if not _is_network_commission_tx(tx):
-            continue
-        try:
-            amt = float(tx.amount or 0)
-        except (TypeError, ValueError):
-            continue
-        if amt <= 1e-9:
-            continue
-        tx_cur = _wallet_tx_currency(tx.description)
-        created = getattr(tx, "created_at", None)
-        if created is None:
-            continue
-        _add_profit_bucket(
-            profit_buckets,
-            amount=amt,
-            currency=tx_cur,
-            target_currency=target_cur,
-            ts=created,
-            day_start=day_start,
-            week_start=week_start,
-            month_start=month_start,
-            db=db,
-        )
-
-    pantallas_activas = 0
-    vencimientos_semana = 0
-    for item in tracked_purchase_items or []:
-        days = getattr(item, "days_remaining", None)
-        if days is None:
-            days = getattr(item, "days_until_expiration", None)
-        if days is None:
-            continue
-        try:
-            days_i = int(days)
-        except (TypeError, ValueError):
-            continue
-        if days_i > 0:
-            pantallas_activas += 1
-        if 0 <= days_i <= 7:
-            vencimientos_semana += 1
-
-    return {
-        "ganancias_totales": {
-            "diario": round(profit_buckets["diario"], 2),
-            "semanal": round(profit_buckets["semanal"], 2),
-            "mensual": round(profit_buckets["mensual"], 2),
-            "currency": target_cur,
-        },
-        "pantallas_activas": int(pantallas_activas),
-        "vencimientos_semana": int(vencimientos_semana),
-        "saldo_baas": round(max(0.0, float(wallet_balance)), 2),
-        "saldo_baas_currency": target_cur,
-    }

@@ -9,6 +9,7 @@ import math
 import re
 import os
 import uuid as uuid_pkg
+from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Optional
@@ -603,10 +604,14 @@ def _sale_balance_due_portal(db: Session, sale: Sale) -> Decimal:
     return balance if balance > _FP_EPS else Decimal("0")
 
 
-def _portal_client_payment_ids_for_sale(db: Session, sale_id: int, client_id: int) -> list[int]:
+def _portal_client_payment_ids_for_sale(
+    db: Session,
+    sale_id: int,
+    client_id: int,
+    *,
+    meta_payments_by_sale: dict[int, list[ClientPayment]] | None = None,
+) -> list[int]:
     """Ids de pagos CxC vinculados a una venta (allocations + META_SALE_ID), cualquier estado."""
-    from app.services.client_payment_service import parse_notes_meta_sale_id
-
     sid = int(sale_id)
     cid = int(client_id)
     ids: set[int] = set()
@@ -619,8 +624,14 @@ def _portal_client_payment_ids_for_sale(db: Session, sale_id: int, client_id: in
     ):
         ids.add(int(pid))
 
-    for cp in db.query(ClientPayment).filter(ClientPayment.client_id == cid).all():
-        if parse_notes_meta_sale_id(cp.notes) == sid:
+    if meta_payments_by_sale is not None:
+        for cp in meta_payments_by_sale.get(sid, []):
+            ids.add(int(cp.id))
+    else:
+        for cp in db.query(ClientPayment).filter(
+            ClientPayment.client_id == cid,
+            ClientPayment.notes.like(f"%META_SALE_ID={sid}%"),
+        ).all():
             ids.add(int(cp.id))
 
     return sorted(ids)
@@ -651,9 +662,16 @@ def _portal_client_payments_for_sale(
     db: Session,
     sale_id: int,
     client_id: int,
+    *,
+    meta_payments_by_sale: dict[int, list[ClientPayment]] | None = None,
 ) -> list[PortalSalePaymentBrief]:
     """Pagos del cliente ligados a la venta, más recientes primero."""
-    pids = _portal_client_payment_ids_for_sale(db, sale_id, client_id)
+    pids = _portal_client_payment_ids_for_sale(
+        db,
+        sale_id,
+        client_id,
+        meta_payments_by_sale=meta_payments_by_sale,
+    )
     if not pids:
         return []
     rows = (
@@ -866,23 +884,45 @@ def _portal_resolve_payment_picks_for_client(
     return [], [], []
 
 
-def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple[PortalOutstandingSale, Decimal]:
+def _build_portal_outstanding_row(
+    db: Session,
+    client: Client,
+    s: Sale,
+    *,
+    balance_override: tuple[Decimal, Decimal] | None = None,
+    meta_payments_by_sale: dict[int, list[ClientPayment]] | None = None,
+    lite: bool = False,
+) -> tuple[PortalOutstandingSale, Decimal]:
     cur = normalize_currency_code(str(getattr(s, "currency", None) or "USD"))
-    try:
-        lines_raw = _checkout_lines_public(db, s, product=s.product, stock_row=s.screen_stock_row)
-    except Exception:
-        logger.exception("portal checkout lines failed sale_id=%s", getattr(s, "id", "?"))
-        lines_raw = []
-    lines_raw = [_finalize_checkout_line_amount(ln) for ln in (lines_raw or [])]
+    if balance_override is not None:
+        real_total, balance_due_out = balance_override
+    else:
+        real_total, balance_due_out = _compute_portal_balance(db, s)
 
-    real_total, balance_due_out = _compute_portal_balance(db, s)
-    ap_d = _portal_effective_amount_paid(db, s)
+    lines_raw: list = []
+    if not lite or balance_due_out > _FP_EPS:
+        try:
+            lines_raw = _checkout_lines_public(db, s, product=s.product, stock_row=s.screen_stock_row)
+        except Exception:
+            logger.exception("portal checkout lines failed sale_id=%s", getattr(s, "id", "?"))
+            lines_raw = []
+        lines_raw = [_finalize_checkout_line_amount(ln) for ln in (lines_raw or [])]
+    elif isinstance(getattr(s, "invoice_lines", None), list):
+        lines_raw = list(s.invoice_lines or [])
 
-    try:
-        methods, deps, pm_tree = _portal_resolve_payment_picks_for_client(db, client, currency=cur, sale=s)
-    except Exception:
-        logger.exception("portal payment picks failed sale_id=%s", getattr(s, "id", "?"))
-        methods, deps, pm_tree = [], [], []
+    if balance_override is not None:
+        ap_d = real_total - balance_due_out
+    else:
+        ap_d = _portal_effective_amount_paid(db, s)
+
+    methods: list = []
+    deps: list = []
+    pm_tree: list = []
+    if not lite or balance_due_out > _FP_EPS:
+        try:
+            methods, deps, pm_tree = _portal_resolve_payment_picks_for_client(db, client, currency=cur, sale=s)
+        except Exception:
+            logger.exception("portal payment picks failed sale_id=%s", getattr(s, "id", "?"))
 
     invoice_total_f = max(0.0, _portal_money_float(real_total, default=0.0))
     local_amount_f: Optional[float] = invoice_total_f if invoice_total_f > 1e-9 else None
@@ -901,11 +941,22 @@ def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple
     except Exception:
         logger.exception("portal payment_events failed sale_id=%s", getattr(s, "id", "?"))
         payment_events = []
-    try:
-        client_payments = _portal_client_payments_for_sale(db, int(s.id), int(client.id))
-    except Exception:
-        logger.exception("portal client_payments failed sale_id=%s", getattr(s, "id", "?"))
-        client_payments = []
+    client_payments: list[PortalSalePaymentBrief] = []
+    hotmart_links: list = []
+    if not lite or balance_due_out > _FP_EPS:
+        try:
+            client_payments = _portal_client_payments_for_sale(
+                db,
+                int(s.id),
+                int(client.id),
+                meta_payments_by_sale=meta_payments_by_sale,
+            )
+        except Exception:
+            logger.exception("portal client_payments failed sale_id=%s", getattr(s, "id", "?"))
+        try:
+            hotmart_links = _portal_hotmart_links_for_sale_display(db, s, methods)
+        except Exception:
+            logger.exception("portal hotmart links failed sale_id=%s", getattr(s, "id", "?"))
 
     row = PortalOutstandingSale(
         sale_id=int(s.id),
@@ -924,21 +975,39 @@ def _build_portal_outstanding_row(db: Session, client: Client, s: Sale) -> tuple
         payment_methods_tree=list(pm_tree or []),
         payment_events=list(payment_events or []),
         client_payments=list(client_payments or []),
-        hotmart_links=_portal_hotmart_links_for_sale_display(db, s, methods),
+        hotmart_links=list(hotmart_links or []),
     )
     return _portal_sanitize_outstanding_sale(row), balance_due_out
 
 
-def _portal_safe_outstanding_row(db: Session, client: Client, s: Sale) -> tuple[PortalOutstandingSale, Decimal]:
+def _portal_safe_outstanding_row(
+    db: Session,
+    client: Client,
+    s: Sale,
+    *,
+    balance_override: tuple[Decimal, Decimal] | None = None,
+    meta_payments_by_sale: dict[int, list[ClientPayment]] | None = None,
+    lite: bool = False,
+) -> tuple[PortalOutstandingSale, Decimal]:
     """Construye fila de venta con fallback mínimo si el legado/reactivación rompe datos."""
     try:
-        return _build_portal_outstanding_row(db, client, s)
+        return _build_portal_outstanding_row(
+            db,
+            client,
+            s,
+            balance_override=balance_override,
+            meta_payments_by_sale=meta_payments_by_sale,
+            lite=lite,
+        )
     except Exception:
         logger.exception("portal outstanding row failed sale_id=%s", getattr(s, "id", "?"))
         sid = int(getattr(s, "id", 0) or 0)
         cur = normalize_currency_code(str(getattr(s, "currency", None) or "USD"))
         try:
-            real_total, balance_due_out = _compute_portal_balance(db, s)
+            if balance_override is not None:
+                real_total, balance_due_out = balance_override
+            else:
+                real_total, balance_due_out = _compute_portal_balance(db, s)
         except Exception:
             real_total, balance_due_out = Decimal("0"), Decimal("0")
         invoice_total_f = max(0.0, _portal_money_float(real_total, default=0.0))
@@ -1289,6 +1358,16 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
         .limit(200)
         .all()
     )
+    payment_ids = [int(p.id) for p in ledger_payments]
+    linked_by_payment: dict[int, list[int]] = defaultdict(list)
+    if payment_ids:
+        for alloc in (
+            db.query(PaymentAllocation)
+            .filter(PaymentAllocation.payment_id.in_(payment_ids))
+            .all()
+        ):
+            if alloc.payment_id is not None and alloc.sale_id is not None:
+                linked_by_payment[int(alloc.payment_id)].append(int(alloc.sale_id))
     for p in ledger_payments:
         try:
             amt = Decimal(str(p.amount or "0")).quantize(Decimal("0.01"))
@@ -1304,12 +1383,7 @@ def _portal_client_ledger(db: Session, client_id: int) -> list[PortalLedgerEntry
             description = description[:257] + "…"
         ts = getattr(p, "approved_at", None) or getattr(p, "created_at", None)
         iso = ts.isoformat() if isinstance(ts, datetime) else None
-        alloc_rows = (
-            db.query(PaymentAllocation)
-            .filter(PaymentAllocation.payment_id == int(p.id))
-            .all()
-        )
-        linked_ids = sorted({int(a.sale_id) for a in alloc_rows if a.sale_id is not None})
+        linked_ids = sorted(set(linked_by_payment.get(int(p.id), [])))
         merged.append(
             (
                 _portal_ledger_ts(ts if isinstance(ts, datetime) else None),
@@ -2984,10 +3058,10 @@ def _portal_screen_assigned_at(db: Session, sale: Sale) -> datetime:
     return ensure_aware(sale.created_at)
 
 
-def _portal_active_screens_for_client(db: Session, client_id: int) -> list[PortalActiveScreen]:
+def _portal_active_screens_for_client(db: Session, client_id: int, *, limit: int = 20) -> list[PortalActiveScreen]:
     """
     Pantallas en bodega ya asignadas a ventas ``approved`` del cliente (historial público).
-    Orden: más reciente primero (``assigned_at`` DESC).
+    Orden: más reciente primero (``assigned_at`` DESC). Limitado para carga inicial rápida.
     """
     rows = (
         db.query(ScreenStock, Sale)
@@ -2998,15 +3072,13 @@ def _portal_active_screens_for_client(db: Session, client_id: int) -> list[Porta
             ScreenStock.status == "assigned",
             ScreenStock.sale_id.isnot(None),
         )
+        .order_by(Sale.created_at.desc(), ScreenStock.id.desc())
+        .limit(max(1, int(limit)))
         .all()
     )
-    assigned_cache: dict[int, datetime] = {}
     staged: list[tuple[datetime, int, PortalActiveScreen]] = []
     for stk, sale in rows:
-        sid_sale = int(sale.id)
-        if sid_sale not in assigned_cache:
-            assigned_cache[sid_sale] = _portal_screen_assigned_at(db, sale)
-        assigned_dt = assigned_cache[sid_sale]
+        assigned_dt = ensure_aware(sale.created_at)
         exp = stk.expiration_date
         exp_s = exp.isoformat() if exp is not None else None
         staged.append(
@@ -3015,7 +3087,7 @@ def _portal_active_screens_for_client(db: Session, client_id: int) -> list[Porta
                 int(stk.id),
                 PortalActiveScreen(
                     screen_stock_id=int(stk.id),
-                    sale_id=sid_sale,
+                    sale_id=int(sale.id),
                     package_name=_portal_package_label_for_screen(db, stk, sale),
                     username=(stk.iptv_username or "").strip() or None,
                     password=(stk.iptv_password or "").strip() or None,
@@ -3692,9 +3764,19 @@ def portal_transfer_history(
 def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> PortalHomeResponse:
     client = _portal_client_from_token(db, portal_token)
 
-    expire_pending_sales_if_needed(db)
+    stale_exists = (
+        db.query(Sale.id)
+        .filter(
+            Sale.status == SaleStatus.pending,
+            Sale.expires_at.isnot(None),
+            Sale.expires_at < now_ecuador(),
+        )
+        .limit(1)
+        .first()
+    )
+    if stale_exists is not None:
+        expire_pending_sales_if_needed(db)
 
-    # Incluye ventas activadas (``approved``) con CxC abierto tras rechazo de pago, etc.
     _OPEN_STATUSES = (
         SaleStatus.pending,
         SaleStatus.payment_submitted,
@@ -3713,6 +3795,17 @@ def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> Por
         .order_by(Sale.created_at.desc())
         .all()
     )
+
+    from app.services.client_payment_service import _batch_alloc_sums_for_sales
+    from app.services.portal_home_fast_service import (
+        build_meta_sale_payments_index,
+        compute_portal_dashboard_metrics_fast,
+        sale_open_balance_from_batch,
+    )
+
+    sale_ids = [int(s.id) for s in sales_all]
+    approved_by_sale, pending_by_sale = _batch_alloc_sums_for_sales(db, sale_ids)
+    meta_payments_by_sale = build_meta_sale_payments_index(db, int(client.id))
 
     agg: dict[str, Decimal] = {}
     hist_agg: dict[str, Decimal] = {}
@@ -3761,11 +3854,19 @@ def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> Por
 
     for s in sales_all:
         try:
-            row, bal = _portal_safe_outstanding_row(db, client, s)
+            balance_pair = sale_open_balance_from_batch(s, approved_by_sale, pending_by_sale)
+            lite = balance_pair[1] <= _FP_EPS and s.status == SaleStatus.approved
+            row, bal = _portal_safe_outstanding_row(
+                db,
+                client,
+                s,
+                balance_override=balance_pair,
+                meta_payments_by_sale=meta_payments_by_sale,
+                lite=lite,
+            )
         except Exception:
             logger.exception("portal sale row skipped client_id=%s sale_id=%s", client.id, getattr(s, "id", "?"))
             continue
-        # Excluir activadas ya saldadas (ruido tras reactivación de otra venta del mismo cliente).
         show_in_pending = bal > _FP_EPS or s.status in (
             SaleStatus.pending,
             SaleStatus.payment_submitted,
@@ -3783,7 +3884,6 @@ def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> Por
             hcur = normalize_currency_code(str(s.currency or "USD"))
             hist_agg[hcur] = hist_agg.get(hcur, Decimal("0")) + bal
 
-    # ``total_debt_*`` / ``outstanding_balance``: solo deuda histórica (excluye ventas ``pending`` del acordeón «Nuevos pedidos»).
     debt_rows: list[dict[str, object]] = [
         {"currency": k, "amount": float(v.quantize(Decimal("0.0001")))} for k, v in sorted(hist_agg.items())
     ]
@@ -3800,13 +3900,13 @@ def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> Por
         logger.exception("portal ledger failed client_id=%s", client.id)
         ledger_rows = []
     try:
-        active_screens = _portal_active_screens_for_client(db, int(client.id))
+        active_screens = _portal_active_screens_for_client(db, int(client.id), limit=20)
     except Exception:
         logger.exception("portal active_screens failed client_id=%s", client.id)
         active_screens = []
 
     try:
-        credit_summary = compute_client_credit_summary(db, int(client.id), sync=True)
+        credit_summary = compute_client_credit_summary(db, int(client.id), sync=False)
     except Exception:
         logger.exception("portal credit_summary failed client_id=%s", client.id)
         credit_summary = {
@@ -3825,10 +3925,6 @@ def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> Por
     ]
     primary_credit = max(0.0, _portal_money_float(credit_summary.get("credit_balance"), default=0.0))
     primary_credit_cur = str(credit_summary.get("credit_balance_currency") or "USD")
-
-    from app.services.wallet_balance_service import compute_client_wallet_summary
-    from app.services.client_product_price_service import list_client_assigned_package_prices
-    from app.schemas.client_product_prices import PortalAssignedPackagePrice
 
     wallet_summary = compute_client_wallet_summary(client)
     wallet_rows = [
@@ -3857,8 +3953,6 @@ def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> Por
         except (TypeError, ValueError):
             continue
 
-    db.commit()
-
     def _sanitize_sale_list(rows: list[PortalOutstandingSale]) -> list[PortalOutstandingSale]:
         out: list[PortalOutstandingSale] = []
         for row in rows or []:
@@ -3873,11 +3967,8 @@ def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> Por
     new_order_sales = _sanitize_sale_list(new_order_sales)
     historical_debt_sales = _sanitize_sale_list(historical_debt_sales)
 
-    try:
-        outstanding_wallet_recharges = _portal_wallet_recharge_items_for_client(db, client)
-    except Exception:
-        logger.exception("portal wallet recharges list failed client_id=%s", client.id)
-        outstanding_wallet_recharges = []
+    # Recargas BaaS: el frontend las carga vía GET /recharges en paralelo (evita N+1 aquí).
+    outstanding_wallet_recharges: list[PortalWalletRechargeItem] = []
 
     try:
         parent_contact_phone = _parent_contact_phone_for_client(db, client)
@@ -3886,19 +3977,11 @@ def portal_home(request: Request, portal_token: uuid_pkg.UUID, db: DbDep) -> Por
         wallet_balance_val = max(0.0, _portal_money_float(wallet_summary.get("wallet_balance"), default=0.0))
         wallet_balance_cur = str(wallet_summary.get("wallet_balance_currency") or client_currency)
         try:
-            tracked_for_metrics = _portal_tracked_purchases_for_client(db, int(client.id))
-        except Exception:
-            logger.exception("portal dashboard tracked purchases failed client_id=%s", client.id)
-            tracked_for_metrics = []
-        try:
-            from app.services.portal_dashboard_metrics_service import compute_portal_dashboard_metrics
-
-            dashboard_raw = compute_portal_dashboard_metrics(
+            dashboard_raw = compute_portal_dashboard_metrics_fast(
                 db,
                 int(client.id),
                 wallet_balance=wallet_balance_val,
                 wallet_balance_currency=wallet_balance_cur,
-                tracked_purchase_items=tracked_for_metrics,
             )
             dashboard_metrics = PortalDashboardMetrics.model_validate(dashboard_raw)
         except Exception:
