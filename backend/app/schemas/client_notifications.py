@@ -72,6 +72,7 @@ class PortalNotificationRead(BaseModel):
     message: str
     is_read: bool
     created_at: datetime.datetime
+    source: Literal["admin", "system"] = "system"
 
     model_config = {"from_attributes": True}
 

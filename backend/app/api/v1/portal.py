@@ -121,6 +121,7 @@ from app.schemas.portal_public import (
     SalePaymentEvent,
 )
 from app.services.client_notification_service import (
+    client_notification_source,
     list_client_notifications,
     mark_client_notification_read,
 )
@@ -2399,10 +2400,20 @@ def portal_list_notifications(
     portal_token: uuid_pkg.UUID,
     db: DbDep,
 ) -> list[PortalNotificationRead]:
-    """Bandeja de notificaciones del cliente (más recientes primero)."""
+    """Bandeja del portal: mensajes del administrador primero, luego avisos del sistema."""
     client = _portal_client_from_token(db, portal_token)
     rows = list_client_notifications(db, int(client.id))
-    return [PortalNotificationRead.model_validate(r) for r in rows]
+    return [
+        PortalNotificationRead(
+            id=int(row.id),
+            title=str(row.title or ""),
+            message=str(row.message or ""),
+            is_read=bool(row.is_read),
+            created_at=row.created_at,
+            source=client_notification_source(row),
+        )
+        for row in rows
+    ]
 
 
 @router.put(

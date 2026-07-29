@@ -3099,9 +3099,7 @@ function ClientPortalPageInner() {
         )
         setPortalNotifications((prev) => {
           if (!Array.isArray(prev)) return prev
-          return prev.map((row) =>
-            Number(row?.id) === nid ? { ...row, is_read: data?.is_read ?? true } : row,
-          )
+          return prev.filter((row) => Number(row?.id) !== nid)
         })
       } catch (err) {
         const d = err?.response?.data?.detail
@@ -4412,7 +4410,11 @@ function ClientPortalPageInner() {
 
   const sortedPortalNotifications = useMemo(() => {
     if (!Array.isArray(portalNotifications)) return []
+    const sourceRank = (row) => (String(row?.source ?? '').toLowerCase() === 'admin' ? 0 : 1)
     return [...portalNotifications].sort((a, b) => {
+      const ra = sourceRank(a)
+      const rb = sourceRank(b)
+      if (ra !== rb) return ra - rb
       const ta = a?.created_at ? new Date(a.created_at).getTime() : 0
       const tb = b?.created_at ? new Date(b.created_at).getTime() : 0
       if (tb !== ta) return tb - ta
@@ -4421,13 +4423,15 @@ function ClientPortalPageInner() {
   }, [portalNotifications])
 
   const visiblePortalNotifications = useMemo(
-    () => sortedPortalNotifications.slice(0, 3),
+    () => sortedPortalNotifications.filter((row) => !row?.is_read),
     [sortedPortalNotifications],
   )
 
   const unreadCount = useMemo(
-    () => visiblePortalNotifications.filter((n) => !n?.is_read).length,
-    [visiblePortalNotifications],
+    () =>
+      (Array.isArray(portalNotifications) ? portalNotifications : []).filter((n) => !n?.is_read)
+        .length,
+    [portalNotifications],
   )
 
   const notificationsAccordionAside = useMemo(() => {
@@ -6768,11 +6772,13 @@ function ClientPortalPageInner() {
                 <p className="m-0 text-sm text-red-300">{portalNotificationsErr}</p>
               ) : portalNotifications.length === 0 ? (
                 <p className="m-0 text-sm text-slate-400/90">No tienes mensajes en tu bandeja.</p>
+              ) : visiblePortalNotifications.length === 0 ? (
+                <p className="m-0 text-sm text-slate-400/90">No tienes mensajes pendientes por leer.</p>
               ) : (
                 <>
                   <ul className="m-0 list-none space-y-3 p-0">
                     {visiblePortalNotifications.map((row) => {
-                      const isRead = Boolean(row?.is_read)
+                      const isAdmin = String(row?.source ?? '').toLowerCase() === 'admin'
                       const nid = Number(row?.id)
                       const createdLabel = row?.created_at
                         ? new Date(row.created_at).toLocaleString('es-EC', {
@@ -6784,42 +6790,48 @@ function ClientPortalPageInner() {
                         <li
                           key={`portal-notif-${nid}`}
                           className={`rounded-xl border px-3 py-2.5 transition ${
-                            !row?.is_read
-                              ? 'border-[#39FF14] bg-[#39FF14]/10 shadow-[0_0_15px_rgba(57,255,20,0.5)]'
-                              : 'border-gray-700 bg-gray-800/50 opacity-60'
+                            isAdmin
+                              ? 'border-sky-400/80 bg-sky-950/40 shadow-[0_0_18px_rgba(56,189,248,0.35)]'
+                              : 'border-[#39FF14] bg-[#39FF14]/10 shadow-[0_0_15px_rgba(57,255,20,0.5)]'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <p
-                                className={`m-0 font-bold text-lg leading-snug ${
-                                  isRead ? 'text-slate-400' : 'text-white'
-                                }`}
-                              >
-                                {String(row?.title ?? 'Sin título')}
+                              <p className="m-0 flex items-start gap-1.5 font-bold text-lg leading-snug text-white">
+                                <span className="shrink-0 text-base" aria-hidden>
+                                  {isAdmin ? '📌' : '💸'}
+                                </span>
+                                <span className="min-w-0">{String(row?.title ?? 'Sin título')}</span>
                               </p>
+                              {isAdmin ? (
+                                <p className="m-0 mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300/90">
+                                  Mensaje del administrador
+                                </p>
+                              ) : null}
                               <p
                                 className={`m-0 mt-0.5 text-[11px] tabular-nums ${
-                                  isRead ? 'text-slate-500' : 'text-[#39FF14]/90'
+                                  isAdmin ? 'text-sky-300/80' : 'text-[#39FF14]/90'
                                 }`}
                               >
                                 {createdLabel}
                               </p>
                             </div>
-                            {!isRead ? (
-                              <button
-                                type="button"
-                                disabled={markingNotificationId === nid}
-                                onClick={() => void markPortalNotificationRead(nid)}
-                                className="shrink-0 rounded-md border border-[#39FF14]/60 bg-[#39FF14]/10 px-2 py-1 text-[10px] font-semibold text-[#39FF14] hover:bg-[#39FF14]/20 disabled:opacity-50"
-                              >
-                                {markingNotificationId === nid ? '…' : 'Marcar como leído'}
-                              </button>
-                            ) : null}
+                            <button
+                              type="button"
+                              disabled={markingNotificationId === nid}
+                              onClick={() => void markPortalNotificationRead(nid)}
+                              className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold disabled:opacity-50 ${
+                                isAdmin
+                                  ? 'border-sky-400/60 bg-sky-500/15 text-sky-200 hover:bg-sky-500/25'
+                                  : 'border-[#39FF14]/60 bg-[#39FF14]/10 text-[#39FF14] hover:bg-[#39FF14]/20'
+                              }`}
+                            >
+                              {markingNotificationId === nid ? '…' : 'Marcar como leído'}
+                            </button>
                           </div>
                           <div
                             className={`portal-notif-html m-0 mt-2 text-[13px] leading-relaxed ${
-                              isRead ? 'text-slate-500' : 'text-slate-100'
+                              isAdmin ? 'text-slate-100' : 'text-slate-100'
                             }`}
                             dangerouslySetInnerHTML={{ __html: String(row?.message ?? '') }}
                           />
@@ -6827,9 +6839,10 @@ function ClientPortalPageInner() {
                       )
                     })}
                   </ul>
-                  {sortedPortalNotifications.length > 3 ? (
+                  {sortedPortalNotifications.filter((row) => !row?.is_read).length <
+                  sortedPortalNotifications.length ? (
                     <p className="m-0 text-center text-[11px] text-slate-500/90">
-                      Mostrando los 3 mensajes más recientes de {sortedPortalNotifications.length}.
+                      Los mensajes leídos se ocultan de la bandeja.
                     </p>
                   ) : null}
                 </>

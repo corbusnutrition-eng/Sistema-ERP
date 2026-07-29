@@ -309,7 +309,22 @@ def delete_notification_batches(db: Session, *, batch_ids: list[str]) -> tuple[i
 
 
 NOTIFICATION_TARGET_NETWORK_COMMISSION = "network_commission"
+NOTIFICATION_SOURCE_ADMIN = "admin"
+NOTIFICATION_SOURCE_SYSTEM = "system"
+ADMIN_NOTIFICATION_TARGET_TYPES = frozenset({"all", "level", "specific"})
 COMMISSION_NOTIFICATION_TITLE = "¡Nueva comisión por red! 💸"
+
+
+def is_admin_client_notification(row: ClientNotification) -> bool:
+    """Mensajes del ERP (Gestión de Notificaciones) vs avisos automáticos (comisiones)."""
+    if row.batch_id is not None:
+        return True
+    target_type = str(row.target_type or "").strip().lower()
+    return target_type in ADMIN_NOTIFICATION_TARGET_TYPES
+
+
+def client_notification_source(row: ClientNotification) -> str:
+    return NOTIFICATION_SOURCE_ADMIN if is_admin_client_notification(row) else NOTIFICATION_SOURCE_SYSTEM
 
 
 def _format_commission_profit_label(amount: float, currency: str) -> str:
@@ -363,13 +378,55 @@ def enqueue_client_network_commission_notification(
     return row
 
 
-def list_client_notifications(db: Session, client_id: int) -> list[ClientNotification]:
-    return (
-        db.query(ClientNotification)
-        .filter(ClientNotification.client_id == int(client_id))
+def list_client_notifications(
+    db: Session,
+    client_id: int,
+    *,
+    limit: int | None = None,
+) -> list[ClientNotification]:
+    """
+    Bandeja del portal: admin primero (ancladas), luego por fecha descendente.
+
+    Con ``limit``, reserva cupo para todas las no leídas del administrador antes de
+    rellenar con avisos del sistema (p. ej. comisiones).
+    """
+    admin_priority = case(
+        (
+            (ClientNotification.batch_id.isnot(None))
+            | (ClientNotification.target_type.in_(tuple(ADMIN_NOTIFICATION_TARGET_TYPES))),
+            0,
+        ),
+        else_=1,
+    )
+    order = (
+        admin_priority.asc(),
+        ClientNotification.created_at.desc(),
+        ClientNotification.id.desc(),
+    )
+    base = db.query(ClientNotification).filter(ClientNotification.client_id == int(client_id))
+
+    if limit is None or limit < 1:
+        return base.order_by(*order).all()
+
+    admin_unread = (
+        base.filter(
+            ClientNotification.is_read.is_(False),
+            (ClientNotification.batch_id.isnot(None))
+            | (ClientNotification.target_type.in_(tuple(ADMIN_NOTIFICATION_TARGET_TYPES))),
+        )
         .order_by(ClientNotification.created_at.desc(), ClientNotification.id.desc())
         .all()
     )
+    admin_unread_ids = {int(row.id) for row in admin_unread}
+    remaining = max(0, int(limit) - len(admin_unread))
+    if remaining == 0:
+        return admin_unread[: int(limit)]
+
+    others_query = base
+    if admin_unread_ids:
+        others_query = others_query.filter(~ClientNotification.id.in_(admin_unread_ids))
+    others = others_query.order_by(*order).limit(remaining).all()
+    return admin_unread + others
 
 
 def mark_client_notification_read(
