@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, Trash2, X } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Plus, Trash2, X } from 'lucide-react'
 import api from '../../../api/axios'
 import SearchableSelect from '../../../components/ui/SearchableSelect'
 import ImageDropZone from '../../../components/ui/ImageDropZone'
@@ -124,6 +124,40 @@ function newEmptyPackageRow() {
     openingQtyPkg: '',
     initialCredentials: [],
   }
+}
+
+/** Contraseña IPTV con alternancia mostrar/ocultar (una instancia por fila de credencial). */
+function IptvCredentialPasswordField({ id, name, value, onChange, readOnly, inputCls }) {
+  const [showPassword, setShowPassword] = useState(false)
+  return (
+    <div className="relative flex items-center">
+      <input
+        id={id}
+        name={name}
+        type={showPassword ? 'text' : 'password'}
+        autoComplete="new-password"
+        maxLength={255}
+        readOnly={readOnly}
+        value={value}
+        onChange={onChange}
+        className={`${inputCls} pr-10`}
+      />
+      <button
+        type="button"
+        onClick={() => setShowPassword((v) => !v)}
+        aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+        aria-pressed={showPassword}
+        tabIndex={-1}
+        className="absolute inset-y-0 right-0 z-[1] flex items-center px-3 text-gray-500 hover:text-gray-700 transition-colors rounded-r-md"
+      >
+        {showPassword ? (
+          <EyeOff size={18} aria-hidden strokeWidth={2} />
+        ) : (
+          <Eye size={18} aria-hidden strokeWidth={2} />
+        )}
+      </button>
+    </div>
+  )
 }
 
 export default function ProductServiceFormModal({ open, onClose, onSaved, productToEdit = null }) {
@@ -844,14 +878,11 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
                                       <label className={labelCls} htmlFor={`pkg-iptv-p-${row.id}-${idx}`}>
                                         Contraseña IPTV
                                       </label>
-                                      <input
+                                      <IptvCredentialPasswordField
                                         id={`pkg-iptv-p-${row.id}-${idx}`}
-                                        className={inputCls}
-                                        autoComplete="new-password"
                                         name={`pkg-iptv-p-${row.id}-${idx}`}
-                                        type={locked ? 'text' : 'password'}
-                                        maxLength={255}
-                                        disabled={locked}
+                                        inputCls={inputCls}
+                                        readOnly={locked}
                                         value={slot.password ?? ''}
                                         onChange={(e) =>
                                           updatePkgCredential(row.id, idx, 'password', e.target.value)
