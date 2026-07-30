@@ -69,8 +69,8 @@ function MarginAlertIcon() {
   return (
     <span
       className="ml-1 inline-flex cursor-help text-base leading-none text-orange-500"
-      title="Alerta: La tasa oficial del mercado es mayor a tu tasa personalizada."
-      aria-label="Alerta: La tasa oficial del mercado es mayor a tu tasa personalizada."
+      title="Alerta: La tasa oficial del mercado es mayor a tu tasa manual."
+      aria-label="Alerta: La tasa oficial del mercado es mayor a tu tasa manual."
     >
       ⚠️
     </span>
@@ -93,7 +93,7 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-xl">
         <h3 className="notranslate m-0 text-lg font-bold text-gray-900" translate="no">
-          Tasa personalizada — {row.currency_code}
+          Tasa manual — {row.currency_code}
         </h3>
         <p className="m-0 mt-1 text-sm text-gray-500">
           Unidades de moneda local por 1 USD.
@@ -101,7 +101,7 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
 
         <label className="mt-4 block">
           <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Tasa personalizada
+            Tasa manual
           </span>
           <input
             type="number"
@@ -135,7 +135,7 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
             onClick={() => {
               const parsed = Number(manualRate)
               if (!Number.isFinite(parsed) || parsed <= 0) {
-                window.alert('Ingresa una tasa personalizada válida.')
+                window.alert('Ingresa una tasa manual válida.')
                 return
               }
               onSave({ manual_rate: parsed })
@@ -534,7 +534,7 @@ export default function ExchangeRatesWidget() {
                   Moneda
                 </th>
                 <th className="px-2 py-2 font-semibold">Tasa Mercado</th>
-                <th className="px-2 py-2 font-semibold">Tasa Personalizada</th>
+                <th className="px-2 py-2 font-semibold">Tasa Manual</th>
                 <th className="px-2 py-2 font-semibold">Tasa Activa</th>
                 {isAdmin ? (
                   <th className="px-2 py-2 text-right font-semibold">Acción</th>
@@ -651,12 +651,12 @@ export default function ExchangeRatesWidget() {
                                     : 'bg-white text-gray-600 hover:bg-gray-50'
                                 }`}
                               >
-                                Personalizada
+                                Manual
                               </button>
                             </div>
                           ) : (
                             <span className="text-xs text-gray-500">
-                              {row.use_manual_override ? 'Personalizada' : 'Mercado'}
+                              {row.use_manual_override ? 'Manual' : 'Mercado'}
                             </span>
                           )}
                           <span
@@ -678,7 +678,7 @@ export default function ExchangeRatesWidget() {
                             onClick={() => setEditingRow(row)}
                             disabled={saving || reordering}
                             className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                            aria-label={`Editar tasa personalizada ${row.currency_code}`}
+                            aria-label={`Editar tasa manual ${row.currency_code}`}
                           >
                             <Pencil size={14} />
                           </button>
