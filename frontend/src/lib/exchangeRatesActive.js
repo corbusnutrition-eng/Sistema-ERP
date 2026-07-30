@@ -2,13 +2,30 @@ import api from '../api/axios'
 import { normalizeCurrencyCode } from './currencyCode'
 import { fetchLastExchangeRate } from './exchangeRateApi'
 
-/** @typedef {{ currency_code: string, binance_rate?: number|null, manual_rate?: number|null, use_manual_override?: boolean, active_rate?: number|null }} ExchangeRateRow */
+/** @typedef {{ currency_code: string, binance_rate?: number|null, manual_rate?: number|null, use_manual_override?: boolean, active_rate?: number|null, market_rate?: number|null }} ExchangeRateRow */
 
 let catalogCache = /** @type {ExchangeRateRow[]|null} */ (null)
 let catalogPromise = /** @type {Promise<ExchangeRateRow[]>|null} */ (null)
 
 /**
- * Tasa activa de una fila del panel (manual si override, si no mercado/active_rate).
+ * Interpreta el flag de override manual del panel (tolera string/number del API).
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function parseUseManualOverride(value) {
+  if (value === true || value === 1) return true
+  if (value === false || value === 0 || value == null) return false
+  if (typeof value === 'string') {
+    const s = value.trim().toLowerCase()
+    if (s === 'true' || s === '1' || s === 'yes') return true
+    if (s === 'false' || s === '0' || s === '' || s === 'no') return false
+  }
+  return Boolean(value)
+}
+
+/**
+ * Tasa activa de una fila del panel según el toggle «Tasa activa».
+ * Mercado ⇒ solo binance_rate; Manual ⇒ solo manual_rate si override activo.
  * @param {ExchangeRateRow|null|undefined} row
  * @returns {number|null}
  */
@@ -16,19 +33,19 @@ export function getActiveRateFromRow(row) {
   if (!row) return null
   const code = normalizeCurrencyCode(row.currency_code || 'USD', 'USD')
   if (code === 'USD') return 1
-  if (
-    row.use_manual_override &&
-    row.manual_rate != null &&
-    Number(row.manual_rate) > 0
-  ) {
-    return Number(row.manual_rate)
+
+  const useManual = parseUseManualOverride(row.use_manual_override)
+
+  if (useManual) {
+    const manual = Number(row.manual_rate)
+    if (Number.isFinite(manual) && manual > 0) return manual
+    return null
   }
-  if (row.active_rate != null && Number(row.active_rate) > 0) {
-    return Number(row.active_rate)
-  }
-  if (row.binance_rate != null && Number(row.binance_rate) > 0) {
-    return Number(row.binance_rate)
-  }
+
+  const marketRaw = row.binance_rate ?? row.market_rate ?? null
+  const market = Number(marketRaw)
+  if (Number.isFinite(market) && market > 0) return market
+
   return null
 }
 

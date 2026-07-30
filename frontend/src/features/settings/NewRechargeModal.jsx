@@ -619,6 +619,7 @@ export default function NewRechargeModal({
     exchangeRatesLoading,
     flujoPackages,
     tableBillingCurrency,
+    getActiveRate,
   ])
 
   const leadLineId = useMemo(() => {
@@ -1192,7 +1193,7 @@ export default function NewRechargeModal({
                       <span>Tipo de moneda</span>
                       <span>Saldo a recargar (USD)</span>
                       <span>Tipo de cambio</span>
-                      <span>Total a pagar ({billingCode})</span>
+                      <span>Total a pagar ({tableBillingCurrency})</span>
                       {!isReadOnly ? <span className="sr-only">Eliminar</span> : null}
                     </div>
 
@@ -1207,7 +1208,7 @@ export default function NewRechargeModal({
                         const lineLocalTotal = conceptLineLocalTotal(
                           line?.saldo_recargar ?? '',
                           billingExchangeRateStr,
-                          tm,
+                          tableBillingCurrency,
                         )
                         return (
                           <div
@@ -1271,12 +1272,12 @@ export default function NewRechargeModal({
                                 Tipo de cambio
                               </label>
                               <span className="flex items-center min-h-[2.375rem] w-full px-3 py-2 text-sm text-gray-800 tabular-nums rounded-xl border border-gray-100 bg-slate-50/80">
-                                {formatConceptExchangeRate(billingExchangeRateStr, tm)}
+                                {formatConceptExchangeRate(billingExchangeRateStr, tableBillingCurrency)}
                               </span>
                             </div>
                             <div className="w-full min-w-0">
                               <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
-                                Total a pagar ({tm})
+                                Total a pagar ({tableBillingCurrency})
                               </label>
                               <span className="flex items-center min-h-[2.375rem] w-full px-3 py-2 text-sm font-medium text-gray-800 tabular-nums rounded-xl border border-gray-100 bg-slate-50/80">
                                 {lineLocalTotal}
