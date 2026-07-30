@@ -283,13 +283,8 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
   )
 }
 
-function AddCurrencyModal({ open, saving, activeCodes, onClose, onSave }) {
+function AddCurrencyModal({ open, saving, options, onClose, onSave }) {
   const [selectedCode, setSelectedCode] = useState('')
-
-  const currencyOptions = useMemo(
-    () => buildCurrencySelectOptions(WORLD_CURRENCIES, activeCodes),
-    [activeCodes],
-  )
 
   useEffect(() => {
     if (open) setSelectedCode('')
@@ -302,7 +297,7 @@ function AddCurrencyModal({ open, saving, activeCodes, onClose, onSave }) {
       <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-xl">
         <h3 className="m-0 text-lg font-bold text-gray-900">Agregar moneda</h3>
         <p className="m-0 mt-1 text-sm text-gray-500">
-          Busca por país, código ISO o nombre. Se consultará la tasa de mercado USD al guardar.
+          Monedas de Latinoamérica. Busca por país, código ISO o nombre.
         </p>
         <label className="mt-4 block">
           <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -311,16 +306,16 @@ function AddCurrencyModal({ open, saving, activeCodes, onClose, onSave }) {
           <SearchableSelect
             value={selectedCode}
             onChange={setSelectedCode}
-            options={currencyOptions}
+            options={options}
             placeholder="Buscar moneda…"
             hideClear
             showSearch
             dropdownZClass="z-[6000]"
           />
         </label>
-        {currencyOptions.length === 0 ? (
+        {options.length === 0 ? (
           <p className="m-0 mt-3 text-xs text-amber-700">
-            Todas las monedas del catálogo ya están en la lista activa.
+            Todas las monedas LATAM del catálogo ya están en la lista activa.
           </p>
         ) : null}
         <div className="mt-5 flex justify-end gap-2">
@@ -480,9 +475,20 @@ export default function ExchangeRatesWidget() {
 
   const sortedItems = useMemo(() => sortByDisplayOrder(items), [items, sortByDisplayOrder])
 
-  const activeCurrencyCodes = useMemo(
-    () => new Set(sortedItems.map((row) => String(row.currency_code ?? '').toUpperCase())),
-    [sortedItems],
+  const availableLatamCurrencies = useMemo(
+    () =>
+      WORLD_CURRENCIES.filter(
+        (currency) =>
+          !items.some(
+            (rate) => String(rate.currency_code ?? '').toUpperCase() === currency.code,
+          ),
+      ),
+    [items],
+  )
+
+  const addCurrencyOptions = useMemo(
+    () => buildCurrencySelectOptions(availableLatamCurrencies),
+    [availableLatamCurrencies],
   )
 
   const filteredItems = useMemo(() => {
@@ -1035,7 +1041,7 @@ export default function ExchangeRatesWidget() {
       <AddCurrencyModal
         open={addModalOpen}
         saving={addingCurrency}
-        activeCodes={activeCurrencyCodes}
+        options={addCurrencyOptions}
         onClose={() => {
           if (!addingCurrency) setAddModalOpen(false)
         }}
