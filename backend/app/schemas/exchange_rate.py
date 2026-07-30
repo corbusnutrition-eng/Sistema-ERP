@@ -50,6 +50,16 @@ class ExchangeRateReorderRequest(BaseModel):
     items: list[ExchangeRateOrderItem] = Field(..., min_length=1)
 
 
+class ExchangeRateDeleteRequest(BaseModel):
+    master_pin: str = Field(..., min_length=1, max_length=32)
+
+
+class ExchangeRateDeleteResult(BaseModel):
+    ok: bool = True
+    message: str = "Moneda eliminada correctamente."
+    currency_code: str
+
+
 class ExchangeRateSyncResult(BaseModel):
     ok: bool = True
     synced: int = Field(ge=0)

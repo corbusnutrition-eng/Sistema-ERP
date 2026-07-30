@@ -433,6 +433,36 @@ def update_exchange_rate(
     return row
 
 
+def deactivate_exchange_rate(
+    db: Session,
+    *,
+    currency_code: str,
+    master_pin: str,
+) -> ExchangeRate:
+    """Borrado lógico de una moneda tras validar PIN maestro."""
+    expected_pin = (os.getenv("MASTER_PIN") or "0000").strip()
+    received_pin = str(master_pin or "").strip()
+    if received_pin != expected_pin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="PIN Maestro incorrecto.",
+        )
+
+    code = normalize_currency_code(currency_code)
+    row = db.get(ExchangeRate, code)
+    if row is None or not row.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Moneda no encontrada en la lista activa.",
+        )
+
+    row.is_active = False
+    row.updated_at = now_ecuador()
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def reorder_exchange_rates(
     db: Session,
     *,

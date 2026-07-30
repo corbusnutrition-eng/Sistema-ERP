@@ -11,6 +11,8 @@ from app.api.v1.dependencies import AdminDep, UserDep
 from app.database import get_db
 from app.schemas.exchange_rate import (
     ExchangeRateCreateRequest,
+    ExchangeRateDeleteRequest,
+    ExchangeRateDeleteResult,
     ExchangeRateListResponse,
     ExchangeRateRead,
     ExchangeRateReorderRequest,
@@ -19,6 +21,7 @@ from app.schemas.exchange_rate import (
 )
 from app.services.exchange_rate_service import (
     create_exchange_rate,
+    deactivate_exchange_rate,
     list_exchange_rates,
     reorder_exchange_rates,
     resolve_active_rate,
@@ -103,6 +106,23 @@ def put_exchange_rate(
         updated_fields=set(payload_data.keys()),
     )
     return _to_read(row)
+
+
+@router.delete("/{currency_code}", response_model=ExchangeRateDeleteResult)
+def delete_exchange_rate(
+    currency_code: str,
+    payload: ExchangeRateDeleteRequest,
+    db: DbDep,
+    _: AdminDep,
+) -> ExchangeRateDeleteResult:
+    """Elimina (soft delete) una moneda tras validar PIN maestro."""
+    code = normalize_currency_code(currency_code)
+    deactivate_exchange_rate(db, currency_code=code, master_pin=payload.master_pin)
+    return ExchangeRateDeleteResult(
+        ok=True,
+        message=f"Moneda {code} eliminada correctamente.",
+        currency_code=code,
+    )
 
 
 @router.post("/sync", response_model=ExchangeRateSyncResult)

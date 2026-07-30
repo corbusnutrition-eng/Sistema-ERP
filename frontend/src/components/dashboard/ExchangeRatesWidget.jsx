@@ -8,8 +8,11 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Trash2,
 } from 'lucide-react'
 import api from '../../api/axios'
+import SearchableSelect from '../ui/SearchableSelect'
+import { WORLD_CURRENCIES, buildCurrencySelectOptions } from '../../data/worldCurrencies'
 import { useAuth } from '../../context/AuthContext'
 
 const DEFAULT_ROWS_PER_PAGE = 5
@@ -280,11 +283,16 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
   )
 }
 
-function AddCurrencyModal({ open, saving, onClose, onSave }) {
-  const [code, setCode] = useState('')
+function AddCurrencyModal({ open, saving, activeCodes, onClose, onSave }) {
+  const [selectedCode, setSelectedCode] = useState('')
+
+  const currencyOptions = useMemo(
+    () => buildCurrencySelectOptions(WORLD_CURRENCIES, activeCodes),
+    [activeCodes],
+  )
 
   useEffect(() => {
-    if (open) setCode('')
+    if (open) setSelectedCode('')
   }, [open])
 
   if (!open) return null
@@ -294,22 +302,27 @@ function AddCurrencyModal({ open, saving, onClose, onSave }) {
       <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-xl">
         <h3 className="m-0 text-lg font-bold text-gray-900">Agregar moneda</h3>
         <p className="m-0 mt-1 text-sm text-gray-500">
-          Se consultará la tasa de mercado USD al guardar.
+          Busca por país, código ISO o nombre. Se consultará la tasa de mercado USD al guardar.
         </p>
         <label className="mt-4 block">
           <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Código ISO
+            Moneda
           </span>
-          <input
-            type="text"
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            placeholder="Ej. EUR, JPY, GBP"
-            maxLength={10}
-            className="notranslate w-full rounded-lg border border-gray-200 px-3 py-2 text-sm uppercase text-gray-900 outline-none ring-blue-500 focus:ring-2"
-            translate="no"
+          <SearchableSelect
+            value={selectedCode}
+            onChange={setSelectedCode}
+            options={currencyOptions}
+            placeholder="Buscar moneda…"
+            hideClear
+            showSearch
+            dropdownZClass="z-[6000]"
           />
         </label>
+        {currencyOptions.length === 0 ? (
+          <p className="m-0 mt-3 text-xs text-amber-700">
+            Todas las monedas del catálogo ya están en la lista activa.
+          </p>
+        ) : null}
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
@@ -321,18 +334,87 @@ function AddCurrencyModal({ open, saving, onClose, onSave }) {
           </button>
           <button
             type="button"
-            disabled={saving}
-            onClick={() => {
-              const normalized = String(code ?? '').trim().toUpperCase()
-              if (normalized.length < 3) {
-                window.alert('Ingresa un código de moneda válido (mín. 3 letras).')
-                return
-              }
-              onSave(normalized)
-            }}
+            disabled={saving || !selectedCode}
+            onClick={() => onSave(selectedCode)}
             className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {saving ? 'Guardando…' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DeleteCurrencyModal({ open, row, saving, onClose, onConfirm }) {
+  const [masterPin, setMasterPin] = useState('')
+  const [pinError, setPinError] = useState('')
+
+  useEffect(() => {
+    if (!open) return
+    setMasterPin('')
+    setPinError('')
+  }, [open, row])
+
+  if (!open || !row) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-red-100 bg-white p-5 shadow-xl">
+        <h3 className="notranslate m-0 text-lg font-bold text-red-700" translate="no">
+          Eliminar moneda — {row.currency_code}
+        </h3>
+        <p className="m-0 mt-3 text-sm font-medium text-gray-800">
+          ¿Estás absolutamente seguro de que deseas eliminar la moneda{' '}
+          <span className="font-bold">{row.currency_code}</span>?
+        </p>
+        <p className="m-0 mt-2 text-xs text-gray-500">
+          La moneda dejará de mostrarse en el panel. Esta acción requiere PIN Maestro.
+        </p>
+
+        <label className="mt-4 block">
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+            PIN Maestro
+          </span>
+          <input
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            value={masterPin}
+            onChange={(e) => {
+              setMasterPin(e.target.value)
+              if (pinError) setPinError('')
+            }}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none ring-red-500 focus:ring-2"
+            placeholder="Ingresa el PIN Maestro"
+          />
+        </label>
+
+        {pinError ? <p className="m-0 mt-2 text-sm text-red-600">{pinError}</p> : null}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={saving || !masterPin.trim()}
+            onClick={() => {
+              const pin = masterPin.trim()
+              if (!pin) {
+                setPinError('Ingresa el PIN Maestro.')
+                return
+              }
+              onConfirm(pin, setPinError)
+            }}
+            className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {saving ? 'Eliminando…' : 'Eliminar moneda'}
           </button>
         </div>
       </div>
@@ -361,6 +443,8 @@ export default function ExchangeRatesWidget() {
   const [toleranceRow, setToleranceRow] = useState(null)
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [addingCurrency, setAddingCurrency] = useState(false)
+  const [deletingRow, setDeletingRow] = useState(null)
+  const [deletingCurrency, setDeletingCurrency] = useState(false)
 
   const loadRates = useCallback(async () => {
     setLoading(true)
@@ -395,6 +479,11 @@ export default function ExchangeRatesWidget() {
   }, [])
 
   const sortedItems = useMemo(() => sortByDisplayOrder(items), [items, sortByDisplayOrder])
+
+  const activeCurrencyCodes = useMemo(
+    () => new Set(sortedItems.map((row) => String(row.currency_code ?? '').toUpperCase())),
+    [sortedItems],
+  )
 
   const filteredItems = useMemo(() => {
     const q = search.trim().toUpperCase()
@@ -580,6 +669,30 @@ export default function ExchangeRatesWidget() {
       setError(typeof d === 'string' ? d : 'No se pudo agregar la moneda.')
     } finally {
       setAddingCurrency(false)
+    }
+  }
+
+  const handleDeleteCurrency = async (masterPin, setPinError) => {
+    if (!isAdmin || !deletingRow || deletingCurrency) return
+    setDeletingCurrency(true)
+    setError('')
+    try {
+      await api.delete(`/api/v1/exchange-rates/${encodeURIComponent(deletingRow.currency_code)}`, {
+        data: { master_pin: masterPin },
+      })
+      setDeletingRow(null)
+      setSyncMessage(`Moneda ${deletingRow.currency_code} eliminada correctamente.`)
+      await loadRates()
+    } catch (err) {
+      const status = err?.response?.status
+      const detail = err?.response?.data?.detail
+      if (status === 403) {
+        setPinError(typeof detail === 'string' ? detail : 'PIN Maestro incorrecto.')
+        return
+      }
+      setError(typeof detail === 'string' ? detail : 'No se pudo eliminar la moneda.')
+    } finally {
+      setDeletingCurrency(false)
     }
   }
 
@@ -828,7 +941,7 @@ export default function ExchangeRatesWidget() {
                             <button
                               type="button"
                               onClick={() => setToleranceRow(row)}
-                              disabled={saving || reordering}
+                              disabled={saving || reordering || deletingCurrency}
                               className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                               aria-label={`Reglas de tolerancia ${row.currency_code}`}
                             >
@@ -837,11 +950,20 @@ export default function ExchangeRatesWidget() {
                             <button
                               type="button"
                               onClick={() => setEditingRow(row)}
-                              disabled={saving || reordering}
+                              disabled={saving || reordering || deletingCurrency}
                               className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                               aria-label={`Editar tasa manual ${row.currency_code}`}
                             >
                               <Pencil size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeletingRow(row)}
+                              disabled={saving || reordering || deletingCurrency}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                              aria-label={`Eliminar moneda ${row.currency_code}`}
+                            >
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </td>
@@ -913,10 +1035,21 @@ export default function ExchangeRatesWidget() {
       <AddCurrencyModal
         open={addModalOpen}
         saving={addingCurrency}
+        activeCodes={activeCurrencyCodes}
         onClose={() => {
           if (!addingCurrency) setAddModalOpen(false)
         }}
         onSave={(code) => void handleAddCurrency(code)}
+      />
+
+      <DeleteCurrencyModal
+        open={Boolean(deletingRow)}
+        row={deletingRow}
+        saving={deletingCurrency}
+        onClose={() => {
+          if (!deletingCurrency) setDeletingRow(null)
+        }}
+        onConfirm={(pin, setPinError) => void handleDeleteCurrency(pin, setPinError)}
       />
 
       <EditRateModal
