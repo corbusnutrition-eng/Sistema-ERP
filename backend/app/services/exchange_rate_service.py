@@ -440,7 +440,7 @@ def deactivate_exchange_rate(
     master_pin: str,
 ) -> ExchangeRate:
     """Borrado lógico de una moneda tras validar PIN maestro."""
-    expected_pin = (os.getenv("MASTER_PIN") or "0000").strip()
+    expected_pin = (os.getenv("MASTER_ADMIN_PIN") or "0000").strip()
     received_pin = str(master_pin or "").strip()
     if received_pin != expected_pin:
         raise HTTPException(
