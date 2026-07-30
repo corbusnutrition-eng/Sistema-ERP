@@ -53,6 +53,23 @@ def _parse_prices(adv_list: list[dict]) -> list[float]:
     return prices
 
 
+def _build_binance_payload(fiat_code: str, *, rows: int = DEFAULT_ROWS) -> dict:
+    """Payload completo requerido por la API pública P2P de Binance (v2)."""
+    return {
+        "fiat": fiat_code,
+        "page": 1,
+        "rows": max(3, min(int(rows), 20)),
+        "tradeType": "BUY",
+        "asset": "USDT",
+        "countries": [],
+        "proMerchantAds": False,
+        "shieldMerchantAds": False,
+        "publisherType": None,
+        "payTypes": [],
+        "classifies": ["mass", "profession"],
+    }
+
+
 def fetch_binance_p2p_rate(
     fiat_code: str,
     *,
@@ -69,14 +86,7 @@ def fetch_binance_p2p_rate(
     if not fiat or fiat in {"USD", "USDT", "USDC"}:
         return None
 
-    payload = {
-        "fiat": fiat,
-        "page": 1,
-        "rows": max(3, min(int(rows), 20)),
-        "tradeType": "BUY",
-        "asset": "USDT",
-        "merchantCheck": False,
-    }
+    payload = _build_binance_payload(fiat, rows=rows)
 
     try:
         with httpx.Client(timeout=timeout, headers=BINANCE_P2P_HEADERS) as client:
@@ -124,6 +134,10 @@ def fetch_binance_p2p_rate(
         return None
 
     if len(data) == 0:
+        logger.warning(
+            f"Binance devolvió data vacía para {fiat}. "
+            "La IP del servidor podría estar restringida silenciosamente para datos P2P."
+        )
         logger.warning(
             "Binance P2P data vacía para %s (HTTP 200, code=%s) — respuesta: %s",
             fiat,
