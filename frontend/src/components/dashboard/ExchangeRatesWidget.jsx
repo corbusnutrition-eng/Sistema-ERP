@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
+  GripVertical,
   Pencil,
   RefreshCw,
   Search,
@@ -13,6 +12,24 @@ import api from '../../api/axios'
 import { useAuth } from '../../context/AuthContext'
 
 const PAGE_SIZE = 5
+const DRAG_MIME = 'application/x-exchange-rate-code'
+
+function reorderWithSequentialOrder(list, fromIndex, toIndex) {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.length || toIndex >= list.length) {
+    return list
+  }
+  const next = [...list]
+  const [moved] = next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, moved)
+  return next.map((row, idx) => ({ ...row, display_order: idx }))
+}
+
+function buildReorderPayload(list) {
+  return list.map((row, idx) => ({
+    currency_code: row.currency_code,
+    display_order: idx,
+  }))
+}
 
 function formatRate(value) {
   const n = Number(value)
@@ -201,7 +218,10 @@ export default function ExchangeRatesWidget() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [reorderingCode, setReorderingCode] = useState(null)
+  const [reordering, setReordering] = useState(false)
+  const [draggingCode, setDraggingCode] = useState(null)
+  const [dragOverCode, setDragOverCode] = useState(null)
+  const dragSourceIndexRef = useRef(null)
   const [error, setError] = useState('')
   const [syncMessage, setSyncMessage] = useState('')
   const [search, setSearch] = useState('')
@@ -306,44 +326,26 @@ export default function ExchangeRatesWidget() {
     [],
   )
 
-  const swapDisplayOrder = useCallback(
-    async (globalIndex, direction) => {
-      if (!isAdmin || reorderingCode) return
-      const targetIndex = direction === 'up' ? globalIndex - 1 : globalIndex + 1
+  const canDragReorder = isAdmin && !search.trim() && !reordering
+
+  const applyGlobalReorder = useCallback(
+    async (fromIndex, toIndex) => {
+      if (!isAdmin || reordering || fromIndex === toIndex) return
       if (
-        globalIndex < 0 ||
-        targetIndex < 0 ||
-        targetIndex >= sortedItems.length ||
-        globalIndex >= sortedItems.length
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= sortedItems.length ||
+        toIndex >= sortedItems.length
       ) {
         return
       }
 
-      const current = sortedItems[globalIndex]
-      const other = sortedItems[targetIndex]
-      const currentOrder = Number(current.display_order ?? 0)
-      const otherOrder = Number(other.display_order ?? 0)
-
-      const reorderPayload = [
-        { currency_code: current.currency_code, display_order: otherOrder },
-        { currency_code: other.currency_code, display_order: currentOrder },
-      ]
-
+      const reordered = reorderWithSequentialOrder(sortedItems, fromIndex, toIndex)
+      const reorderPayload = buildReorderPayload(reordered)
       const previousItems = items
-      setReorderingCode(current.currency_code)
-      setItems((prev) =>
-        sortByDisplayOrder(
-          prev.map((row) => {
-            if (row.currency_code === current.currency_code) {
-              return { ...row, display_order: otherOrder }
-            }
-            if (row.currency_code === other.currency_code) {
-              return { ...row, display_order: currentOrder }
-            }
-            return row
-          }),
-        ),
-      )
+
+      setReordering(true)
+      setItems(reordered)
 
       try {
         await persistReorder(reorderPayload)
@@ -352,25 +354,59 @@ export default function ExchangeRatesWidget() {
         const detail = err?.response?.data?.detail
         setError(typeof detail === 'string' ? detail : 'No se pudo reordenar las monedas.')
       } finally {
-        setReorderingCode(null)
+        setReordering(false)
       }
     },
-    [isAdmin, items, persistReorder, reorderingCode, sortByDisplayOrder, sortedItems],
+    [isAdmin, items, persistReorder, reordering, sortedItems],
   )
 
-  const handleMoveUp = useCallback(
-    (globalIndex) => {
-      void swapDisplayOrder(globalIndex, 'up')
+  const handleDragStart = useCallback(
+    (event, globalIndex, currencyCode) => {
+      if (!canDragReorder) {
+        event.preventDefault()
+        return
+      }
+      if (event.target.closest('button, input, a, label, select, textarea')) {
+        event.preventDefault()
+        return
+      }
+      dragSourceIndexRef.current = globalIndex
+      setDraggingCode(currencyCode)
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData(DRAG_MIME, currencyCode)
+      event.dataTransfer.setData('text/plain', currencyCode)
     },
-    [swapDisplayOrder],
+    [canDragReorder],
   )
 
-  const handleMoveDown = useCallback(
-    (globalIndex) => {
-      void swapDisplayOrder(globalIndex, 'down')
+  const handleDragOver = useCallback(
+    (event, currencyCode) => {
+      if (!canDragReorder || dragSourceIndexRef.current == null) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      setDragOverCode(currencyCode)
     },
-    [swapDisplayOrder],
+    [canDragReorder],
   )
+
+  const handleDrop = useCallback(
+    (event, toGlobalIndex) => {
+      event.preventDefault()
+      const fromGlobalIndex = dragSourceIndexRef.current
+      dragSourceIndexRef.current = null
+      setDraggingCode(null)
+      setDragOverCode(null)
+      if (fromGlobalIndex == null) return
+      void applyGlobalReorder(fromGlobalIndex, toGlobalIndex)
+    },
+    [applyGlobalReorder],
+  )
+
+  const handleDragEnd = useCallback(() => {
+    dragSourceIndexRef.current = null
+    setDraggingCode(null)
+    setDragOverCode(null)
+  }, [])
 
   const handleSync = async () => {
     if (!isAdmin || syncing) return
@@ -484,6 +520,12 @@ export default function ExchangeRatesWidget() {
 
         {syncMessage ? <p className="m-0 text-sm text-emerald-700">{syncMessage}</p> : null}
 
+        {isAdmin && search.trim() ? (
+          <p className="m-0 text-xs text-amber-700">
+            Limpia la búsqueda para reordenar monedas arrastrando filas.
+          </p>
+        ) : null}
+
         <div className="overflow-x-auto notranslate" translate="no">
           <table className="min-w-full text-sm">
             <thead>
@@ -524,35 +566,49 @@ export default function ExchangeRatesWidget() {
                     (r) => r.currency_code === row.currency_code,
                   )
                   const alert = hasMarginAlert(row)
+                  const isDragging = draggingCode === row.currency_code
+                  const isDropTarget =
+                    dragOverCode === row.currency_code && draggingCode !== row.currency_code
                   return (
-                    <tr key={row.currency_code} className="border-b border-gray-50 last:border-0">
+                    <tr
+                      key={row.currency_code}
+                      draggable={canDragReorder}
+                      onDragStart={(event) => handleDragStart(event, globalIdx, row.currency_code)}
+                      onDragOver={(event) => handleDragOver(event, row.currency_code)}
+                      onDragLeave={() => {
+                        if (dragOverCode === row.currency_code) setDragOverCode(null)
+                      }}
+                      onDrop={(event) => handleDrop(event, globalIdx)}
+                      onDragEnd={handleDragEnd}
+                      className={`border-b border-gray-50 last:border-0 transition-colors ${
+                        isDragging
+                          ? 'bg-blue-50 opacity-50'
+                          : isDropTarget
+                            ? 'bg-blue-100/70 ring-2 ring-inset ring-blue-300'
+                            : canDragReorder
+                              ? 'hover:bg-gray-50/80'
+                              : ''
+                      }`}
+                    >
                       <td className="notranslate px-2 py-3" translate="no">
                         <div className="flex items-center gap-1.5">
                           {isAdmin ? (
-                            <div className="flex flex-col gap-0.5">
-                              <button
-                                type="button"
-                                disabled={reorderingCode != null || globalIdx <= 0}
-                                onClick={() => handleMoveUp(globalIdx)}
-                                className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30"
-                                aria-label={`Subir ${row.currency_code}`}
-                              >
-                                <ChevronUp size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                disabled={
-                                  reorderingCode != null ||
-                                  globalIdx < 0 ||
-                                  globalIdx >= sortedItems.length - 1
-                                }
-                                onClick={() => handleMoveDown(globalIdx)}
-                                className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30"
-                                aria-label={`Bajar ${row.currency_code}`}
-                              >
-                                <ChevronDown size={14} />
-                              </button>
-                            </div>
+                            <span
+                              data-drag-handle
+                              title={
+                                search.trim()
+                                  ? 'Limpia la búsqueda para reordenar'
+                                  : 'Arrastrar para reordenar'
+                              }
+                              className={`inline-flex touch-none select-none rounded p-0.5 ${
+                                canDragReorder
+                                  ? 'cursor-grab text-gray-400 active:cursor-grabbing hover:bg-gray-100 hover:text-gray-700'
+                                  : 'cursor-not-allowed text-gray-300'
+                              }`}
+                              aria-hidden="true"
+                            >
+                              <GripVertical size={16} />
+                            </span>
                           ) : null}
                           <span className="font-semibold text-gray-900">{row.currency_code}</span>
                         </div>
@@ -575,7 +631,7 @@ export default function ExchangeRatesWidget() {
                             <div className="inline-flex w-fit overflow-hidden rounded-lg border border-gray-200 text-[11px] font-semibold">
                               <button
                                 type="button"
-                                disabled={saving || reorderingCode != null}
+                                disabled={saving || reordering}
                                 onClick={() => void handleActiveSourceChange(row, false)}
                                 className={`px-2.5 py-1 transition ${
                                   !row.use_manual_override
@@ -587,7 +643,7 @@ export default function ExchangeRatesWidget() {
                               </button>
                               <button
                                 type="button"
-                                disabled={saving || reorderingCode != null}
+                                disabled={saving || reordering}
                                 onClick={() => void handleActiveSourceChange(row, true)}
                                 className={`px-2.5 py-1 transition ${
                                   row.use_manual_override
@@ -620,7 +676,7 @@ export default function ExchangeRatesWidget() {
                           <button
                             type="button"
                             onClick={() => setEditingRow(row)}
-                            disabled={saving || reorderingCode != null}
+                            disabled={saving || reordering}
                             className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                             aria-label={`Editar tasa personalizada ${row.currency_code}`}
                           >
