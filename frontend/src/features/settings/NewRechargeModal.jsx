@@ -573,6 +573,11 @@ export default function NewRechargeModal({
     [rechargeLineItems],
   )
 
+  /** Moneda de cobro seleccionada en la fila líder (Conceptos). */
+  const selectedCurrencyCode = tableBillingCurrency || 'USD'
+
+  const catalogRatesLoadingRef = useRef(false)
+
   const applyActiveRateToFlujo = useCallback(
     (currencyCode, { forceAllRows = false } = {}) => {
       const code = normalizeCurrencyCode(currencyCode || 'USD', 'USD')
@@ -603,22 +608,33 @@ export default function NewRechargeModal({
   )
 
   useEffect(() => {
-    if (!catalogEnabled || exchangeRatesLoading) return undefined
-    const cur = tableBillingCurrency
+    if (!catalogEnabled) {
+      catalogRatesLoadingRef.current = false
+      return undefined
+    }
+    if (exchangeRatesLoading) {
+      catalogRatesLoadingRef.current = true
+      return undefined
+    }
+    const cur = selectedCurrencyCode
     const isCurrencyChange =
       prevBillingCurrencyRef.current != null && prevBillingCurrencyRef.current !== cur
+    const catalogJustLoaded = catalogRatesLoadingRef.current
+    catalogRatesLoadingRef.current = false
     prevBillingCurrencyRef.current = cur
 
-    if (editPricingHydratedRef.current && !isCurrencyChange) return undefined
+    if (editPricingHydratedRef.current && !isCurrencyChange && !catalogJustLoaded) return undefined
 
-    applyActiveRateToFlujo(cur, { forceAllRows: isCurrencyChange || !editPricingHydratedRef.current })
+    applyActiveRateToFlujo(cur, {
+      forceAllRows: isCurrencyChange || !editPricingHydratedRef.current || catalogJustLoaded,
+    })
     return undefined
   }, [
     applyActiveRateToFlujo,
     catalogEnabled,
     exchangeRatesLoading,
     flujoPackages,
-    tableBillingCurrency,
+    selectedCurrencyCode,
     getActiveRate,
   ])
 
@@ -974,10 +990,14 @@ export default function NewRechargeModal({
   function updateLine(lineId, patch) {
     if (isReadOnly) return
     const list = Array.isArray(rechargeLineItems) ? rechargeLineItems : []
-    if (patch.tipo_moneda !== undefined && lineId === leadLineId) {
-      const c = normalizeCurrencyCode(patch.tipo_moneda, 'USD')
-      onRechargeLineItemsChange(list.map((r) => ({ ...r, tipo_moneda: c })))
-      return
+    if (patch.tipo_moneda !== undefined) {
+      const rowIndex = list.findIndex((r) => r.id === lineId)
+      const isLeadRow = rowIndex === 0 || lineId === leadLineId
+      if (isLeadRow) {
+        const c = normalizeCurrencyCode(patch.tipo_moneda, 'USD')
+        onRechargeLineItemsChange(list.map((r) => ({ ...r, tipo_moneda: c })))
+        return
+      }
     }
     onRechargeLineItemsChange(list.map((r) => (r.id === lineId ? { ...r, ...patch } : r)))
   }
@@ -1191,9 +1211,9 @@ export default function NewRechargeModal({
                     <div className="hidden md:grid md:grid-cols-[minmax(0,1.1fr)_minmax(6rem,0.75fr)_minmax(6rem,0.75fr)_minmax(5rem,0.65fr)_minmax(7rem,0.85fr)_2.5rem] gap-2 px-3 py-2.5 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-600 font-semibold border-b border-gray-100">
                       <span>Producto/servicio</span>
                       <span>Tipo de moneda</span>
-                      <span>Saldo a recargar (USD)</span>
+                      <span>Saldo BaaS a acreditar (USD)</span>
                       <span>Tipo de cambio</span>
-                      <span>Total a pagar ({tableBillingCurrency})</span>
+                      <span>Total a pagar ({selectedCurrencyCode})</span>
                       {!isReadOnly ? <span className="sr-only">Eliminar</span> : null}
                     </div>
 
@@ -1208,7 +1228,7 @@ export default function NewRechargeModal({
                         const lineLocalTotal = conceptLineLocalTotal(
                           line?.saldo_recargar ?? '',
                           billingExchangeRateStr,
-                          tableBillingCurrency,
+                          selectedCurrencyCode,
                         )
                         return (
                           <div
@@ -1255,7 +1275,7 @@ export default function NewRechargeModal({
                             </div>
                             <div className="w-full min-w-0">
                               <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
-                                Saldo a recargar (USD)
+                                Saldo BaaS a acreditar (USD)
                               </label>
                               <input
                                 className={`${icls} w-full tabular-nums`}
@@ -1272,12 +1292,12 @@ export default function NewRechargeModal({
                                 Tipo de cambio
                               </label>
                               <span className="flex items-center min-h-[2.375rem] w-full px-3 py-2 text-sm text-gray-800 tabular-nums rounded-xl border border-gray-100 bg-slate-50/80">
-                                {formatConceptExchangeRate(billingExchangeRateStr, tableBillingCurrency)}
+                                {formatConceptExchangeRate(billingExchangeRateStr, selectedCurrencyCode)}
                               </span>
                             </div>
                             <div className="w-full min-w-0">
                               <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
-                                Total a pagar ({tableBillingCurrency})
+                                Total a pagar ({selectedCurrencyCode})
                               </label>
                               <span className="flex items-center min-h-[2.375rem] w-full px-3 py-2 text-sm font-medium text-gray-800 tabular-nums rounded-xl border border-gray-100 bg-slate-50/80">
                                 {lineLocalTotal}

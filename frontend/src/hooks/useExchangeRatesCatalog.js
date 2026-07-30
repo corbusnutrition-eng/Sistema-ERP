@@ -6,6 +6,7 @@ import {
 
 /**
  * Carga GET /api/v1/exchange-rates y expone helper de tasa activa.
+ * Cada vez que `enabled` pasa a true (p. ej. al abrir el modal), refetch sin caché.
  */
 export default function useExchangeRatesCatalog(enabled = true) {
   const [rates, setRates] = useState([])
@@ -14,13 +15,14 @@ export default function useExchangeRatesCatalog(enabled = true) {
   useEffect(() => {
     if (!enabled) {
       setRates([])
+      setLoading(false)
       return undefined
     }
     let cancelled = false
     setLoading(true)
-    fetchExchangeRatesCatalog()
+    fetchExchangeRatesCatalog({ bypassCache: true })
       .then((items) => {
-        if (!cancelled) setRates(items)
+        if (!cancelled) setRates(Array.isArray(items) ? items : [])
       })
       .finally(() => {
         if (!cancelled) setLoading(false)

@@ -34,7 +34,8 @@ export function getActiveRateFromRow(row) {
   const code = normalizeCurrencyCode(row.currency_code || 'USD', 'USD')
   if (code === 'USD') return 1
 
-  const useManual = parseUseManualOverride(row.use_manual_override)
+  const useManual =
+    row.use_manual_override === true || parseUseManualOverride(row.use_manual_override)
 
   if (useManual) {
     const manual = Number(row.manual_rate)
@@ -62,11 +63,21 @@ export function getActiveRateForCode(rows, currencyCode) {
   return getActiveRateFromRow(row)
 }
 
+export function invalidateExchangeRatesCatalog() {
+  catalogCache = null
+  catalogPromise = null
+}
+
 /**
+ * @param {{ bypassCache?: boolean }} [options]
  * @returns {Promise<ExchangeRateRow[]>}
  */
-export async function fetchExchangeRatesCatalog() {
-  if (catalogCache) return catalogCache
+export async function fetchExchangeRatesCatalog(options = {}) {
+  if (options?.bypassCache === true) {
+    invalidateExchangeRatesCatalog()
+  } else if (catalogCache) {
+    return catalogCache
+  }
   if (!catalogPromise) {
     catalogPromise = api
       .get('/api/v1/exchange-rates')
@@ -83,10 +94,6 @@ export async function fetchExchangeRatesCatalog() {
       })
   }
   return catalogPromise
-}
-
-export function invalidateExchangeRatesCatalog() {
-  catalogCache = null
 }
 
 /**
