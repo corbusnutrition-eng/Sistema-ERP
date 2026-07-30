@@ -37,6 +37,7 @@ def _to_read(row) -> ExchangeRateRead:
         manual_rate=row.manual_rate,
         use_manual_override=bool(row.use_manual_override),
         is_active=bool(row.is_active),
+        display_order=int(row.display_order or 0),
         active_rate=resolve_active_rate(row),
         updated_at=row.updated_at,
     )
@@ -75,6 +76,7 @@ def put_exchange_rate(
         currency_code=normalize_currency_code(currency_code),
         manual_rate=payload.manual_rate,
         use_manual_override=payload.use_manual_override,
+        display_order=payload.display_order,
     )
     return _to_read(row)
 

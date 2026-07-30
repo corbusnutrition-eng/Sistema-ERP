@@ -83,12 +83,19 @@ def _ensure_row(db: Session, currency_code: str, *, is_active: bool = True) -> E
     code = normalize_currency_code(currency_code)
     row = db.get(ExchangeRate, code)
     if row is None:
+        max_order = (
+            db.query(ExchangeRate.display_order)
+            .order_by(ExchangeRate.display_order.desc())
+            .limit(1)
+            .scalar()
+        )
         row = ExchangeRate(
             currency_code=code,
             binance_rate=None,
             manual_rate=None,
             use_manual_override=False,
             is_active=bool(is_active),
+            display_order=int(max_order or 0) + 1,
             updated_at=now_ecuador(),
         )
         db.add(row)
@@ -96,9 +103,20 @@ def _ensure_row(db: Session, currency_code: str, *, is_active: bool = True) -> E
     return row
 
 
+def _normalize_display_orders(db: Session, rows: list[ExchangeRate]) -> bool:
+    """Asigna orden secuencial si todas las filas tienen display_order=0."""
+    if len(rows) <= 1:
+        return False
+    if not all(int(getattr(r, "display_order", 0) or 0) == 0 for r in rows):
+        return False
+    for idx, row in enumerate(sorted(rows, key=lambda r: str(r.currency_code))):
+        row.display_order = idx
+    return True
+
+
 def _seed_default_rows(db: Session) -> bool:
     changed = False
-    for code in get_configured_fiat_codes():
+    for idx, code in enumerate(get_configured_fiat_codes()):
         row = db.get(ExchangeRate, code)
         if row is None:
             db.add(
@@ -108,6 +126,7 @@ def _seed_default_rows(db: Session) -> bool:
                     manual_rate=None,
                     use_manual_override=False,
                     is_active=True,
+                    display_order=idx,
                     updated_at=now_ecuador(),
                 )
             )
@@ -132,20 +151,20 @@ def list_exchange_rates(db: Session) -> list[ExchangeRate]:
     if _seed_default_rows(db):
         db.commit()
 
-    configured = get_configured_fiat_codes()
-    order_map = {code: idx for idx, code in enumerate(configured)}
-
     rows = (
         db.query(ExchangeRate)
         .filter(ExchangeRate.is_active.is_(True))
+        .order_by(ExchangeRate.display_order.asc(), ExchangeRate.currency_code.asc())
         .all()
     )
-    rows.sort(
-        key=lambda r: (
-            order_map.get(r.currency_code, 999),
-            str(r.currency_code),
+    if _normalize_display_orders(db, rows):
+        db.commit()
+        rows = (
+            db.query(ExchangeRate)
+            .filter(ExchangeRate.is_active.is_(True))
+            .order_by(ExchangeRate.display_order.asc(), ExchangeRate.currency_code.asc())
+            .all()
         )
-    )
     return rows
 
 
@@ -168,6 +187,15 @@ def create_exchange_rate(db: Session, *, currency_code: str) -> ExchangeRate:
         )
 
     now = now_ecuador()
+    max_order = (
+        db.query(ExchangeRate.display_order)
+        .filter(ExchangeRate.is_active.is_(True))
+        .order_by(ExchangeRate.display_order.desc())
+        .limit(1)
+        .scalar()
+    )
+    next_order = int(max_order if max_order is not None else -1) + 1
+
     if row is None:
         row = ExchangeRate(
             currency_code=code,
@@ -175,12 +203,14 @@ def create_exchange_rate(db: Session, *, currency_code: str) -> ExchangeRate:
             manual_rate=None,
             use_manual_override=False,
             is_active=True,
+            display_order=next_order,
             updated_at=now,
         )
         db.add(row)
     else:
         row.is_active = True
         row.binance_rate = float(rate)
+        row.display_order = next_order
         row.updated_at = now
 
     db.commit()
@@ -194,6 +224,7 @@ def update_exchange_rate(
     currency_code: str,
     manual_rate: float | None = None,
     use_manual_override: bool | None = None,
+    display_order: int | None = None,
 ) -> ExchangeRate:
     code = normalize_currency_code(currency_code)
     row = db.get(ExchangeRate, code)
@@ -216,8 +247,11 @@ def update_exchange_rate(
         if row.use_manual_override and (row.manual_rate is None or float(row.manual_rate) <= 0):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Indica una tasa manual válida antes de activar el override.",
+                detail="Indica una tasa personalizada válida antes de activarla.",
             )
+
+    if display_order is not None:
+        row.display_order = int(display_order)
 
     row.updated_at = now_ecuador()
     db.commit()

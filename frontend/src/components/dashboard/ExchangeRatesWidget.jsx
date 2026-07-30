@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertCircle, Pencil, RefreshCw, Search } from 'lucide-react'
+import {
+  AlertCircle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Pencil,
+  RefreshCw,
+  Search,
+} from 'lucide-react'
 import api from '../../api/axios'
 import { useAuth } from '../../context/AuthContext'
+
+const PAGE_SIZE = 5
 
 function formatRate(value) {
   const n = Number(value)
@@ -10,6 +21,12 @@ function formatRate(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 4,
   })
+}
+
+function formatPersonalRate(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return '-'
+  return formatRate(n)
 }
 
 function formatUpdatedAt(value) {
@@ -24,20 +41,33 @@ function formatUpdatedAt(value) {
   }
 }
 
+function hasMarginAlert(row) {
+  if (!row?.use_manual_override) return false
+  const manual = Number(row?.manual_rate)
+  const market = Number(row?.binance_rate)
+  return Number.isFinite(manual) && manual > 0 && Number.isFinite(market) && market > manual
+}
+
+function MarginAlertIcon() {
+  return (
+    <span
+      className="ml-1 inline-flex cursor-help text-base leading-none text-orange-500"
+      title="Alerta: La tasa oficial del mercado es mayor a tu tasa personalizada."
+      aria-label="Alerta: La tasa oficial del mercado es mayor a tu tasa personalizada."
+    >
+      ⚠️
+    </span>
+  )
+}
+
 function EditRateModal({ open, row, saving, onClose, onSave }) {
   const [manualRate, setManualRate] = useState('')
-  const [useManual, setUseManual] = useState(false)
 
   useEffect(() => {
     if (!open || !row) return
     setManualRate(
-      row.manual_rate != null && Number(row.manual_rate) > 0
-        ? String(row.manual_rate)
-        : row.active_rate != null
-          ? String(row.active_rate)
-          : '',
+      row.manual_rate != null && Number(row.manual_rate) > 0 ? String(row.manual_rate) : '',
     )
-    setUseManual(Boolean(row.use_manual_override))
   }, [open, row])
 
   if (!open || !row) return null
@@ -46,45 +76,32 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-xl">
         <h3 className="notranslate m-0 text-lg font-bold text-gray-900" translate="no">
-          Editar tasa — {row.currency_code}
+          Tasa personalizada — {row.currency_code}
         </h3>
         <p className="m-0 mt-1 text-sm text-gray-500">
-          Unidades de moneda local por 1 USD (referencia mercado internacional).
+          Unidades de moneda local por 1 USD.
         </p>
 
-        <div className="mt-4 space-y-4">
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
-              Tasa manual
-            </span>
-            <input
-              type="number"
-              min="0"
-              step="0.0001"
-              value={manualRate}
-              onChange={(e) => setManualRate(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none ring-blue-500 focus:ring-2"
-              placeholder="Ej. 6.95"
-            />
-          </label>
+        <label className="mt-4 block">
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Tasa personalizada
+          </span>
+          <input
+            type="number"
+            min="0"
+            step="0.0001"
+            value={manualRate}
+            onChange={(e) => setManualRate(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none ring-blue-500 focus:ring-2"
+            placeholder="Ej. 6.95"
+          />
+        </label>
 
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={useManual}
-              onChange={(e) => setUseManual(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            Usar tasa manual (ignorar mercado)
-          </label>
-
-          {row.binance_rate != null ? (
-            <p className="m-0 text-xs text-gray-400">
-              Mercado actual: {formatRate(row.binance_rate)} · actualizado{' '}
-              {formatUpdatedAt(row.updated_at)}
-            </p>
-          ) : null}
-        </div>
+        {row.binance_rate != null ? (
+          <p className="m-0 mt-3 text-xs text-gray-400">
+            Tasa mercado actual: {formatRate(row.binance_rate)}
+          </p>
+        ) : null}
 
         <div className="mt-5 flex justify-end gap-2">
           <button
@@ -101,13 +118,10 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
             onClick={() => {
               const parsed = Number(manualRate)
               if (!Number.isFinite(parsed) || parsed <= 0) {
-                window.alert('Ingresa una tasa manual válida.')
+                window.alert('Ingresa una tasa personalizada válida.')
                 return
               }
-              onSave({
-                manual_rate: parsed,
-                use_manual_override: useManual,
-              })
+              onSave({ manual_rate: parsed })
             }}
             className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
           >
@@ -187,9 +201,11 @@ export default function ExchangeRatesWidget() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [reorderingCode, setReorderingCode] = useState(null)
   const [error, setError] = useState('')
   const [syncMessage, setSyncMessage] = useState('')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [editingRow, setEditingRow] = useState(null)
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [addingCurrency, setAddingCurrency] = useState(false)
@@ -213,19 +229,86 @@ export default function ExchangeRatesWidget() {
     void loadRates()
   }, [loadRates])
 
+  useEffect(() => {
+    setPage(1)
+  }, [search])
+
   const filteredItems = useMemo(() => {
     const q = search.trim().toUpperCase()
     if (!q) return items
     return items.filter((row) => String(row?.currency_code ?? '').toUpperCase().includes(q))
   }, [items, search])
 
-  const visibleItems = useMemo(() => {
-    const q = search.trim()
-    if (q) return filteredItems
-    return filteredItems.slice(0, 10)
-  }, [filteredItems, search])
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE)),
+    [filteredItems.length],
+  )
 
-  const isShowingTopTenOnly = !search.trim() && filteredItems.length > 10
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+
+  const paginatedItems = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return filteredItems.slice(start, start + PAGE_SIZE)
+  }, [filteredItems, page])
+
+  const mergeRowUpdate = useCallback((updated) => {
+    setItems((prev) => {
+      const next = prev.map((row) => (row.currency_code === updated.currency_code ? updated : row))
+      return [...next].sort((a, b) => {
+        const oa = Number(a.display_order ?? 0)
+        const ob = Number(b.display_order ?? 0)
+        if (oa !== ob) return oa - ob
+        return String(a.currency_code).localeCompare(String(b.currency_code))
+      })
+    })
+  }, [])
+
+  const patchRow = useCallback(
+    async (currencyCode, payload, { silent = false } = {}) => {
+      if (!isAdmin) return null
+      if (!silent) setSaving(true)
+      setError('')
+      try {
+        const { data } = await api.put(
+          `/api/v1/exchange-rates/${encodeURIComponent(currencyCode)}`,
+          payload,
+        )
+        mergeRowUpdate(data)
+        return data
+      } catch (err) {
+        const detail = err?.response?.data?.detail
+        setError(typeof detail === 'string' ? detail : 'No se pudo actualizar la tasa.')
+        return null
+      } finally {
+        if (!silent) setSaving(false)
+      }
+    },
+    [isAdmin, mergeRowUpdate],
+  )
+
+  const moveRowOrder = useCallback(
+    async (row, direction) => {
+      if (!isAdmin || reorderingCode) return
+      const list = filteredItems
+      const idx = list.findIndex((r) => r.currency_code === row.currency_code)
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1
+      if (idx < 0 || targetIdx < 0 || targetIdx >= list.length) return
+
+      const other = list[targetIdx]
+      setReorderingCode(row.currency_code)
+      try {
+        await Promise.all([
+          patchRow(row.currency_code, { display_order: other.display_order }, { silent: true }),
+          patchRow(other.currency_code, { display_order: row.display_order }, { silent: true }),
+        ])
+      } finally {
+        setReorderingCode(null)
+      }
+    },
+    [filteredItems, isAdmin, patchRow, reorderingCode],
+  )
 
   const handleSync = async () => {
     if (!isAdmin || syncing) return
@@ -263,24 +346,25 @@ export default function ExchangeRatesWidget() {
 
   const handleSaveEdit = async (payload) => {
     if (!editingRow || saving) return
-    setSaving(true)
-    setError('')
-    try {
-      const { data } = await api.put(
-        `/api/v1/exchange-rates/${encodeURIComponent(editingRow.currency_code)}`,
-        payload,
-      )
-      setItems((prev) =>
-        prev.map((row) => (row.currency_code === data.currency_code ? data : row)),
-      )
-      setEditingRow(null)
-    } catch (err) {
-      const detail = err?.response?.data?.detail
-      setError(typeof detail === 'string' ? detail : 'No se pudo guardar la tasa.')
-    } finally {
-      setSaving(false)
-    }
+    const updated = await patchRow(editingRow.currency_code, payload)
+    if (updated) setEditingRow(null)
   }
+
+  const handleActiveSourceChange = async (row, useManual) => {
+    if (!isAdmin) return
+    if (useManual) {
+      if (!row.manual_rate || Number(row.manual_rate) <= 0) {
+        setEditingRow(row)
+        return
+      }
+      await patchRow(row.currency_code, { use_manual_override: true }, { silent: true })
+      return
+    }
+    await patchRow(row.currency_code, { use_manual_override: false }, { silent: true })
+  }
+
+  const adminColSpan = 5
+  const userColSpan = 4
 
   return (
     <div className="notranslate rounded-2xl border border-gray-100 bg-white shadow-sm" translate="no">
@@ -316,7 +400,10 @@ export default function ExchangeRatesWidget() {
 
       <div className="space-y-3 px-5 py-4">
         <div className="relative max-w-xs">
-          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <Search
+            size={15}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+          />
           <input
             type="text"
             value={search}
@@ -333,9 +420,7 @@ export default function ExchangeRatesWidget() {
           </div>
         ) : null}
 
-        {syncMessage ? (
-          <p className="m-0 text-sm text-emerald-700">{syncMessage}</p>
-        ) : null}
+        {syncMessage ? <p className="m-0 text-sm text-emerald-700">{syncMessage}</p> : null}
 
         <div className="overflow-x-auto notranslate" translate="no">
           <table className="min-w-full text-sm">
@@ -345,74 +430,182 @@ export default function ExchangeRatesWidget() {
                   Moneda
                 </th>
                 <th className="px-2 py-2 font-semibold">Tasa Mercado</th>
-                <th className="px-2 py-2 font-semibold">Tasa activa</th>
-                {isAdmin ? <th className="px-2 py-2 font-semibold text-right">Acción</th> : null}
+                <th className="px-2 py-2 font-semibold">Tasa Personalizada</th>
+                <th className="px-2 py-2 font-semibold">Tasa Activa</th>
+                {isAdmin ? (
+                  <th className="px-2 py-2 text-right font-semibold">Acción</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={isAdmin ? 4 : 3} className="px-2 py-6 text-center text-gray-400">
+                  <td
+                    colSpan={isAdmin ? adminColSpan : userColSpan}
+                    className="px-2 py-6 text-center text-gray-400"
+                  >
                     Cargando tasas…
                   </td>
                 </tr>
-              ) : visibleItems.length === 0 ? (
+              ) : paginatedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={isAdmin ? 4 : 3} className="px-2 py-6 text-center text-gray-400">
+                  <td
+                    colSpan={isAdmin ? adminColSpan : userColSpan}
+                    className="px-2 py-6 text-center text-gray-400"
+                  >
                     No hay monedas que coincidan con la búsqueda.
                   </td>
                 </tr>
               ) : (
-                visibleItems.map((row) => (
-                  <tr key={row.currency_code} className="border-b border-gray-50 last:border-0">
-                    <td
-                      className="notranslate px-2 py-3 font-semibold text-gray-900"
-                      translate="no"
-                    >
-                      {row.currency_code}
-                    </td>
-                    <td className="px-2 py-3 text-gray-700">
-                      <div>{formatRate(row.binance_rate)}</div>
-                      <div className="text-[11px] text-gray-400">{formatUpdatedAt(row.updated_at)}</div>
-                    </td>
-                    <td className="px-2 py-3">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-sm font-bold tabular-nums ${
-                          row.use_manual_override
-                            ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
-                            : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-                        }`}
-                      >
-                        {formatRate(row.active_rate)}
-                      </span>
-                      {row.use_manual_override ? (
-                        <div className="mt-1 text-[11px] text-amber-600">Manual</div>
-                      ) : null}
-                    </td>
-                    {isAdmin ? (
-                      <td className="px-2 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setEditingRow(row)}
-                          className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                        >
-                          <Pencil size={12} />
-                          Editar
-                        </button>
+                paginatedItems.map((row) => {
+                  const globalIdx = filteredItems.findIndex(
+                    (r) => r.currency_code === row.currency_code,
+                  )
+                  const alert = hasMarginAlert(row)
+                  return (
+                    <tr key={row.currency_code} className="border-b border-gray-50 last:border-0">
+                      <td className="notranslate px-2 py-3" translate="no">
+                        <div className="flex items-center gap-1.5">
+                          {isAdmin ? (
+                            <div className="flex flex-col gap-0.5">
+                              <button
+                                type="button"
+                                disabled={
+                                  reorderingCode != null || globalIdx <= 0
+                                }
+                                onClick={() => void moveRowOrder(row, 'up')}
+                                className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30"
+                                aria-label={`Subir ${row.currency_code}`}
+                              >
+                                <ChevronUp size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={
+                                  reorderingCode != null ||
+                                  globalIdx < 0 ||
+                                  globalIdx >= filteredItems.length - 1
+                                }
+                                onClick={() => void moveRowOrder(row, 'down')}
+                                className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30"
+                                aria-label={`Bajar ${row.currency_code}`}
+                              >
+                                <ChevronDown size={14} />
+                              </button>
+                            </div>
+                          ) : null}
+                          <span className="font-semibold text-gray-900">{row.currency_code}</span>
+                        </div>
                       </td>
-                    ) : null}
-                  </tr>
-                ))
+                      <td className="px-2 py-3 text-gray-700">
+                        <div>{formatRate(row.binance_rate)}</div>
+                        <div className="text-[11px] text-gray-400">
+                          {formatUpdatedAt(row.updated_at)}
+                        </div>
+                      </td>
+                      <td className="px-2 py-3 tabular-nums text-gray-800">
+                        <span className="inline-flex items-center">
+                          {formatPersonalRate(row.manual_rate)}
+                          {alert ? <MarginAlertIcon /> : null}
+                        </span>
+                      </td>
+                      <td className="px-2 py-3">
+                        <div className="flex flex-col gap-1.5">
+                          {isAdmin ? (
+                            <div className="inline-flex w-fit overflow-hidden rounded-lg border border-gray-200 text-[11px] font-semibold">
+                              <button
+                                type="button"
+                                disabled={saving || reorderingCode != null}
+                                onClick={() => void handleActiveSourceChange(row, false)}
+                                className={`px-2.5 py-1 transition ${
+                                  !row.use_manual_override
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                                }`}
+                              >
+                                Mercado
+                              </button>
+                              <button
+                                type="button"
+                                disabled={saving || reorderingCode != null}
+                                onClick={() => void handleActiveSourceChange(row, true)}
+                                className={`px-2.5 py-1 transition ${
+                                  row.use_manual_override
+                                    ? 'bg-amber-500 text-white'
+                                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                                }`}
+                              >
+                                Personalizada
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-500">
+                              {row.use_manual_override ? 'Personalizada' : 'Mercado'}
+                            </span>
+                          )}
+                          <span
+                            className={`inline-flex w-fit items-center rounded-full px-2.5 py-1 text-sm font-bold tabular-nums ${
+                              row.use_manual_override
+                                ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+                                : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                            }`}
+                          >
+                            {formatRate(row.active_rate)}
+                            {alert ? <MarginAlertIcon /> : null}
+                          </span>
+                        </div>
+                      </td>
+                      {isAdmin ? (
+                        <td className="px-2 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setEditingRow(row)}
+                            disabled={saving || reorderingCode != null}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                            aria-label={`Editar tasa personalizada ${row.currency_code}`}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        </td>
+                      ) : null}
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
         </div>
 
-        {isShowingTopTenOnly ? (
-          <p className="m-0 text-center text-[11px] text-gray-500">
-            Mostrando las 10 primeras de {filteredItems.length} monedas. Usa el buscador para ver
-            todas.
-          </p>
+        {!loading && filteredItems.length > 0 ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
+            <p className="m-0 text-xs text-gray-500">
+              {filteredItems.length} moneda{filteredItems.length !== 1 ? 's' : ''}
+              {search.trim() ? ' encontrada(s)' : ''} · Página {page} de {totalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1 || loading}
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                <ChevronLeft size={14} />
+                Anterior
+              </button>
+              <span className="min-w-[4.5rem] text-center text-xs font-medium text-gray-500">
+                {page} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages || loading}
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+              >
+                Siguiente
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
         ) : null}
       </div>
 

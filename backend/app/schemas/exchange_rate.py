@@ -12,6 +12,7 @@ class ExchangeRateRead(BaseModel):
     manual_rate: Optional[float] = None
     use_manual_override: bool = False
     is_active: bool = True
+    display_order: int = 0
     active_rate: Optional[float] = None
     updated_at: datetime.datetime
 
@@ -25,6 +26,7 @@ class ExchangeRateCreateRequest(BaseModel):
 class ExchangeRateUpdateRequest(BaseModel):
     manual_rate: Optional[float] = Field(default=None, gt=0)
     use_manual_override: Optional[bool] = None
+    display_order: Optional[int] = Field(default=None, ge=0)
 
 
 class ExchangeRateSyncResult(BaseModel):
