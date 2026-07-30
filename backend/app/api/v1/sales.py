@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Optional
 from urllib.parse import quote as url_quote, unquote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, nullslast
 from sqlalchemy.orm import Session, joinedload
@@ -1313,10 +1313,10 @@ def _bind_screen_stock_rows_to_pending_sale(
     db: Session,
     sale: Sale,
     rows: list[ScreenStock],
-) -> None:
+) -> list[str]:
     """Liga filas ``screen_stock`` a una preventa: ``reserved``, cliente y ``sale_id``."""
     if not rows:
-        return
+        return []
     _verify_screen_stock_rows_eligible_for_pending_reserve(db, rows)
     sid = int(sale.id)
     cid = int(sale.client_id)
@@ -1325,6 +1325,9 @@ def _bind_screen_stock_rows_to_pending_sale(
         r.client_id = cid
         r.sale_id = sid
         db.add(r)
+    from app.services.inventory_alert_service import collect_low_inventory_telegram_messages
+
+    return collect_low_inventory_telegram_messages(db, rows)
 
 
 def _explicit_screen_stock_id_from_sale(sale: Sale) -> Optional[int]:
@@ -1486,13 +1489,13 @@ def _pick_screen_stock_rows_for_sale(db: Session, sale: Sale) -> list[ScreenStoc
         raise
 
 
-def _jit_assign_screen_stock_for_activation(db: Session, sale: Sale) -> None:
+def _jit_assign_screen_stock_for_activation(db: Session, sale: Sale) -> list[str]:
     """
     Backorders sin reserva previa: al activar, asigna la siguiente unidad FIFO disponible,
     la reserva contra la venta y prepara credenciales en ``invoice_lines``.
     """
     if _fifo_screen_stock_rows_bound_to_sale(db, sale):
-        return
+        return []
 
     picked = _pick_screen_stock_rows_for_sale(db, sale)
     inv_json = sale.invoice_lines
@@ -1501,12 +1504,13 @@ def _jit_assign_screen_stock_for_activation(db: Session, sale: Sale) -> None:
     )
     if inv_merged is not None:
         sale.invoice_lines = inv_merged
-    _bind_screen_stock_rows_to_pending_sale(db, sale, picked)
+    tg_messages = _bind_screen_stock_rows_to_pending_sale(db, sale, picked)
     sale.screen_stock_id = int(picked[0].id)
     if not (sale.inventory_package or "").strip() and picked[0].package:
         sale.inventory_package = (picked[0].package or "").strip()
     if not (sale.inventory_provider or "").strip() and picked[0].provider:
         sale.inventory_provider = (picked[0].provider or "").strip()
+    return tg_messages
 
 
 def _confirm_screen_stock_reserved_rows_on_activation(db: Session, sale: Sale) -> None:
@@ -1723,11 +1727,11 @@ def _mixed_screen_pick_context_from_sale(db: Session, sale: Sale) -> tuple[str, 
     return scr_prov, pkg_norm, fifo_catalog_pid, explicit_sid
 
 
-def _reserve_inventory_for_reactivated_sale(db: Session, sale: Sale) -> None:
+def _reserve_inventory_for_reactivated_sale(db: Session, sale: Sale) -> list[str]:
     """Re-reserva créditos/pantallas para una venta ``expired`` que vuelve a ``pending``."""
     eff = _effective_inventory_channel(sale)
     if eff == "legacy":
-        return
+        return []
 
     product = db.get(Product, sale.product_id) if sale.product_id else None
 
@@ -1751,7 +1755,7 @@ def _reserve_inventory_for_reactivated_sale(db: Session, sale: Sale) -> None:
                 detail=f"Créditos insuficientes para reactivar: disponibles {remaining_fc:.4f}.",
             )
         _apply_pending_sale_catalog_credit_reservation(db, sale)
-        return
+        return []
 
     if eff == "screen_stock":
         pkg_norm = (sale.inventory_package or "").strip()
@@ -1843,16 +1847,11 @@ def _reserve_inventory_for_reactivated_sale(db: Session, sale: Sale) -> None:
             _merge_reserved_screen_credentials_into_invoice_lines(inv_json, picked) if inv_json else inv_json
         )
 
-        _verify_screen_stock_rows_eligible_for_pending_reserve(db, picked)
-        for r in picked:
-            r.status = SCREEN_STOCK_STATUS_RESERVED
-            r.sale_id = sale.id
-            r.client_id = sale.client_id
-            db.add(r)
+        tg_messages = _bind_screen_stock_rows_to_pending_sale(db, sale, picked)
         sale.screen_stock_id = picked[0].id
         if inv_for_sale is not None:
             sale.invoice_lines = inv_for_sale
-        return
+        return tg_messages
 
     if eff == "mixed":
         cred_prov = (sale.inventory_provider or "").strip()
@@ -1943,18 +1942,13 @@ def _reserve_inventory_for_reactivated_sale(db: Session, sale: Sale) -> None:
             _merge_reserved_screen_credentials_into_invoice_lines(inv_merge, picked_mx) if inv_merge else inv_merge
         )
 
-        _verify_screen_stock_rows_eligible_for_pending_reserve(db, picked_mx)
-        for r_mx in picked_mx:
-            r_mx.status = SCREEN_STOCK_STATUS_RESERVED
-            r_mx.sale_id = sale.id
-            r_mx.client_id = sale.client_id
-            db.add(r_mx)
+        tg_messages = _bind_screen_stock_rows_to_pending_sale(db, sale, picked_mx)
         sale.screen_stock_id = picked_mx[0].id
         if inv_for_sale is not None:
             sale.invoice_lines = inv_for_sale
 
         _apply_pending_sale_catalog_credit_reservation(db, sale)
-        return
+        return tg_messages
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -2732,8 +2726,16 @@ def _resolve_sale_create_client_binding(db: Session, payload: SaleCreate) -> Sal
     return payload.model_copy(update={"client_id": c.id, "user_id": None})
 
 
-def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Optional[str]) -> SaleResponse:
+def _create_pending_erp_sale(
+    db: Session,
+    payload: SaleCreate,
+    receipt_url: Optional[str],
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> SaleResponse:
     """Registra venta desde el panel ERP en estado ``pending``. Reserva bodega (``reserved``) si aplica."""
+    from app.services.inventory_alert_service import schedule_inventory_telegram_messages
+
+    inventory_tg: list[str] = []
     payload = SaleCreate.model_validate(
         _prepare_sale_create_payload(db, payload.model_dump()),
     )
@@ -2970,24 +2972,11 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
         db.add(sale_mx)
         db.flush()  # obtener sale_mx.id antes de vincular bodega
 
-        _verify_screen_stock_rows_eligible_for_pending_reserve(db, picked_mx)
-
-        # ── Reservar pantallas en bodega (pending) ──────────────────────────────
-        # Estado: free → reserved; sale_id y client_id asignados.
-        # NO se vuelve a ejecutar FIFO en la activación; solo se confirman estas filas.
         print(
             f"[MIXED PENDING] Vinculando {len(picked_mx)} pantalla(s) a sale_id={sale_mx.id} "
             f"(estado {SCREEN_STOCK_STATUS_RESERVED!r})"
         )
-        for r_mx in picked_mx:
-            r_mx.status = SCREEN_STOCK_STATUS_RESERVED
-            r_mx.sale_id = sale_mx.id
-            r_mx.client_id = sale_mx.client_id
-            db.add(r_mx)
-            print(
-                f"[MIXED PENDING]   screen_stock id={r_mx.id} "
-                f"iptv_user={r_mx.iptv_username!r} → status={r_mx.status!r}"
-            )
+        inventory_tg.extend(_bind_screen_stock_rows_to_pending_sale(db, sale_mx, picked_mx))
         sale_mx.screen_stock_id = picked_mx[0].id
 
         _apply_pending_sale_catalog_credit_reservation(db, sale_mx)
@@ -2999,6 +2988,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
 
         sync_client_payment_prefs_from_sale(db, sale_mx)
         db.commit()
+        schedule_inventory_telegram_messages(background_tasks, inventory_tg)
         notify_catalog_vip_sale_pending_payment(db, sale_mx)
         print(f"[MIXED PENDING] db.commit() completado para sale_id={sale_mx.id}")
         db.refresh(sale_mx)
@@ -3129,21 +3119,11 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
         db.add(sale)
         db.flush()  # obtener sale.id antes de vincular bodega
 
-        _verify_screen_stock_rows_eligible_for_pending_reserve(db, picked)
-
         print(
             f"[SCREEN_STOCK PENDING] sale_id={sale.id} "
             f"Vinculando {len(picked)} pantalla(s) → status={SCREEN_STOCK_STATUS_RESERVED!r}"
         )
-        for r in picked:
-            r.status = SCREEN_STOCK_STATUS_RESERVED
-            r.sale_id = sale.id
-            r.client_id = sale.client_id
-            db.add(r)
-            print(
-                f"[SCREEN_STOCK PENDING]   id={r.id} "
-                f"iptv_user={r.iptv_username!r} status={r.status!r}"
-            )
+        inventory_tg.extend(_bind_screen_stock_rows_to_pending_sale(db, sale, picked))
         sale.screen_stock_id = picked[0].id
 
         _sync_sale_tags(db, sale, list(payload.tag_ids))
@@ -3153,6 +3133,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
 
         sync_client_payment_prefs_from_sale(db, sale)
         db.commit()
+        schedule_inventory_telegram_messages(background_tasks, inventory_tg)
         notify_catalog_vip_sale_pending_payment(db, sale)
         print(f"[SCREEN_STOCK PENDING] db.commit() completado para sale_id={sale.id}")
         db.refresh(sale)
@@ -3239,6 +3220,7 @@ def _create_pending_erp_sale(db: Session, payload: SaleCreate, receipt_url: Opti
 async def create_sale(
     request: Request,
     db: DbDep,
+    background_tasks: BackgroundTasks,
     _: SalesInvoicesCreateDep,
 ) -> SaleResponse:
     """
@@ -3273,7 +3255,7 @@ async def create_sale(
         )
 
     try:
-        return _create_pending_erp_sale(db, payload, receipt_url)
+        return _create_pending_erp_sale(db, payload, receipt_url, background_tasks)
     except HTTPException:
         db.rollback()
         raise
@@ -3397,6 +3379,7 @@ def get_sale(sale_id: int, db: DbDep, _: SalesInvoicesViewDep) -> SaleResponse:
 def reactivate_expired_sale(
     sale_id: int,
     db: DbDep,
+    background_tasks: BackgroundTasks,
     _: SalesInvoicesEditDep,
 ) -> SaleResponse:
     expire_pending_sales_if_needed(db)
@@ -3428,11 +3411,14 @@ def reactivate_expired_sale(
     product = db.get(Product, sale.product_id) if sale.product_id else None
 
     try:
-        _reserve_inventory_for_reactivated_sale(db, sale)
+        inventory_tg = _reserve_inventory_for_reactivated_sale(db, sale)
         sale.status = SaleStatus.pending
         sale.expires_at = _pending_sale_expires_at()
         sync_sale_accounting_ledgers(db, sale, strict=True)
         db.commit()
+        from app.services.inventory_alert_service import schedule_inventory_telegram_messages
+
+        schedule_inventory_telegram_messages(background_tasks, inventory_tg)
     except HTTPException:
         db.rollback()
         raise
@@ -3462,6 +3448,7 @@ def reactivate_expired_sale(
 def restore_sale_record(
     sale_id: int,
     db: DbDep,
+    background_tasks: BackgroundTasks,
     _: SalesInvoicesEditDep,
 ) -> SaleResponse:
     """Devuelve una venta terminal (rechazada/cancelada) al ciclo pendiente con nueva reserva."""
@@ -3494,7 +3481,7 @@ def restore_sale_record(
     product = db.get(Product, sale.product_id) if sale.product_id else None
 
     try:
-        _reserve_inventory_for_reactivated_sale(db, sale)
+        inventory_tg = _reserve_inventory_for_reactivated_sale(db, sale)
         sale.status = SaleStatus.pending
         sale.expires_at = _pending_sale_expires_at()
         sale.rejection_reason = None
@@ -3502,6 +3489,9 @@ def restore_sale_record(
         sync_sale_accounting_ledgers(db, sale, strict=True)
         notify_catalog_vip_sale_pending_payment(db, sale)
         db.commit()
+        from app.services.inventory_alert_service import schedule_inventory_telegram_messages
+
+        schedule_inventory_telegram_messages(background_tasks, inventory_tg)
     except HTTPException:
         db.rollback()
         raise
@@ -3708,8 +3698,13 @@ def patch_sale_instant_activation_by_ref(
     response_model=SaleResponse,
     summary="Activar venta o aprobar cobro CxC (según inventario ya entregado)",
 )
-def patch_activate_sale(sale_id: int, db: DbDep, _: SalesInvoicesEditDep) -> SaleResponse:
-    return _activate_sale_record(db, sale_id)
+def patch_activate_sale(
+    sale_id: int,
+    db: DbDep,
+    background_tasks: BackgroundTasks,
+    _: SalesInvoicesEditDep,
+) -> SaleResponse:
+    return _activate_sale_record(db, sale_id, background_tasks)
 
 
 @router.post(
@@ -3717,8 +3712,13 @@ def patch_activate_sale(sale_id: int, db: DbDep, _: SalesInvoicesEditDep) -> Sal
     response_model=SaleResponse,
     summary="Alias de activación (compatibilidad)",
 )
-def approve_sale(sale_id: int, db: DbDep, _: SalesInvoicesEditDep) -> SaleResponse:
-    return _activate_sale_record(db, sale_id)
+def approve_sale(
+    sale_id: int,
+    db: DbDep,
+    background_tasks: BackgroundTasks,
+    _: SalesInvoicesEditDep,
+) -> SaleResponse:
+    return _activate_sale_record(db, sale_id, background_tasks)
 
 
 @router.post(
@@ -3746,6 +3746,7 @@ async def put_sale_status(
     request: Request,
     sale_id: int,
     db: DbDep,
+    background_tasks: BackgroundTasks,
     _: SalesInvoicesEditDep,
 ) -> SaleResponse:
     ct = (request.headers.get("content-type") or "").lower()
@@ -3755,7 +3756,7 @@ async def put_sale_status(
         status_raw = form.get("status")
         status_l = str(status_raw or "").strip().lower()
         if status_l == "approved":
-            return _activate_sale_record(db, sale_id)
+            return _activate_sale_record(db, sale_id, background_tasks)
         if status_l == "annulled":
             return _annul_approved_sale_record(db, sale_id)
         if status_l != "rejected":
@@ -3782,7 +3783,7 @@ async def put_sale_status(
             ) from e
         body = SaleStatusPut.model_validate(obj)
         if body.status == "approved":
-            return _activate_sale_record(db, sale_id)
+            return _activate_sale_record(db, sale_id, background_tasks)
         if body.status == "annulled":
             return _annul_approved_sale_record(db, sale_id)
         reason = (body.rejection_reason or "").strip()
@@ -3799,11 +3800,12 @@ async def patch_pending_sale(
     request: Request,
     sale_id: int,
     db: DbDep,
+    background_tasks: BackgroundTasks,
     _: SalesInvoicesEditDep,
 ) -> SaleResponse:
     """Actualiza venta pendiente. JSON o multipart con campo ``payload`` (JSON) y archivo opcional ``receipt``."""
     try:
-        return await _patch_pending_sale_handler(request, sale_id, db)
+        return await _patch_pending_sale_handler(request, sale_id, db, background_tasks)
     except HTTPException:
         db.rollback()
         raise
@@ -3817,7 +3819,12 @@ async def patch_pending_sale(
         ) from e
 
 
-async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep) -> SaleResponse:
+async def _patch_pending_sale_handler(
+    request: Request,
+    sale_id: int,
+    db: DbDep,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> SaleResponse:
     """Lógica de PATCH de venta (separada para capturar excepciones no controladas)."""
     expire_pending_sales_if_needed(db)
     ct = (request.headers.get("content-type") or "").lower()
@@ -4333,8 +4340,9 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
         "inventory_screen_units",
         "product_id",
     }
+    inventory_tg: list[str] = []
     if explicit_keys & inv_patch_keys:
-        _apply_pending_sale_inventory_update(db, sale, raw, explicit_keys)
+        inventory_tg.extend(_apply_pending_sale_inventory_update(db, sale, raw, explicit_keys))
 
     inv_cost = _inventory_cost_usd_for_pending_sale(db, sale)
     _validate_sale_amount_vs_inventory_cost(
@@ -4375,6 +4383,9 @@ async def _patch_pending_sale_handler(request: Request, sale_id: int, db: DbDep)
 
     sync_client_payment_prefs_from_sale(db, sale)
     db.commit()
+    from app.services.inventory_alert_service import schedule_inventory_telegram_messages
+
+    schedule_inventory_telegram_messages(background_tasks, inventory_tg)
     db.refresh(sale)
 
     client = db.get(Client, sale.client_id)
@@ -4493,7 +4504,9 @@ def _pick_free_screen_stock_row(db: Session, provider: str, package: str) -> Scr
     return _fifo_pick_free_screen_stock_rows(db, provider, package, 1)[0]
 
 
-def _apply_pending_sale_inventory_update(db: Session, sale: Sale, raw: dict[str, Any], explicit: set[str]) -> None:
+def _apply_pending_sale_inventory_update(
+    db: Session, sale: Sale, raw: dict[str, Any], explicit: set[str]
+) -> list[str]:
     """Actualiza canal ERP / bodega / créditos cuando el PATCH incluye algún campo de inventario."""
     eff = _effective_inventory_channel(sale)
     if eff == "legacy":
@@ -4511,7 +4524,7 @@ def _apply_pending_sale_inventory_update(db: Session, sale: Sale, raw: dict[str,
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Esta venta no permite cambiar inventario desde el panel.",
             )
-        return
+        return []
 
     if eff == "mixed":
         inv_blocked = {
@@ -4534,7 +4547,7 @@ def _apply_pending_sale_inventory_update(db: Session, sale: Sale, raw: dict[str,
                     "inventario ni proveedor/paquete desde este formulario."
                 ),
             )
-        return
+        return []
 
     want_ch = raw["inventory_channel"] if "inventory_channel" in explicit else eff
     if want_ch not in ("full_credits", "screen_stock"):
@@ -4595,7 +4608,7 @@ def _apply_pending_sale_inventory_update(db: Session, sale: Sale, raw: dict[str,
             if abs(delta_cq) > 1e-9:
                 _product_credit_reserved_adjust(db, int(prod_cap.id), delta_cq)
         sale.credits_quantity = cq
-        return
+        return []
 
     if not pkg:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Paquete de bodega obligatorio.")
@@ -4649,7 +4662,8 @@ def _apply_pending_sale_inventory_update(db: Session, sale: Sale, raw: dict[str,
                 detail="La pantalla está reservada por otra venta.",
             )
         _release_all_screen_stock_for_pending_sale(db, sale)
-        if row.status == "free":
+        was_free = row.status == "free"
+        if was_free:
             row.status = "reserved"
         row.sale_id = sale.id
         row.client_id = sale.client_id
@@ -4659,7 +4673,11 @@ def _apply_pending_sale_inventory_update(db: Session, sale: Sale, raw: dict[str,
         sale.inventory_provider = prov
         sale.inventory_package = pkg
         sale.credits_quantity = None
-        return
+        if was_free:
+            from app.services.inventory_alert_service import collect_low_inventory_telegram_messages
+
+            return collect_low_inventory_telegram_messages(db, [row])
+        return []
 
     cur_id = sale.screen_stock_id
     cur_row = db.get(ScreenStock, cur_id) if cur_id else None
@@ -4676,7 +4694,7 @@ def _apply_pending_sale_inventory_update(db: Session, sale: Sale, raw: dict[str,
         sale.inventory_provider = prov
         sale.inventory_package = pkg
         sale.credits_quantity = None
-        return
+        return []
 
     _release_all_screen_stock_for_pending_sale(db, sale)
     batch_for_fifo: Optional[str] = None
@@ -4695,12 +4713,13 @@ def _apply_pending_sale_inventory_update(db: Session, sale: Sale, raw: dict[str,
         product_id=fifo_patch_pid,
         batch_id=batch_for_fifo,
     )
-    _bind_screen_stock_rows_to_pending_sale(db, sale, picked)
+    tg_messages = _bind_screen_stock_rows_to_pending_sale(db, sale, picked)
     sale.screen_stock_id = picked[0].id
     sale.inventory_channel = "screen_stock"
     sale.inventory_provider = prov
     sale.inventory_package = pkg
     sale.credits_quantity = None
+    return tg_messages
 
 
 def _reject_pending_sale_record(
@@ -5016,7 +5035,11 @@ def _maybe_set_partially_paid(sale: Sale) -> None:
         pass
 
 
-def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
+def _activate_sale_record(
+    db: Session,
+    sale_id: int,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> SaleResponse:
     expire_pending_sales_if_needed(db)
     sale = (
         db.query(Sale)
@@ -5070,6 +5093,7 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
         product = db.get(Product, sale.product_id)
     activated_screen: Optional[IPTVScreen] = None
     status_before_activation = sale.status
+    inventory_tg: list[str] = []
 
     try:
         eff = _effective_inventory_channel(sale)
@@ -5169,7 +5193,7 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
                 _product_credit_reserved_adjust(db, int(product.id), -need_mx)
                 _product_credit_assigned_adjust(db, int(product.id), need_mx)
 
-            _jit_assign_screen_stock_for_activation(db, sale)
+            inventory_tg.extend(_jit_assign_screen_stock_for_activation(db, sale))
             _confirm_screen_stock_reserved_rows_on_activation(db, sale)
 
             sale.status = SaleStatus.approved
@@ -5177,7 +5201,7 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
             _sync_client_last_iptv_from_full_credit_sale(db, client, sale)
 
         elif eff == "screen_stock":
-            _jit_assign_screen_stock_for_activation(db, sale)
+            inventory_tg.extend(_jit_assign_screen_stock_for_activation(db, sale))
             bound = _fifo_screen_stock_rows_bound_to_sale(db, sale)
             if not bound:
                 raise HTTPException(
@@ -5249,6 +5273,9 @@ def _activate_sale_record(db: Session, sale_id: int) -> SaleResponse:
             strict_accounting=False,
         )
         db.commit()
+        from app.services.inventory_alert_service import schedule_inventory_telegram_messages
+
+        schedule_inventory_telegram_messages(background_tasks, inventory_tg)
     except HTTPException as exc:
         db.rollback()
         traceback.print_exc()

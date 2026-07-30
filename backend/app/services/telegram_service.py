@@ -51,6 +51,48 @@ def format_money_amount(amount: float, currency: str = "USD") -> str:
     return f"{val:,.2f} {cur}"
 
 
+async def send_telegram_markdown_notification(message: str) -> bool:
+    """POST asíncrono a Telegram con parse_mode Markdown."""
+    token = settings.TELEGRAM_BOT_TOKEN
+    chat_id = settings.TELEGRAM_CHAT_ID
+    text = str(message or "").strip()
+    if not token or not chat_id:
+        logger.debug("Telegram omitido: TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID no configurados.")
+        return False
+    if not text:
+        return False
+
+    url = f"{TELEGRAM_API_BASE}/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.post(url, json=payload)
+        if response.status_code >= 400:
+            logger.warning(
+                "Telegram Markdown respondió status=%s body=%s",
+                response.status_code,
+                (response.text or "")[:500],
+            )
+            return False
+        return True
+    except Exception:
+        logger.exception("No se pudo enviar notificación Telegram (Markdown).")
+        return False
+
+
+def schedule_telegram_markdown_notification(
+    background_tasks: Optional["BackgroundTasks"],
+    message: str,
+) -> None:
+    if background_tasks is None or not settings.telegram_enabled:
+        return
+    background_tasks.add_task(send_telegram_markdown_notification, message)
+
+
 async def send_telegram_notification(message: str) -> bool:
     """POST asíncrono a Telegram. Devuelve False si falla o no hay credenciales."""
     token = settings.TELEGRAM_BOT_TOKEN

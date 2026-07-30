@@ -37,6 +37,7 @@ class PendingPaymentNotificationKind(str, Enum):
     sale = "sale"
     wallet_recharge = "wallet_recharge"
     client_payment = "client_payment"
+    inventory_low = "inventory_low"
 
 
 class PendingPaymentNotification(BaseModel):

@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session, joinedload
 from app.currency_utils import normalize_currency_code
 from app.models.client_payment import ClientPayment, ClientPaymentStatus
 from app.models.sale import Sale, SaleStatus
+from app.models.system_notification import SystemNotification
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.schemas.notification import (
     PendingPaymentNotification,
     PendingPaymentNotificationKind,
     PendingPaymentsNotificationResponse,
 )
+from app.services.inventory_alert_service import SYSTEM_NOTIFICATION_KIND_INVENTORY_LOW
 from app.services.client_payment_service import (
     _sale_invoice_total,
     is_wallet_recharge_client_payment,
@@ -142,6 +144,35 @@ def list_pending_payment_notifications(db: Session) -> PendingPaymentsNotificati
                 currency=cur,
                 created_at=getattr(pay, "created_at", None) or fallback_ts,
                 path=f"/ventas?payment_id={pid}",
+            )
+        )
+
+    inv_rows = (
+        db.query(SystemNotification)
+        .filter(
+            SystemNotification.kind == SYSTEM_NOTIFICATION_KIND_INVENTORY_LOW,
+            SystemNotification.is_read.is_(False),
+        )
+        .order_by(SystemNotification.created_at.desc(), SystemNotification.id.desc())
+        .limit(50)
+        .all()
+    )
+    for alert in inv_rows:
+        aid = int(alert.id)
+        prov = str(alert.provider or "Proveedor")
+        pkg = str(alert.package_name or "Paquete")
+        remaining = int(alert.remaining_count if alert.remaining_count is not None else 0)
+        items.append(
+            PendingPaymentNotification(
+                id=aid,
+                kind=PendingPaymentNotificationKind.inventory_low,
+                label=f"Inventario bajo: {pkg}",
+                client_id=None,
+                client_name=prov,
+                amount=float(remaining),
+                currency="pantallas",
+                created_at=getattr(alert, "created_at", None) or fallback_ts,
+                path="/inventario",
             )
         )
 

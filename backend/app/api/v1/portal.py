@@ -2692,6 +2692,7 @@ def portal_auto_purchase(
     portal_token: uuid_pkg.UUID,
     payload: PortalAutoPurchaseRequest,
     db: DbDep,
+    background_tasks: BackgroundTasks,
 ) -> PortalAutoPurchaseResponse:
     """Autocompra de pantalla con saldo BaaS: despacho inmediato o solicitud en revisión."""
     client = _portal_client_from_token(db, portal_token)
@@ -2704,6 +2705,7 @@ def portal_auto_purchase(
             end_customer_name=payload.end_customer_name,
             end_customer_phone=payload.end_customer_phone,
             precio_venta=payload.precio_venta,
+            background_tasks=background_tasks,
         )
     except HTTPException:
         db.rollback()

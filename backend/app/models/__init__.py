@@ -23,6 +23,7 @@ from app.models.product import CatalogPackageType, Product, ProductPackageCatalo
 from app.models.sale import Sale
 from app.models.sale_transaction_tag import SaleTransactionTag, TagGroup, sale_tag_association
 from app.models.screen_stock import ScreenStock
+from app.models.system_notification import SystemNotification
 from app.models.tag import Tag
 from app.models.transaction import Transaction
 from app.models.transaction_class import TransactionClass
@@ -62,6 +63,7 @@ __all__ = [
     "Sale",
     "SaleTransactionTag",
     "ScreenStock",
+    "SystemNotification",
     "Tag",
     "TagGroup",
     "Transaction",

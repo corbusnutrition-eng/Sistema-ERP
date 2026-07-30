@@ -5,20 +5,19 @@ import uuid
 from decimal import Decimal
 from urllib.parse import quote as url_quote
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, BackgroundTasks, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.currency_utils import normalize_currency_code
 from app.api.v1.sales import (
     SCREEN_STOCK_STATUS_FREE,
-    SCREEN_STOCK_STATUS_RESERVED,
+    _bind_screen_stock_rows_to_pending_sale,
     _confirm_screen_stock_reserved_rows_on_activation,
     _maybe_with_for_update,
     _merge_reserved_screen_credentials_into_invoice_lines,
     _screen_stock_delivery_credentials,
     _sync_client_after_sale,
-    _verify_screen_stock_rows_eligible_for_pending_reserve,
 )
 from app.models.client import Client
 from app.models.product import Product
@@ -206,6 +205,7 @@ def execute_portal_auto_purchase(
     end_customer_name: str | None = None,
     end_customer_phone: str | None = None,
     precio_venta: float | None = None,
+    background_tasks: BackgroundTasks | None = None,
 ) -> PortalAutoPurchaseResponse:
     qty = int(quantity)
     if qty < 1 or qty > 200:
@@ -329,6 +329,7 @@ def execute_portal_auto_purchase(
         ec_price = Decimal(str(round(price_f, 4)))
 
     try:
+        inventory_tg: list[str] = []
         client = lock_client_for_wallet_update(db, client)
 
         if float(get_client_wallet_balance(client, purchase_currency)) + 1e-9 < total_price:
@@ -411,12 +412,7 @@ def execute_portal_auto_purchase(
             ) from exc
 
         if len(picked) >= qty:
-            _verify_screen_stock_rows_eligible_for_pending_reserve(db, picked)
-            for row in picked:
-                row.status = SCREEN_STOCK_STATUS_RESERVED
-                row.sale_id = int(sale.id)
-                row.client_id = int(client.id)
-                db.add(row)
+            inventory_tg = _bind_screen_stock_rows_to_pending_sale(db, sale, picked)
             sale.screen_stock_id = int(picked[0].id)
             inv_merged = _merge_reserved_screen_credentials_into_invoice_lines(inv_base, picked) or inv_base
             sale.invoice_lines = inv_merged
@@ -467,6 +463,9 @@ def execute_portal_auto_purchase(
         creds_missing = flow == "fulfilled" and _any_portal_credentials_missing(credentials)
 
         db.commit()
+        from app.services.inventory_alert_service import schedule_inventory_telegram_messages
+
+        schedule_inventory_telegram_messages(background_tasks, inventory_tg)
     except HTTPException:
         db.rollback()
         raise
