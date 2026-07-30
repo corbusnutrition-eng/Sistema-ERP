@@ -30,6 +30,12 @@ from app.models.screen_stock import SCREEN_STATUSES, ScreenStock
 from app.models.sale import Sale, SaleStatus
 from app.models.vendor import Vendor, VendorBill, VendorBillLine
 from app.services.vendor_ap_journal import post_vendor_bill_journal, validate_bill_line_account
+from app.services.screen_stock_batch_lifecycle import (
+    batch_should_reset_expiration_on_restock,
+    find_replenishable_batch_for_package,
+    inherit_batch_master_dates,
+    reset_batch_lot_dates,
+)
 from app.timezone_utils import now_ecuador
 
 from app.schemas.inventory import (
@@ -1231,13 +1237,34 @@ def create_screen_stock(payload: ScreenStockBulkCreate, db: DbDep, _: InventoryC
                     ) from ve
             for pkg_i in range(n_pkg):
                 batch = str(uuid.uuid4())
-                db.add(
-                    InventoryScreenCreditDrawdown(
+                reusable_rows: list[ScreenStock] = []
+                opening_date = payload.expiration_date
+                if pid_opt is not None:
+                    reusable_batch_id, reusable_rows = find_replenishable_batch_for_package(
+                        db,
+                        product_id=int(pid_opt),
+                        package_label=pkg,
                         provider=prov,
-                        credits_units=1.0,
-                        batch_id=batch,
                     )
-                )
+                    if reusable_batch_id:
+                        batch = reusable_batch_id
+
+                if reusable_rows and batch_should_reset_expiration_on_restock(reusable_rows, pkg):
+                    reset_batch_lot_dates(
+                        reusable_rows,
+                        package_label=pkg,
+                        opening_date=opening_date,
+                    )
+
+                if not reusable_rows:
+                    db.add(
+                        InventoryScreenCreditDrawdown(
+                            provider=prov,
+                            credits_units=1.0,
+                            batch_id=batch,
+                        )
+                    )
+
                 cred_seq = list(line.credentials) if line.credentials else []
                 legacy_u = line.iptv_username
                 legacy_p = line.iptv_password
@@ -1250,11 +1277,20 @@ def create_screen_stock(payload: ScreenStockBulkCreate, db: DbDep, _: InventoryC
                 elif legacy_u or legacy_p:
                     u_set = legacy_u if legacy_u else None
                     p_set = legacy_p if legacy_p else None
+
+                master_created_at = now_ecuador()
+                master_expiration = opening_date
+                if reusable_rows:
+                    rep = reusable_rows[0]
+                    master_created_at, master_expiration = inherit_batch_master_dates(rep)
+                elif opening_date is not None:
+                    master_expiration = opening_date
+
                 for _ in range(screens_per):
                     item = ScreenStock(
                         provider=prov,
                         package=pkg,
-                        expiration_date=payload.expiration_date,
+                        expiration_date=master_expiration,
                         cost_per_package=line.cost_per_package,
                         status="free",
                         batch_id=batch,
@@ -1262,6 +1298,7 @@ def create_screen_stock(payload: ScreenStockBulkCreate, db: DbDep, _: InventoryC
                         iptv_username=u_set,
                         iptv_password=p_set,
                         product_id=pid_opt,
+                        created_at=master_created_at,
                     )
                     db.add(item)
                     all_items.append(item)

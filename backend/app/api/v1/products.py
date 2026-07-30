@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal, Optional
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import func, select
@@ -28,6 +28,13 @@ from app.models.iptv_account import IPTVAccount
 from app.models.product import CatalogPackageType, Product, ProductPackageCatalog, TargetAudience
 from app.models.sale import Sale, SaleStatus
 from app.models.screen_stock import ScreenStock
+
+from app.services.product_purge_service import purge_product_tree
+from app.services.screen_stock_batch_lifecycle import (
+    batch_should_reset_expiration_on_restock,
+    inherit_batch_master_dates,
+    reset_batch_lot_dates,
+)
 
 DbDep = Annotated[Session, Depends(get_db)]
 ProductsCreateDep = Annotated[dict, Depends(require_permission(PRODUCTS_CREATE))]
@@ -1043,8 +1050,15 @@ def _sync_batch_screen_row_count(
     rep = batch_rows[0]
     u = _norm_cred_text(cred.username)
     p = _norm_cred_text(cred.password)
-    exp = expiration_date if expiration_date is not None else rep.expiration_date
     if screens_per > current:
+        if batch_should_reset_expiration_on_restock(batch_rows, package_label):
+            reset_batch_lot_dates(
+                batch_rows,
+                package_label=package_label,
+                opening_date=expiration_date,
+            )
+            rep = batch_rows[0]
+        master_created_at, exp = inherit_batch_master_dates(rep)
         for _ in range(screens_per - current):
             db.add(
                 ScreenStock(
@@ -1059,6 +1073,7 @@ def _sync_batch_screen_row_count(
                     batch_size=screens_per,
                     sale_id=None,
                     product_id=int(product_id),
+                    created_at=master_created_at,
                 )
             )
     else:
@@ -1697,10 +1712,34 @@ async def replace_product(product_id: int, request: Request, db: DbDep, _: Produ
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_product(product_id: int, db: DbDep, _: ProductsDeleteDep) -> None:
+def delete_product(
+    product_id: int,
+    db: DbDep,
+    _: ProductsDeleteDep,
+    purge: bool = Query(
+        False,
+        description="Purga total del árbol del producto (stock, catálogo, ventas de prueba). Solo limpieza.",
+    ),
+) -> None:
     product: Optional[Product] = db.get(Product, product_id)
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado.")
+
+    if purge:
+        try:
+            purge_product_tree(db, product)
+            db.commit()
+        except HTTPException:
+            db.rollback()
+            raise
+        except IntegrityError as e:
+            db.rollback()
+            logger.warning("delete_product purge integrity: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede purgar el producto: hay registros enlazados.",
+            ) from e
+        return
 
     if _is_credito_normal_product(product):
         if _available_full_credits_for_catalog_product(db, product) > 0:

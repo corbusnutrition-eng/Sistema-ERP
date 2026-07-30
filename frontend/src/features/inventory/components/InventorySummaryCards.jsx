@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Pencil, Trash2 } from 'lucide-react'
+import { AlertTriangle, Loader2, Pencil, Trash2 } from 'lucide-react'
 import api from '../../../api/axios'
 import { useInventoryData } from '../../../context/InventoryDataContext'
 import { useModal } from '../../../context/ModalContext'
@@ -110,6 +110,49 @@ function formatDeleteDetail(err) {
   return err?.message || 'No se pudo eliminar.'
 }
 
+const PURGE_MODAL_COPY =
+  '⚠️ Atención: Esto eliminará el producto maestro, todos sus catálogos de paquetes y TODO el stock asociado. Utiliza esta función solo para limpiar datos de prueba. ¿Deseas purgar este producto?'
+
+function PurgeProductConfirmModal({ productName, onConfirm, onCancel, loading }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-xl w-[95%] sm:w-full max-w-md p-6 space-y-5 max-h-[90vh] overflow-y-auto border border-red-100">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-red-50 ring-1 ring-red-200 flex items-center justify-center shrink-0">
+            <AlertTriangle size={18} className="text-red-600" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-gray-900">Purga total de producto</h3>
+            <p className="text-sm text-gray-600 mt-2 leading-relaxed">{PURGE_MODAL_COPY}</p>
+            {productName ? (
+              <p className="text-sm font-medium text-red-700 mt-3">Producto: {productName}</p>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors disabled:opacity-60"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-60 rounded-xl transition-colors flex items-center gap-2"
+          >
+            {loading ? <Loader2 size={13} className="animate-spin" /> : null}
+            Sí, purgar producto
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function mediaAbsoluteUrl(path) {
   if (path == null || path === '') return null
   const s = String(path).trim()
@@ -208,6 +251,7 @@ export default function InventorySummaryCards({
   const [creditsByProductId, setCreditsByProductId] = useState({})
   const [loadingProducts, setLoadingProducts] = useState(true)
   const [deletingId, setDeletingId] = useState(null)
+  const [purgeTarget, setPurgeTarget] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -280,19 +324,16 @@ export default function InventorySummaryCards({
     )
   }
 
-  async function handleDeleteProduct(raw, e) {
-    e.preventDefault()
-    e.stopPropagation()
-    const alive = stockBlockingDelete(raw, creditsByProductId, screens)
-    if (alive > 0) return
-    const titulo = String(raw.name ?? '').trim() || `Producto #${raw.id}`
-    if (!window.confirm(`¿Estás seguro de eliminar «${titulo}»? Esta acción no se puede deshacer.`)) return
-    const pid = Number(raw.id)
+  async function handleConfirmPurge() {
+    if (!purgeTarget) return
+    const pid = Number(purgeTarget.id)
+    if (!Number.isFinite(pid)) return
     setDeletingId(pid)
     try {
-      await api.delete(`/api/v1/products/${pid}`)
+      await api.delete(`/api/v1/products/${pid}`, { params: { purge: true } })
       window.dispatchEvent(new CustomEvent('products:changed'))
       await refreshInventoryData()
+      setPurgeTarget(null)
     } catch (err) {
       window.alert(formatDeleteDetail(err))
     } finally {
@@ -300,8 +341,24 @@ export default function InventorySummaryCards({
     }
   }
 
+  function openPurgeModal(raw, e) {
+    e.preventDefault()
+    e.stopPropagation()
+    const titulo = String(raw.name ?? '').trim() || `Producto #${raw.id}`
+    setPurgeTarget({ id: raw.id, name: titulo })
+  }
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0 w-full">
+    <>
+      {purgeTarget ? (
+        <PurgeProductConfirmModal
+          productName={purgeTarget.name}
+          onConfirm={handleConfirmPurge}
+          onCancel={() => !deletingId && setPurgeTarget(null)}
+          loading={deletingId != null}
+        />
+      ) : null}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 min-w-0 w-full">
       <div className="space-y-2 min-w-0 w-full">
         <h2 className="text-xs font-bold uppercase tracking-wide text-gray-500">Créditos normales</h2>
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 w-full min-w-0">
@@ -325,8 +382,8 @@ export default function InventorySummaryCards({
                   const showLoadedHint =
                     Number.isFinite(physicalTotal) && physicalTotal > saldo + 1e-9
                   const sel = isNormalSelected(raw)
-                  const blockedDel = stockBlockingDelete(raw, creditsByProductId, screens) > 0
                   const pidDel = Number(raw.id)
+                  const stockHint = stockBlockingDelete(raw, creditsByProductId, screens)
                   return (
                     <div
                       key={raw.id}
@@ -363,19 +420,15 @@ export default function InventorySummaryCards({
                         </button>
                         <button
                           type="button"
-                          className={`rounded-md p-1.5 border shadow-sm transition-colors disabled:opacity-50 ${
-                            blockedDel
-                              ? 'text-gray-300 cursor-not-allowed border-transparent bg-white/40'
-                              : 'text-gray-400 hover:text-red-600 hover:bg-white/90 hover:border-gray-200'
-                          }`}
+                          className="rounded-md p-1.5 border shadow-sm transition-colors text-gray-400 hover:text-red-600 hover:bg-white/90 hover:border-gray-200 disabled:opacity-50"
                           title={
-                            blockedDel
-                              ? 'Hay inventario activo; vacía el stock antes de eliminar.'
-                              : 'Eliminar producto'
+                            stockHint > 0
+                              ? `Purga total (incluye ${stockHint} unidad(es) de stock activo)`
+                              : 'Purgar producto y todo su inventario'
                           }
-                          aria-label="Eliminar producto"
-                          disabled={blockedDel || deletingId === pidDel}
-                          onClick={(e) => handleDeleteProduct(raw, e)}
+                          aria-label="Purgar producto"
+                          disabled={deletingId === pidDel}
+                          onClick={(e) => openPurgeModal(raw, e)}
                         >
                           {deletingId === pidDel ? (
                             <Loader2 size={14} className="animate-spin text-gray-500" />
@@ -433,8 +486,8 @@ export default function InventorySummaryCards({
                 productosPantalla.map((raw) => {
                   const titulo = String(raw.name ?? '').trim() || `Producto #${raw.id}`
                   const sel = isScreensSelected(raw)
-                  const blockedDel = stockBlockingDelete(raw, creditsByProductId, screens) > 0
                   const pidDel = Number(raw.id)
+                  const stockHint = stockBlockingDelete(raw, creditsByProductId, screens)
                   return (
                     <div
                       key={raw.id}
@@ -471,19 +524,15 @@ export default function InventorySummaryCards({
                         </button>
                         <button
                           type="button"
-                          className={`rounded-md p-1.5 border shadow-sm transition-colors disabled:opacity-50 ${
-                            blockedDel
-                              ? 'text-gray-300 cursor-not-allowed border-transparent bg-white/40'
-                              : 'text-gray-400 hover:text-red-600 hover:bg-white/90 hover:border-gray-200'
-                          }`}
+                          className="rounded-md p-1.5 border shadow-sm transition-colors text-gray-400 hover:text-red-600 hover:bg-white/90 hover:border-gray-200 disabled:opacity-50"
                           title={
-                            blockedDel
-                              ? 'Hay inventario activo; vacía la bodega antes de eliminar.'
-                              : 'Eliminar producto'
+                            stockHint > 0
+                              ? `Purga total (incluye ${stockHint} pantalla(s) en bodega)`
+                              : 'Purgar producto y todo su inventario'
                           }
-                          aria-label="Eliminar producto"
-                          disabled={blockedDel || deletingId === pidDel}
-                          onClick={(e) => handleDeleteProduct(raw, e)}
+                          aria-label="Purgar producto"
+                          disabled={deletingId === pidDel}
+                          onClick={(e) => openPurgeModal(raw, e)}
                         >
                           {deletingId === pidDel ? (
                             <Loader2 size={14} className="animate-spin text-gray-500" />
@@ -515,6 +564,6 @@ export default function InventorySummaryCards({
           )}
         </div>
       </div>
-    </div>
+    </>
   )
 }
