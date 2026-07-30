@@ -25,7 +25,10 @@ def upgrade() -> None:
         """
         UPDATE wallet_recharge_requests
         SET wallet_credit_usd = ROUND(
-            COALESCE(amount_requested, 0) + COALESCE(discount, 0),
+            CAST(
+                COALESCE(amount_requested, 0) + COALESCE(discount, 0)
+                AS NUMERIC
+            ),
             2
         )
         WHERE wallet_credit_usd IS NULL
@@ -36,8 +39,11 @@ def upgrade() -> None:
         """
         UPDATE wallet_recharge_requests
         SET wallet_credit_usd = ROUND(
-            (COALESCE(amount_requested, 0) + COALESCE(discount, 0))
-            / NULLIF(COALESCE(recharge_exchange_rate, 1), 0),
+            CAST(
+                (COALESCE(amount_requested, 0) + COALESCE(discount, 0))
+                / NULLIF(COALESCE(recharge_exchange_rate, 1), 0)
+                AS NUMERIC
+            ),
             2
         )
         WHERE wallet_credit_usd IS NULL
