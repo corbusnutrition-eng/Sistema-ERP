@@ -1,4 +1,4 @@
-/** Montos de recarga BaaS en el portal: ``amount_requested`` = neto CxC; bruto = neto + descuento. */
+/** Montos de recarga BaaS en el portal: ``amount_requested`` = neto CxC fiat; crédito billetera en USD. */
 
 export function parsePortalMoney(v) {
   if (v == null || v === '') return NaN
@@ -11,13 +11,29 @@ export function portalRechargeDiscount(row) {
   return Number.isFinite(d) && d > 1e-9 ? Math.round(d * 100) / 100 : 0
 }
 
-/** Neto a pagar (CxC) — coincide con ``amount_requested`` del backend. */
+/** Neto a pagar (CxC fiat) — coincide con ``amount_requested`` del backend. */
 export function portalRechargeNet(row) {
   const n = parsePortalMoney(row?.amount_requested)
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0
 }
 
-/** Importe bruto solicitado (producto virtual antes de descuento pasarela). */
+/** Saldo BaaS bruto a acreditar en USD. */
+export function portalRechargeWalletCreditUsd(row) {
+  const direct = parsePortalMoney(row?.wallet_credit_usd)
+  if (Number.isFinite(direct) && direct > 1e-9) return Math.round(direct * 100) / 100
+
+  const cur = String(row?.recharge_currency ?? 'USD').trim().toUpperCase()
+  const grossFiat = portalRechargeGross(row)
+  if (cur !== 'USD' && grossFiat > 1e-9) {
+    const xr = parsePortalMoney(row?.recharge_exchange_rate)
+    if (Number.isFinite(xr) && xr > 1e-9) {
+      return Math.round((grossFiat / xr) * 100) / 100
+    }
+  }
+  return grossFiat
+}
+
+/** Importe bruto solicitado en moneda de cobro (antes de descuento pasarela). */
 export function portalRechargeGross(row) {
   const net = portalRechargeNet(row)
   const disc = portalRechargeDiscount(row)

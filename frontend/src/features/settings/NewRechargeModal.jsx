@@ -41,6 +41,21 @@ function formatFlujoLocalAmount(amount, currencyCode) {
   return `${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencyCode}`
 }
 
+function formatConceptExchangeRate(xrStr, currencyCode) {
+  const n = parseLineNum(xrStr)
+  if (!Number.isFinite(n) || n <= 0) return currencyCode === 'USD' ? '1' : '—'
+  return n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+}
+
+function conceptLineLocalTotal(usdRaw, xrStr, currencyCode) {
+  const usd = parseLineNum(usdRaw)
+  if (!Number.isFinite(usd) || usd <= 0) return '—'
+  if (currencyCode === 'USD') return formatFlujoLocalAmount(usd, 'USD')
+  const xr = parseLineNum(xrStr)
+  if (!Number.isFinite(xr) || xr <= 0) return '—'
+  return formatFlujoLocalAmount(Math.round(usd * xr * 100) / 100, currencyCode)
+}
+
 function usdPriceFromDraftRow(row) {
   const customUsd = row?.custom_price ?? row?.price_usd ?? row?.sale_price_usd
   if (customUsd != null && Number(customUsd) > 0) return Number(customUsd)
@@ -628,7 +643,7 @@ export default function NewRechargeModal({
     return selectedCliente
   }, [editMode, isReadOnly, clientSnapshotForEdit, selectedCliente])
 
-  const linesSubtotal = useMemo(() => {
+  const linesSubtotalUsd = useMemo(() => {
     const list = Array.isArray(rechargeLineItems) ? rechargeLineItems : []
     const sum = list.reduce((acc, li) => {
       const s = parseLineNum(li?.saldo_recargar ?? '')
@@ -637,13 +652,24 @@ export default function NewRechargeModal({
     return Math.round(sum * 100) / 100
   }, [rechargeLineItems])
 
+  const billingXrNum = useMemo(() => {
+    const n = parseLineNum(billingExchangeRateStr)
+    if (Number.isFinite(n) && n > 0) return n
+    return tableBillingCurrency === 'USD' ? 1 : salesCurrencyDefaultRate(tableBillingCurrency)
+  }, [billingExchangeRateStr, tableBillingCurrency])
+
+  const linesSubtotalFiat = useMemo(() => {
+    if (tableBillingCurrency === 'USD') return linesSubtotalUsd
+    return Math.round(linesSubtotalUsd * billingXrNum * 100) / 100
+  }, [linesSubtotalUsd, billingXrNum, tableBillingCurrency])
+
   const discountBillingNum = useMemo(() => {
-    return computeDiscountAmount(linesSubtotal, discountBilling, discountType)
-  }, [linesSubtotal, discountBilling, discountType])
+    return computeDiscountAmount(linesSubtotalFiat, discountBilling, discountType)
+  }, [linesSubtotalFiat, discountBilling, discountType])
 
   const netLinesTotal = useMemo(() => {
-    return Math.max(0, Math.round((linesSubtotal - discountBillingNum) * 100) / 100)
-  }, [linesSubtotal, discountBillingNum])
+    return Math.max(0, Math.round((linesSubtotalFiat - discountBillingNum) * 100) / 100)
+  }, [linesSubtotalFiat, discountBillingNum])
 
   const depositDeclaredNum = useMemo(() => {
     const raw = String(depositUsd ?? '').trim().replace(',', '.')
@@ -719,12 +745,12 @@ export default function NewRechargeModal({
   const subOv = summarySubtotalOverride != null ? Number(summarySubtotalOverride) : NaN
   const balOv = summaryBalancePendingOverride != null ? Number(summaryBalancePendingOverride) : NaN
   const lateralSubtotalDisplay =
-    linesSubtotal > 0 ? linesSubtotal
+    linesSubtotalFiat > 0 ? linesSubtotalFiat
     : (isReadOnly || editMode) && Number.isFinite(subOv) ?
       Math.round((subOv + discountBillingNum) * 100) / 100
-    : linesSubtotal
+    : linesSubtotalFiat
   const lateralTotalDisplay =
-    linesSubtotal > 0 ? netLinesTotal
+    linesSubtotalFiat > 0 ? netLinesTotal
     : (isReadOnly || editMode) && Number.isFinite(subOv) ?
       Math.max(0, Math.round(subOv * 100) / 100)
     : netLinesTotal
@@ -994,6 +1020,8 @@ export default function NewRechargeModal({
       creditAppliedAmount: creditAutoApplied,
       productPrices: productPricesPayload,
       rechargeExchangeRate: resolveBillingExchangeRate(),
+      amountUsd: linesSubtotalUsd,
+      totalAmountLocal: linesSubtotalFiat,
       ocrWithoutAmount: editMode ? ocrWithoutAmount : undefined,
     }
     if (editMode && typeof onSubmitUpdatePending === 'function') {
@@ -1159,10 +1187,12 @@ export default function NewRechargeModal({
                   <p className="text-sm font-medium text-gray-800">Conceptos</p>
                   <div className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
                     {/* Encabezados de columna: solo escritorio */}
-                    <div className="hidden md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.9fr)_minmax(7rem,0.9fr)_2.5rem] gap-2 px-3 py-2.5 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-600 font-semibold border-b border-gray-100">
+                    <div className="hidden md:grid md:grid-cols-[minmax(0,1.1fr)_minmax(6rem,0.75fr)_minmax(6rem,0.75fr)_minmax(5rem,0.65fr)_minmax(7rem,0.85fr)_2.5rem] gap-2 px-3 py-2.5 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-600 font-semibold border-b border-gray-100">
                       <span>Producto/servicio</span>
                       <span>Tipo de moneda</span>
-                      <span>Saldo a recargar</span>
+                      <span>Saldo a recargar (USD)</span>
+                      <span>Tipo de cambio</span>
+                      <span>Total a pagar ({billingCode})</span>
                       {!isReadOnly ? <span className="sr-only">Eliminar</span> : null}
                     </div>
 
@@ -1174,10 +1204,15 @@ export default function NewRechargeModal({
                           : `concepto-${rowIdx}`
                         const tm = normalizeCurrencyCode(line?.tipo_moneda ?? tableBillingCurrency, 'USD')
                         const isLead = rowIdx === 0 || line?.id === leadLineId
+                        const lineLocalTotal = conceptLineLocalTotal(
+                          line?.saldo_recargar ?? '',
+                          billingExchangeRateStr,
+                          tm,
+                        )
                         return (
                           <div
                             key={rowKey}
-                            className="flex flex-col space-y-3 w-full p-3 md:space-y-0 md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.9fr)_minmax(7rem,0.9fr)_2.5rem] md:items-center md:gap-2 md:px-3 md:py-2"
+                            className="flex flex-col space-y-3 w-full p-3 md:space-y-0 md:grid md:grid-cols-[minmax(0,1.1fr)_minmax(6rem,0.75fr)_minmax(6rem,0.75fr)_minmax(5rem,0.65fr)_minmax(7rem,0.85fr)_2.5rem] md:items-center md:gap-2 md:px-3 md:py-2"
                           >
                             <div className="w-full min-w-0">
                               <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
@@ -1219,7 +1254,7 @@ export default function NewRechargeModal({
                             </div>
                             <div className="w-full min-w-0">
                               <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
-                                Saldo a recargar
+                                Saldo a recargar (USD)
                               </label>
                               <input
                                 className={`${icls} w-full tabular-nums`}
@@ -1230,6 +1265,22 @@ export default function NewRechargeModal({
                                 onChange={(e) => updateLine(line.id, { saldo_recargar: e.target.value })}
                                 placeholder="0"
                               />
+                            </div>
+                            <div className="w-full min-w-0">
+                              <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
+                                Tipo de cambio
+                              </label>
+                              <span className="flex items-center min-h-[2.375rem] w-full px-3 py-2 text-sm text-gray-800 tabular-nums rounded-xl border border-gray-100 bg-slate-50/80">
+                                {formatConceptExchangeRate(billingExchangeRateStr, tm)}
+                              </span>
+                            </div>
+                            <div className="w-full min-w-0">
+                              <label className="md:hidden block text-xs font-medium text-gray-500 mb-1">
+                                Total a pagar ({tm})
+                              </label>
+                              <span className="flex items-center min-h-[2.375rem] w-full px-3 py-2 text-sm font-medium text-gray-800 tabular-nums rounded-xl border border-gray-100 bg-slate-50/80">
+                                {lineLocalTotal}
+                              </span>
                             </div>
                             {!isReadOnly ?
                               <div className="flex md:justify-center">

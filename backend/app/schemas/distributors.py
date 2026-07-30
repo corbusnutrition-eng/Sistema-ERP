@@ -228,7 +228,7 @@ class SetPriceResponse(BaseModel):
 
 
 class WalletRechargeLineItemPayload(BaseModel):
-    """Línea de recarga BaaS: saldo virtual a acreditar + importe cobrado (puede venir legado qty×tarifa)."""
+    """Línea de recarga BaaS: saldo virtual USD a acreditar + importe fiat cobrado."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -241,18 +241,37 @@ class WalletRechargeLineItemPayload(BaseModel):
         default="USD",
         max_length=10,
         validation_alias=AliasChoices("tipo_moneda", "balance_currency", "moneda_saldo"),
-        description="Moneda en la que se expresa el saldo virtual a recargar (informativa por línea).",
+        description="Moneda del saldo virtual a acreditar (BaaS Balance ⇒ USD).",
     )
     saldo_recargar: Optional[float] = Field(
         default=None,
         gt=0,
         validation_alias=AliasChoices("saldo_recargar", "balance_to_recharge", "virtual_balance"),
+        description="Saldo virtual a acreditar en USD (alias de wallet_credit_usd).",
+    )
+    wallet_credit_usd: Optional[float] = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("wallet_credit_usd", "amount_usd", "usd_credit"),
+        description="Saldo BaaS a acreditar en USD.",
     )
     importe: Optional[float] = Field(
         default=None,
         gt=0,
         validation_alias=AliasChoices("importe", "line_amount", "monto_linea"),
-        description="Importe monetario cobrado en esta línea (moneda de la solicitud / portal).",
+        description="Importe monetario cobrado en esta línea (moneda de cobro / portal).",
+    )
+    total_fiat_amount: Optional[float] = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("total_fiat_amount", "total_amount_local", "fiat_amount"),
+        description="Importe fiat a cobrar en moneda de la solicitud (alias de importe).",
+    )
+    exchange_rate: Optional[float] = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("exchange_rate", "tipo_cambio", "fx_rate"),
+        description="Unidades de moneda de cobro por 1 USD en esta línea.",
     )
     #: Campos legados (modal tipo ventas); si hay ``qty`` y ``rate``, se derivan ``importe`` y opc. ``saldo_recargar``.
     description: Optional[str] = Field(default=None, max_length=2000)
@@ -270,7 +289,7 @@ class WalletRechargeLineItemPayload(BaseModel):
             return "USD"
         return normalize_currency_code(v, "USD")
 
-    @field_validator("saldo_recargar", "importe", "qty", "rate", mode="before")
+    @field_validator("saldo_recargar", "importe", "qty", "rate", "wallet_credit_usd", "total_fiat_amount", "exchange_rate", mode="before")
     @classmethod
     def _coerce_opt_float_li(cls, v: object) -> object:
         if v is None or v == "":
@@ -291,22 +310,45 @@ class WalletRechargeLineItemPayload(BaseModel):
 
     @model_validator(mode="after")
     def _legacy_and_defaults(self) -> "WalletRechargeLineItemPayload":
-        imp_raw = self.importe
+        imp_raw = self.total_fiat_amount if self.total_fiat_amount is not None else self.importe
         qty_raw = self.qty
         rate_raw = self.rate
+
+        usd_raw = self.wallet_credit_usd if self.wallet_credit_usd is not None else self.saldo_recargar
+        usd = float(usd_raw) if usd_raw is not None and float(usd_raw) > 0 else None
 
         imp = float(imp_raw) if imp_raw is not None and float(imp_raw) > 0 else None
         qty_ok = qty_raw is not None and float(qty_raw) > 0
         rate_ok = rate_raw is not None and float(rate_raw) > 0
+        xr = float(self.exchange_rate) if self.exchange_rate is not None and float(self.exchange_rate) > 0 else None
 
         if imp is None and qty_ok and rate_ok:
             imp = round(float(qty_raw) * float(rate_raw), 2)
             object.__setattr__(self, "importe", imp)
 
-        if self.saldo_recargar is None and qty_ok:
-            object.__setattr__(self, "saldo_recargar", float(qty_raw))
-        elif self.saldo_recargar is None and imp is not None:
-            object.__setattr__(self, "saldo_recargar", float(imp))
+        if usd is None and qty_ok:
+            usd = float(qty_raw)
+        elif usd is None and imp is not None and xr is not None:
+            usd = round(float(imp) / xr, 8)
+        elif usd is None and imp is not None:
+            usd = float(imp)
+
+        if usd is not None:
+            object.__setattr__(self, "wallet_credit_usd", usd)
+            if self.saldo_recargar is None:
+                object.__setattr__(self, "saldo_recargar", usd)
+
+        if imp is None and usd is not None and xr is not None:
+            imp = round(float(usd) * xr, 2)
+            object.__setattr__(self, "importe", imp)
+        elif imp is None and usd is not None:
+            imp = round(float(usd), 2)
+            object.__setattr__(self, "importe", imp)
+
+        if imp is not None and self.total_fiat_amount is None:
+            object.__setattr__(self, "total_fiat_amount", float(imp))
+        if imp is not None and self.importe is None:
+            object.__setattr__(self, "importe", float(imp))
 
         if self.importe is None or float(self.importe) <= 0:
             raise ValueError("Cada línea debe tener importe (>0), o bien cantidad y tarifa válidos.")
@@ -317,8 +359,11 @@ class WalletRechargeLineItemPayload(BaseModel):
 
         return self
 
+    def line_wallet_credit_usd(self) -> float:
+        return float(self.wallet_credit_usd or self.saldo_recargar or 0.0)
+
     def line_charge_amount(self) -> float:
-        return float(self.importe or 0.0)
+        return float(self.total_fiat_amount or self.importe or 0.0)
 
 
 class WalletRechargeRequestCreate(BaseModel):
@@ -440,6 +485,10 @@ class WalletRechargeRequestAdminRow(BaseModel):
     client_email: str = ""
     client_username: str = ""
     amount_requested: float
+    wallet_credit_usd: Optional[float] = Field(
+        default=None,
+        description="Saldo BaaS bruto a acreditar en USD.",
+    )
     discount: float = 0.0
     receipt_url: Optional[str] = None
     payment_methods_display: Optional[str] = Field(
@@ -634,6 +683,18 @@ class WalletRechargeRequestPendingUpdate(BaseModel):
         default=None,
         gt=0,
         validation_alias=AliasChoices("exchange_rate", "recharge_exchange_rate", "tasa"),
+    )
+    amount_usd: Optional[float] = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("amount_usd", "wallet_credit_usd", "usd_amount"),
+        description="Saldo BaaS bruto a acreditar en USD.",
+    )
+    total_amount_local: Optional[float] = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("total_amount_local", "total_fiat_amount"),
+        description="Subtotal bruto a cobrar en moneda local.",
     )
     admin_precheck_receipt_url: Optional[str] = Field(
         default=None,
@@ -881,6 +942,22 @@ class GenerateRechargeLinkPayload(BaseModel):
             "tipo_cambio",
         ),
         description="Unidades de moneda de cobro por 1 USD (misma convención que ventas). Omisión o null ⇒ 1.0.",
+    )
+    amount_usd: Optional[float] = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices("amount_usd", "wallet_credit_usd", "usd_amount"),
+        description="Saldo BaaS bruto a acreditar en USD (antes del descuento comercial fiat).",
+    )
+    total_amount_local: Optional[float] = Field(
+        default=None,
+        gt=0,
+        validation_alias=AliasChoices(
+            "total_amount_local",
+            "total_fiat_amount",
+            "fiat_gross_amount",
+        ),
+        description="Subtotal bruto a cobrar en moneda local (antes del descuento).",
     )
     admin_precheck_receipt_url: Optional[str] = Field(
         default=None,

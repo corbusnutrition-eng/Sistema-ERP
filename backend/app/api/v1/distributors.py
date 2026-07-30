@@ -971,6 +971,9 @@ def _row_wallet_recharge_admin(db: Session, r: WalletRechargeRequest) -> WalletR
         client_email=c.email if c else "",
         client_username=c.username if c else "",
         amount_requested=float(r.amount_requested),
+        wallet_credit_usd=float(x)
+        if (x := getattr(r, "wallet_credit_usd", None)) is not None and float(x) > 1e-9
+        else None,
         discount=float(getattr(r, "discount", 0) or 0),
         amount_paid=float(getattr(r, "amount_paid", 0) or 0),
         balance_pending=float(getattr(r, "balance_pending", float(r.amount_requested)) or 0),
@@ -1234,6 +1237,15 @@ def patch_wallet_recharge_request_fields(
         req.discount = disc_norm
         req.balance_pending = max(0.0, new_amt_eff - paid_so_far)
         req.recharge_detail_lines = [x.model_dump(mode="json") for x in lis]
+        from app.wallet_recharge_helpers import wallet_recharge_resolve_usd_credit
+
+        if payload.amount_usd is not None:
+            try:
+                req.wallet_credit_usd = round(float(payload.amount_usd), 2)
+            except (TypeError, ValueError):
+                req.wallet_credit_usd = wallet_recharge_resolve_usd_credit(req, req.recharge_detail_lines)
+        else:
+            req.wallet_credit_usd = wallet_recharge_resolve_usd_credit(req, req.recharge_detail_lines)
     elif payload.amount is not None or payload.discount is not None:
         subtotal_gross = float(req.amount_requested or 0) + float(getattr(req, "discount", 0) or 0)
         if payload.line_items is None and isinstance(req.recharge_detail_lines, list) and req.recharge_detail_lines:
@@ -1932,9 +1944,34 @@ def generate_wallet_recharge_link(
 
         price_snapshot = _assigned_package_prices_snapshot(getattr(payload, "client_product_prices", None))
 
+        from app.wallet_recharge_helpers import wallet_recharge_usd_credit_from_lines
+
+        wallet_credit_usd_val: Optional[float] = None
+        raw_payload_usd = getattr(payload, "amount_usd", None)
+        if raw_payload_usd is not None:
+            try:
+                v_usd = float(raw_payload_usd)
+                if v_usd > 1e-9:
+                    wallet_credit_usd_val = round(v_usd, 2)
+            except (TypeError, ValueError):
+                wallet_credit_usd_val = None
+        if wallet_credit_usd_val is None and lines_json:
+            line_usd = wallet_recharge_usd_credit_from_lines(lines_json)
+            if line_usd > 1e-9:
+                wallet_credit_usd_val = line_usd
+        if wallet_credit_usd_val is None:
+            fiat_gross = round(aq + disc_norm, 2)
+            if cur == "USD":
+                wallet_credit_usd_val = fiat_gross
+            elif xr > 1e-9:
+                wallet_credit_usd_val = round(fiat_gross / xr, 2)
+            else:
+                wallet_credit_usd_val = fiat_gross
+
         req = WalletRechargeRequest(
             client_id=client.id,
             amount_requested=aq,
+            wallet_credit_usd=wallet_credit_usd_val,
             discount=disc_norm,
             receipt_url=None,
             status=REQ_STATUS_PENDING,

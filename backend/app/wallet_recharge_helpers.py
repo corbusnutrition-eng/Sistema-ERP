@@ -115,12 +115,43 @@ def wallet_recharge_open_balance(req) -> float:
         return 0.0
 
 
-def wallet_recharge_virtual_product_gross(req) -> float:
-    """
-    Saldo BaaS a entregar al cliente (subtotal bruto de líneas, antes del descuento comercial).
+def wallet_recharge_usd_credit_from_lines(raw_lines) -> float:
+    """Suma crédito USD explícito en líneas JSON (``wallet_credit_usd`` / ``saldo_recargar``)."""
+    if not isinstance(raw_lines, list) or not raw_lines:
+        return 0.0
+    total = 0.0
+    for x in raw_lines:
+        if not isinstance(x, dict):
+            continue
+        try:
+            usd = float(x.get("wallet_credit_usd") or x.get("saldo_recargar") or 0)
+        except (TypeError, ValueError):
+            usd = 0.0
+        if usd > _WR_BALANCE_EPS:
+            total += usd
+    return round(total, 2)
 
-    ``amount_requested`` es el neto CxC (subtotal − descuento); la billetera recibe el bruto.
+
+def wallet_recharge_resolve_usd_credit(req, lines=None) -> float:
     """
+    Saldo BaaS bruto en USD a entregar al cliente.
+
+    Prioridad: columna ``wallet_credit_usd`` → líneas → legado USD → conversión fiat/XR.
+    """
+    explicit = getattr(req, "wallet_credit_usd", None)
+    if explicit is not None:
+        try:
+            v = float(explicit)
+            if v > _WR_BALANCE_EPS:
+                return round(v, 2)
+        except (TypeError, ValueError):
+            pass
+
+    raw_lines = lines if lines is not None else getattr(req, "recharge_detail_lines", None)
+    line_usd = wallet_recharge_usd_credit_from_lines(raw_lines)
+    if line_usd > _WR_BALANCE_EPS:
+        return line_usd
+
     try:
         net = float(getattr(req, "amount_requested", 0) or 0)
     except (TypeError, ValueError):
@@ -129,25 +160,44 @@ def wallet_recharge_virtual_product_gross(req) -> float:
         disc = float(getattr(req, "discount", 0) or 0)
     except (TypeError, ValueError):
         disc = 0.0
-    gross = round(net + max(0.0, disc), 2)
-    if gross > _WR_BALANCE_EPS:
-        return gross
-    raw_lines = getattr(req, "recharge_detail_lines", None)
-    if isinstance(raw_lines, list) and raw_lines:
-        try:
-            line_sum = round(
-                sum(
-                    float(x.get("importe") or x.get("saldo_recargar") or 0)
-                    for x in raw_lines
-                    if isinstance(x, dict)
-                ),
-                2,
-            )
-            if line_sum > _WR_BALANCE_EPS:
-                return line_sum
-        except (TypeError, ValueError):
-            pass
+    fiat_gross = round(net + max(0.0, disc), 2)
+
+    cur = wallet_recharge_billing_currency(req)
+    if cur == "USD":
+        if fiat_gross > _WR_BALANCE_EPS:
+            return fiat_gross
+        if isinstance(raw_lines, list) and raw_lines:
+            try:
+                legacy = round(
+                    sum(
+                        float(x.get("importe") or x.get("saldo_recargar") or 0)
+                        for x in raw_lines
+                        if isinstance(x, dict)
+                    ),
+                    2,
+                )
+                if legacy > _WR_BALANCE_EPS:
+                    return legacy
+            except (TypeError, ValueError):
+                pass
+        return max(0.0, net)
+
+    try:
+        xr = float(getattr(req, "recharge_exchange_rate", 1) or 1)
+    except (TypeError, ValueError):
+        xr = 1.0
+    if xr > _WR_BALANCE_EPS and fiat_gross > _WR_BALANCE_EPS:
+        return round(fiat_gross / xr, 2)
     return max(0.0, net)
+
+
+def wallet_recharge_virtual_product_gross(req) -> float:
+    """
+    Saldo BaaS a entregar al cliente (subtotal bruto USD, antes del descuento comercial fiat).
+
+    ``amount_requested`` es el neto CxC en moneda de cobro; la billetera recibe USD vía ``wallet_credit_usd``.
+    """
+    return wallet_recharge_resolve_usd_credit(req)
 
 
 def wallet_recharge_accepts_client_receipt(req) -> bool:

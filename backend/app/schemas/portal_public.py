@@ -275,7 +275,12 @@ class PortalWalletRechargeItem(BaseModel):
     gross_amount: float = Field(
         default=0.0,
         ge=0,
-        description="Importe bruto solicitado (amount_requested + discount).",
+        description="Importe bruto solicitado en moneda de cobro (amount_requested + discount).",
+    )
+    wallet_credit_usd: float = Field(
+        default=0.0,
+        ge=0,
+        description="Saldo BaaS bruto a acreditar en USD.",
     )
     receipt_url: Optional[str] = None
     status: str

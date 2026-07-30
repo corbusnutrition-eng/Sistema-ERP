@@ -341,6 +341,7 @@ function rechargeLinesHydrateFromAdminRow(row) {
   const raw = row?.recharge_detail_lines
   const rid = row?.id != null ? String(row.id) : 'new'
   const reqCurrency = normalizeCurrencyCode(row?.recharge_currency ?? 'USD', 'USD')
+  const reqXr = Number(row?.recharge_exchange_rate)
   const disc = Number(row?.discount)
   const netAmt = Number(row?.amount_requested)
   const grossFallback =
@@ -348,24 +349,41 @@ function rechargeLinesHydrateFromAdminRow(row) {
       Math.round((netAmt + (Number.isFinite(disc) && disc > 0 ? disc : 0)) * 100) / 100
     : 0
 
-  const resolveLineCharge = (r) => {
-    const qtyNum = Number(r?.qty)
-    const rateNum = Number(r?.rate)
-    let charge = Number(r?.importe ?? r?.line_amount ?? r?.monto_linea)
-    if (!Number.isFinite(charge) || charge <= 0) {
-      charge = Number(r?.saldo_recargar ?? r?.balance_to_recharge ?? r?.virtual_balance)
+  const resolveLineUsdCredit = (r) => {
+    let usd = Number(r?.wallet_credit_usd ?? r?.amount_usd)
+    if (!Number.isFinite(usd) || usd <= 0) {
+      usd = Number(r?.saldo_recargar ?? r?.balance_to_recharge ?? r?.virtual_balance)
     }
-    if (!Number.isFinite(charge) || charge <= 0) {
-      if (
-        Number.isFinite(qtyNum) &&
-        qtyNum > 0 &&
-        Number.isFinite(rateNum) &&
-        rateNum > 0
-      ) {
-        charge = Math.round(qtyNum * rateNum * 100) / 100
+    if ((!Number.isFinite(usd) || usd <= 0) && reqCurrency === 'USD') {
+      const qtyNum = Number(r?.qty)
+      const rateNum = Number(r?.rate)
+      let charge = Number(r?.importe ?? r?.line_amount ?? r?.monto_linea ?? r?.total_fiat_amount)
+      if (!Number.isFinite(charge) || charge <= 0) {
+        if (
+          Number.isFinite(qtyNum) &&
+          qtyNum > 0 &&
+          Number.isFinite(rateNum) &&
+          rateNum > 0
+        ) {
+          charge = Math.round(qtyNum * rateNum * 100) / 100
+        }
+      }
+      if (Number.isFinite(charge) && charge > 0) usd = charge
+    }
+    if ((!Number.isFinite(usd) || usd <= 0) && reqCurrency !== 'USD') {
+      const fiat = Number(r?.importe ?? r?.total_fiat_amount ?? r?.line_amount)
+      const lineXr = Number(r?.exchange_rate)
+      const xr =
+        Number.isFinite(lineXr) && lineXr > 0 ?
+          lineXr
+        : Number.isFinite(reqXr) && reqXr > 0 ?
+          reqXr
+        : NaN
+      if (Number.isFinite(fiat) && fiat > 0 && Number.isFinite(xr) && xr > 0) {
+        usd = Math.round((fiat / xr) * 10000) / 10000
       }
     }
-    return Number.isFinite(charge) && charge > 0 ? charge : NaN
+    return Number.isFinite(usd) && usd > 0 ? usd : NaN
   }
 
   const withTableCurrency = (lines) =>
@@ -376,8 +394,8 @@ function rechargeLinesHydrateFromAdminRow(row) {
 
   if (Array.isArray(raw) && raw.length > 0) {
     const mapped = raw.map((r, idx) => {
-      const chargeNum = resolveLineCharge(r)
-      const saldoStr = Number.isFinite(chargeNum) ? String(chargeNum) : ''
+      const usdNum = resolveLineUsdCredit(r)
+      const saldoStr = Number.isFinite(usdNum) ? String(usdNum) : ''
 
       return {
         id: `rli-e-${rid}-${idx}`,
@@ -389,7 +407,20 @@ function rechargeLinesHydrateFromAdminRow(row) {
     if (hasAnyAmount) return withTableCurrency(mapped)
   }
 
-  const amtStr = grossFallback > 0 ? String(grossFallback) : ''
+  let fallbackUsd = grossFallback
+  const storedUsd = Number(row?.wallet_credit_usd)
+  if (Number.isFinite(storedUsd) && storedUsd > 0) {
+    fallbackUsd = storedUsd
+  } else if (
+    reqCurrency !== 'USD' &&
+    Number.isFinite(reqXr) &&
+    reqXr > 0 &&
+    grossFallback > 0
+  ) {
+    fallbackUsd = Math.round((grossFallback / reqXr) * 10000) / 10000
+  }
+
+  const amtStr = fallbackUsd > 0 ? String(fallbackUsd) : ''
   return withTableCurrency([
     {
       id: `rli-single-${rid}`,
@@ -399,14 +430,23 @@ function rechargeLinesHydrateFromAdminRow(row) {
   ])
 }
 
-/** Arma líneas + subtotal válidos para `generate-recharge-link` / PATCH (moneda unificada; cobrar = saldo por línea). */
-function buildWalletRechargeApiPayload(linkLineItems) {
+/** Arma líneas + subtotal fiat válidos para `generate-recharge-link` / PATCH. */
+function buildWalletRechargeApiPayload(linkLineItems, { exchangeRate, billingCurrency } = {}) {
   const linePayload = []
-  let subtotal = 0
+  let subtotalFiat = 0
+  let subtotalUsd = 0
   const rows = Array.isArray(linkLineItems) ? linkLineItems : []
   if (!rows.length) return { ok: false, msg: 'Añade al menos una línea.' }
 
   const leadCur = normalizeCurrencyCode(rows[0]?.tipo_moneda ?? 'USD', 'USD')
+  const billCur = normalizeCurrencyCode(billingCurrency ?? leadCur, 'USD')
+  const xrRaw = Number(exchangeRate)
+  const xr =
+    Number.isFinite(xrRaw) && xrRaw > 0 ?
+      xrRaw
+    : billCur === 'USD' ?
+      1
+    : Number(salesCurrencyExchangeRateString(billCur))
 
   for (let i = 0; i < rows.length; i += 1) {
     const row = rows[i]
@@ -415,27 +455,42 @@ function buildWalletRechargeApiPayload(linkLineItems) {
       return { ok: false, msg: `Línea ${i + 1}: la moneda debe coincidir con la primera fila (${leadCur}).` }
     }
 
-    const saldo = Number(String(row?.saldo_recargar ?? '').replace(',', '.'))
-    if (!Number.isFinite(saldo) || saldo <= 0) {
+    const usdCredit = Number(String(row?.saldo_recargar ?? '').replace(',', '.'))
+    if (!Number.isFinite(usdCredit) || usdCredit <= 0) {
       return {
         ok: false,
-        msg: `Línea ${i + 1}: indica saldo a recargar (>0) en ${leadCur}.`,
+        msg: `Línea ${i + 1}: indica saldo a recargar en USD (>0).`,
       }
     }
-    const lineAmt = Math.round(saldo * 100) / 100
-    subtotal += lineAmt
+    const usdRounded = Math.round(usdCredit * 100000000) / 100000000
+    const fiatAmt =
+      billCur === 'USD' ?
+        Math.round(usdRounded * 100) / 100
+      : Math.round(usdRounded * xr * 100) / 100
+    subtotalUsd += usdRounded
+    subtotalFiat += fiatAmt
 
-    // `importe` en API = cargo por línea; en UI sólo existe saldo_recargar (+ tipo_moneda)
     linePayload.push({
       product_name: String(row.producto ?? 'BaaS Balance').trim() || 'BaaS Balance',
-      tipo_moneda: leadCur,
-      saldo_recargar: Math.round(saldo * 100000000) / 100000000,
-      importe: lineAmt,
+      tipo_moneda: 'USD',
+      saldo_recargar: usdRounded,
+      wallet_credit_usd: usdRounded,
+      importe: fiatAmt,
+      total_fiat_amount: fiatAmt,
+      exchange_rate: xr,
     })
   }
-  subtotal = Math.round(subtotal * 100) / 100
-  if (subtotal <= 0) return { ok: false, msg: 'El subtotal debe ser mayor que cero.' }
-  return { ok: true, linePayload, subtotal, currency: leadCur }
+  subtotalUsd = Math.round(subtotalUsd * 100) / 100
+  subtotalFiat = Math.round(subtotalFiat * 100) / 100
+  if (subtotalFiat <= 0) return { ok: false, msg: 'El subtotal debe ser mayor que cero.' }
+  return {
+    ok: true,
+    linePayload,
+    subtotal: subtotalFiat,
+    subtotalUsd,
+    currency: leadCur,
+    exchangeRate: xr,
+  }
 }
 
 export default function DistributorsBaaSPage() {
@@ -1373,12 +1428,16 @@ export default function DistributorsBaaSPage() {
 
   async function submitGenerateLink(e, extra) {
     e.preventDefault()
-    const built = buildWalletRechargeApiPayload(linkLineItems)
+    const xrFromModal = Number(extra?.rechargeExchangeRate)
+    const built = buildWalletRechargeApiPayload(linkLineItems, {
+      exchangeRate: xrFromModal,
+      billingCurrency: rechargeBillingCurrency,
+    })
     if (!built.ok) {
       showToast(built.msg || 'Completa todas las líneas de la tabla.')
       return
     }
-    const { linePayload, subtotal, currency: builtCur } = built
+    const { linePayload, subtotal, subtotalUsd, currency: builtCur } = built
 
     const email = resolveRechargeClientEmail(extra, linkClientId, clientes)
     if (!email || !email.includes('@')) {
@@ -1403,10 +1462,11 @@ export default function DistributorsBaaSPage() {
     }
 
     const cur = normalizeCurrencyCode(builtCur ?? rechargeBillingCurrency, 'USD')
-    const xrFromModal = Number(extra?.rechargeExchangeRate)
     const xrImplicit =
       Number.isFinite(xrFromModal) && xrFromModal > 0 ?
         xrFromModal
+      : Number.isFinite(built.exchangeRate) && built.exchangeRate > 0 ?
+        built.exchangeRate
       : Number(salesCurrencyExchangeRateString(cur))
     if (!Number.isFinite(xrImplicit) || xrImplicit <= 0) {
       showToast('No se pudo determinar la tasa referencial para la moneda de la tabla.')
@@ -1466,6 +1526,8 @@ export default function DistributorsBaaSPage() {
         allowed_deposit_account_ids: depSel.length ? depSel : undefined,
         currency: cur,
         exchange_rate: xrImplicit,
+        amount_usd: subtotalUsd,
+        total_amount_local: subtotal,
         admin_precheck_receipt_url,
         ...(depositUsdNum != null ? { deposit_amount_usd: depositUsdNum } : {}),
         ...(noteTrim.length ? { creation_note: noteTrim } : {}),
@@ -1875,12 +1937,16 @@ export default function DistributorsBaaSPage() {
     const rid = editRechargeRow?.id
     if (rid == null) return
 
-    const built = buildWalletRechargeApiPayload(linkLineItems)
+    const xrFromModalUpd = Number(extra?.rechargeExchangeRate)
+    const built = buildWalletRechargeApiPayload(linkLineItems, {
+      exchangeRate: xrFromModalUpd,
+      billingCurrency: rechargeBillingCurrency,
+    })
     if (!built.ok) {
       showToast(built.msg || 'Completa todas las líneas de la tabla.')
       return
     }
-    const { linePayload, subtotal, currency: builtCur } = built
+    const { linePayload, subtotal, subtotalUsd, currency: builtCur } = built
 
     const email = resolveRechargeClientEmail(extra, linkClientId, clientes)
     if (!email || !email.includes('@')) {
@@ -1910,10 +1976,11 @@ export default function DistributorsBaaSPage() {
     }
 
     const cur = normalizeCurrencyCode(builtCur ?? rechargeBillingCurrency, 'USD')
-    const xrFromModal = Number(extra?.rechargeExchangeRate)
     const xrImplicit =
-      Number.isFinite(xrFromModal) && xrFromModal > 0 ?
-        xrFromModal
+      Number.isFinite(xrFromModalUpd) && xrFromModalUpd > 0 ?
+        xrFromModalUpd
+      : Number.isFinite(built.exchangeRate) && built.exchangeRate > 0 ?
+        built.exchangeRate
       : Number(salesCurrencyExchangeRateString(cur))
     if (!Number.isFinite(xrImplicit) || xrImplicit <= 0) {
       showToast('No se pudo determinar la tasa referencial para la moneda de la tabla.')
@@ -1979,6 +2046,8 @@ export default function DistributorsBaaSPage() {
         allowed_deposit_account_ids: depSel.length ? depSel : undefined,
         currency: cur,
         exchange_rate: xrImplicit,
+        amount_usd: subtotalUsd,
+        total_amount_local: subtotal,
         ...(admin_precheck_receipt_url != null ? { admin_precheck_receipt_url } : {}),
         ...(portalDeclaredBilling != null ?
           {

@@ -1682,6 +1682,12 @@ def _portal_wallet_recharge_gross_amount(req: WalletRechargeRequest) -> float:
     return round(net + disc, 2)
 
 
+def _portal_wallet_recharge_usd_credit(req: WalletRechargeRequest) -> float:
+    from app.wallet_recharge_helpers import wallet_recharge_resolve_usd_credit
+
+    return wallet_recharge_resolve_usd_credit(req)
+
+
 def _portal_wallet_recharge_item_fallback(
     db: Session,
     client: Client,
@@ -1696,6 +1702,7 @@ def _portal_wallet_recharge_item_fallback(
         amount_requested=float(getattr(req, "amount_requested", 0) or 0),
         discount=float(getattr(req, "discount", 0) or 0),
         gross_amount=_portal_wallet_recharge_gross_amount(req),
+        wallet_credit_usd=_portal_wallet_recharge_usd_credit(req),
         amount_paid=float(getattr(req, "amount_paid", 0) or 0),
         balance_pending=float(getattr(req, "balance_pending", 0) or 0),
         surplus_credited=float(getattr(req, "surplus_credited", 0) or 0),
@@ -1729,6 +1736,7 @@ def _portal_wallet_recharge_item_from_request(
         amount_requested=float(req.amount_requested),
         discount=float(getattr(req, "discount", 0) or 0),
         gross_amount=_portal_wallet_recharge_gross_amount(req),
+        wallet_credit_usd=_portal_wallet_recharge_usd_credit(req),
         amount_paid=float(getattr(req, "amount_paid", 0) or 0),
         balance_pending=float(getattr(req, "balance_pending", 0) or 0),
         surplus_credited=float(getattr(req, "surplus_credited", 0) or 0),

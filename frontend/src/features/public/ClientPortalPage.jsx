@@ -48,7 +48,7 @@ import {
 } from '../accounting/accountStructure'
 import WalletHistoryModal from './WalletHistoryModal'
 import EarningsHistoryModal from './EarningsHistoryModal'
-import { portalRechargeDiscount, portalRechargeGross, portalRechargeNet } from './portalRechargeMoney'
+import { portalRechargeDiscount, portalRechargeGross, portalRechargeNet, portalRechargeWalletCreditUsd } from './portalRechargeMoney'
 import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
 
@@ -6990,6 +6990,7 @@ function ClientPortalPageInner() {
             const amountReq = portalRechargeNet(fr)
             const rechargeDisc = portalRechargeDiscount(fr)
             const rechargeGross = portalRechargeGross(fr)
+            const walletCreditUsd = portalRechargeWalletCreditUsd(fr)
             const pend = parseMoneyNum(fr.balance_pending)
             const featPaid = Math.max(0, parseMoneyNum(fr?.amount_paid) || 0)
             const isFeatPartial = featPaid > 1e-9 && pend > 1e-9
@@ -7050,9 +7051,9 @@ function ClientPortalPageInner() {
               : pend > 1e-9 ? pend
               : 0
             const headlineCaption =
-              pend > 1e-9 ? 'Saldo restante a pagar'
-              : isFeatPartial ? 'Saldo pendiente'
-              : 'Total a pagar'
+              pend > 1e-9 ? `Saldo restante a pagar (${cur})`
+              : isFeatPartial ? `Saldo pendiente (${cur})`
+              : `Monto a pagar (${cur})`
             const featUxHint = portalNewOrderPayMissingHint({
               submitting: rechargeForm.submitting,
               reservationExpired: false,
@@ -7177,6 +7178,11 @@ function ClientPortalPageInner() {
                             <div className="min-w-0">
                               <p className="text-[15px] font-semibold leading-snug text-white">Recarga de saldo BaaS</p>
                               <p className="mt-1 text-xs leading-relaxed text-slate-500">Referencia #{refStr}</p>
+                              {walletCreditUsd > 1e-9 ? (
+                                <p className="mt-2 inline-flex max-w-full items-center rounded-full border border-indigo-400/35 bg-indigo-950/40 px-2.5 py-1 text-[11px] font-medium leading-snug text-indigo-100">
+                                  Se acreditarán {formatMoney(walletCreditUsd, 'USD')} a tu billetera BaaS.
+                                </p>
+                              ) : null}
                             </div>
                             <p className="pt-0.5 text-right text-[15px] font-semibold tabular-nums text-slate-100">
                               {formatMoney(rechargeGross, cur)}
@@ -7192,7 +7198,7 @@ function ClientPortalPageInner() {
                           ) : null}
                           {rechargeDisc > 1e-9 ? (
                             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-5 py-3 text-sm">
-                              <span className="font-medium text-slate-200">Total a pagar</span>
+                              <span className="font-medium text-slate-200">Total a pagar ({cur})</span>
                               <span className="tabular-nums font-semibold text-white">
                                 {formatMoney(amountReq, cur)}
                               </span>

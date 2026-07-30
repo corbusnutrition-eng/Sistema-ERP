@@ -21,6 +21,8 @@ class WalletRechargeRequest(Base):
         index=True,
     )
     amount_requested: Mapped[float] = mapped_column(Float, nullable=False)
+    #: Saldo virtual BaaS a acreditar en USD (independiente del cobro fiat en ``recharge_currency``).
+    wallet_credit_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     #: Descuento en moneda de la recarga (comisiones pasarela absorbidas; ``amount_requested`` = subtotal − discount).
     discount: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"), default=0.0)
     receipt_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
