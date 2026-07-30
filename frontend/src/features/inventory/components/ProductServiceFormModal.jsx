@@ -62,11 +62,54 @@ function parseOpeningPkgCredRowCount(rawOpening) {
   return Math.min(q, MAX_CREDENTIAL_ROWS_PER_PACKAGE)
 }
 
+function credentialSlotIsEmpty(c) {
+  return !String(c?.username ?? '').trim() && !String(c?.password ?? '').trim()
+}
+
+function emptyCredentialSlot() {
+  return {
+    username: '',
+    password: '',
+    batchId: null,
+    screenStockId: null,
+    locked: false,
+    status: 'free',
+  }
+}
+
+function shrinkPackageInitialCredentials(prev, targetLen) {
+  const n = Math.max(0, Math.min(Number(targetLen) || 0, MAX_CREDENTIAL_ROWS_PER_PACKAGE))
+  let arr = Array.isArray(prev) ? [...prev] : []
+  while (arr.length > n) {
+    let removeIdx = -1
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (!arr[i]?.locked && credentialSlotIsEmpty(arr[i])) {
+        removeIdx = i
+        break
+      }
+    }
+    if (removeIdx === -1) {
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (!arr[i]?.locked) {
+          removeIdx = i
+          break
+        }
+      }
+    }
+    if (removeIdx === -1) break
+    arr.splice(removeIdx, 1)
+  }
+  while (arr.length < n) arr.push(emptyCredentialSlot())
+  return arr
+}
+
 function resizePackageInitialCredentials(prev, targetLen) {
   const n = Math.max(0, Math.min(Number(targetLen) || 0, MAX_CREDENTIAL_ROWS_PER_PACKAGE))
-  const arr = Array.isArray(prev) ? [...prev] : []
-  while (arr.length < n) arr.push({ username: '', password: '' })
-  if (arr.length > n) arr.length = n
+  let arr = Array.isArray(prev) ? [...prev] : []
+  if (arr.length > n) {
+    arr = shrinkPackageInitialCredentials(arr, n)
+  }
+  while (arr.length < n) arr.push(emptyCredentialSlot())
   return arr
 }
 
@@ -180,29 +223,50 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
     setPackagesInventoryOpeningDate('')
     if (pt === PRODUCT_TYPE_CREDITO_PANTALLA) {
       const lines = Array.isArray(p.catalog_packages) ? p.catalog_packages : []
+      let openingDateFromStock = ''
       setPackageRows(
         lines.length
-          ? lines.map((ln) => ({
-              id: nextPkgRowId(),
-              catalogLineId: ln.id != null ? Number(ln.id) : null,
-              packageLabel: String(ln.package_label ?? ''),
-              screens: ln.screens_per_package != null ? String(ln.screens_per_package) : '',
-              costUsd: ln.reference_cost_usd != null ? String(ln.reference_cost_usd) : '',
-              salePriceUsd: ln.listing_price_usd != null ? String(ln.listing_price_usd) : '',
-              openingQtyPkg:
-                ln.opening_inventory_qty != null && Number(ln.opening_inventory_qty) > 0
-                  ? String(Math.round(Number(ln.opening_inventory_qty)))
-                  : '',
-              initialCredentials:
-                ln.opening_inventory_qty != null && Number(ln.opening_inventory_qty) > 0
-                  ? resizePackageInitialCredentials(
-                      [],
-                      Math.min(Math.round(Number(ln.opening_inventory_qty)), MAX_CREDENTIAL_ROWS_PER_PACKAGE),
-                    )
-                  : [],
-            }))
+          ? lines.map((ln) => {
+              const stockUnits = Array.isArray(ln.stock_units) ? ln.stock_units : []
+              const qtyFromStock = stockUnits.length
+              if (!openingDateFromStock && qtyFromStock > 0) {
+                const exp = stockUnits.find((u) => u?.expiration_date)?.expiration_date
+                if (exp) openingDateFromStock = String(exp).slice(0, 10)
+              }
+              return {
+                id: nextPkgRowId(),
+                catalogLineId: ln.id != null ? Number(ln.id) : null,
+                packageLabel: String(ln.package_label ?? ''),
+                screens: ln.screens_per_package != null ? String(ln.screens_per_package) : '',
+                costUsd: ln.reference_cost_usd != null ? String(ln.reference_cost_usd) : '',
+                salePriceUsd: ln.listing_price_usd != null ? String(ln.listing_price_usd) : '',
+                openingQtyPkg:
+                  qtyFromStock > 0
+                    ? String(qtyFromStock)
+                    : ln.opening_inventory_qty != null && Number(ln.opening_inventory_qty) > 0
+                      ? String(Math.round(Number(ln.opening_inventory_qty)))
+                      : '',
+                initialCredentials:
+                  qtyFromStock > 0
+                    ? stockUnits.map((u) => ({
+                        batchId: u.batch_id ?? null,
+                        screenStockId: u.screen_stock_id ?? null,
+                        username: u.username ?? '',
+                        password: u.password ?? '',
+                        locked: Boolean(u.locked),
+                        status: u.status ?? 'free',
+                      }))
+                    : ln.opening_inventory_qty != null && Number(ln.opening_inventory_qty) > 0
+                      ? resizePackageInitialCredentials(
+                          [],
+                          Math.min(Math.round(Number(ln.opening_inventory_qty)), MAX_CREDENTIAL_ROWS_PER_PACKAGE),
+                        )
+                      : [],
+              }
+            })
           : [newEmptyPackageRow()],
       )
+      if (openingDateFromStock) setPackagesInventoryOpeningDate(openingDateFromStock)
     } else {
       setPackageRows([newEmptyPackageRow()])
     }
@@ -347,6 +411,7 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
         }
 
         const built = []
+        let needsOpeningDate = false
         for (const r of filled) {
           if (!r.label) {
             setErr('En «Configuración de paquetes», cada fila con datos debe tener nombre de paquete.')
@@ -388,12 +453,23 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
           }
           if (inventoryInitialQty != null) rowObj.inventory_initial_qty = inventoryInitialQty
           if (inventoryInitialQty != null && inventoryInitialQty > 0 && isPantalla) {
-            rowObj.initial_credentials = resizePackageInitialCredentials(
-              r.initialCredentials,
-              inventoryInitialQty,
-            ).map((c) => ({
+            const credRows = resizePackageInitialCredentials(r.initialCredentials, inventoryInitialQty)
+            const lockedCount = credRows.filter((c) => c?.locked).length
+            if (inventoryInitialQty < lockedCount) {
+              setErr(
+                `«${r.label}»: la cantidad no puede ser menor que las ${lockedCount} unidad(es) ya asignada(s) o vendida(s).`,
+              )
+              return
+            }
+            if (credRows.some((c) => !c?.batchId)) needsOpeningDate = true
+            rowObj.initial_credentials = credRows.map((c) => ({
               username: String(c?.username ?? '').trim() || null,
               password: String(c?.password ?? '').trim() || null,
+              batch_id: c?.batchId ? String(c.batchId) : null,
+              screen_stock_id:
+                c?.screenStockId != null && Number.isFinite(Number(c.screenStockId))
+                  ? Number(c.screenStockId)
+                  : null,
             }))
           }
           if (r.catalogLineId != null && Number.isFinite(Number(r.catalogLineId))) {
@@ -402,13 +478,15 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
           built.push(rowObj)
         }
 
-        const needsOpeningDate = built.some((b) => (b.inventory_initial_qty ?? 0) > 0)
-        if (needsOpeningDate && !packagesInventoryOpeningDate.trim()) {
-          setErr('Indica la fecha de inventario inicial para los paquetes con cantidad inicial > 0.')
+        if (needsOpeningDate && !isEditMode && !packagesInventoryOpeningDate.trim()) {
+          setErr('Indica la fecha de inventario inicial para los paquetes con unidades nuevas en stock.')
           return
         }
         packagesPayload = built
-        packagesInventoryOpeningDatePayload = needsOpeningDate ? packagesInventoryOpeningDate.trim() : null
+        packagesInventoryOpeningDatePayload =
+          needsOpeningDate && packagesInventoryOpeningDate.trim()
+            ? packagesInventoryOpeningDate.trim()
+            : packagesInventoryOpeningDate.trim() || null
         price = built[0].listing_price_usd
       } else {
         price = parseFloat(String(salePrice).replace(',', '.'))
@@ -729,14 +807,20 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
                               Credenciales IPTV (stock inicial — misma orden que «Cant. inicial»)
                             </p>
                             {Array.from({ length: credSlotCount }, (_, idx) => {
-                              const slot = row.initialCredentials?.[idx] || { username: '', password: '' }
+                              const slot = row.initialCredentials?.[idx] || emptyCredentialSlot()
+                              const locked = Boolean(slot.locked)
                               return (
                                 <div
-                                  key={`${row.id}-cred-${idx}`}
+                                  key={`${row.id}-cred-${slot.batchId || idx}`}
                                   className="rounded-lg border border-gray-100/90 bg-slate-50/50 p-2.5 space-y-2"
                                 >
                                   <p className="text-[11px] font-semibold text-gray-700">
                                     Credenciales para pantalla {idx + 1}
+                                    {locked ? (
+                                      <span className="ml-2 text-[10px] font-medium text-amber-700 uppercase">
+                                        ({slot.status === 'assigned' ? 'Asignada' : 'Reservada'} — solo lectura)
+                                      </span>
+                                    ) : null}
                                   </p>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     <div>
@@ -749,6 +833,7 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
                                         autoComplete="off"
                                         name={`pkg-iptv-u-${row.id}-${idx}`}
                                         maxLength={120}
+                                        disabled={locked}
                                         value={slot.username ?? ''}
                                         onChange={(e) =>
                                           updatePkgCredential(row.id, idx, 'username', e.target.value)
@@ -764,8 +849,9 @@ export default function ProductServiceFormModal({ open, onClose, onSaved, produc
                                         className={inputCls}
                                         autoComplete="new-password"
                                         name={`pkg-iptv-p-${row.id}-${idx}`}
-                                        type="password"
+                                        type={locked ? 'text' : 'password'}
                                         maxLength={255}
+                                        disabled={locked}
                                         value={slot.password ?? ''}
                                         onChange={(e) =>
                                           updatePkgCredential(row.id, idx, 'password', e.target.value)

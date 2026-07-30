@@ -203,6 +203,18 @@ class PackageOpeningCredentialItem(BaseModel):
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
+    batch_id: Optional[str] = Field(
+        default=None,
+        max_length=36,
+        validation_alias=AliasChoices("batch_id", "batchId"),
+        description="UUID del lote ScreenStock existente (edición).",
+    )
+    screen_stock_id: Optional[int] = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("screen_stock_id", "screenStockId"),
+        description="Id representativo de fila ScreenStock del lote (edición).",
+    )
     username: Optional[str] = Field(
         default=None,
         max_length=120,
@@ -217,6 +229,16 @@ class PackageOpeningCredentialItem(BaseModel):
     @field_validator("username", "password", mode="before")
     @classmethod
     def _strip_cred(cls, v: object) -> object:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        return v
+
+    @field_validator("batch_id", mode="before")
+    @classmethod
+    def _strip_batch_id(cls, v: object) -> object:
         if v is None:
             return None
         if isinstance(v, str):
@@ -489,6 +511,19 @@ class ProductUpdate(BaseModel):
         return c
 
 
+class PackageStockUnitPublic(BaseModel):
+    """Unidad de stock (un lote / paquete físico) con credenciales para edición en inventario."""
+
+    batch_id: str
+    screen_stock_id: int
+    username: Optional[str] = None
+    password: Optional[str] = None
+    status: Literal["free", "reserved", "assigned"] = "free"
+    locked: bool = False
+    screens_in_unit: int = 1
+    expiration_date: Optional[date] = None
+
+
 class ProductCatalogLinePublic(BaseModel):
     """Línea de catálogo por producto (solo filas con ``product_id`` del padre)."""
 
@@ -502,28 +537,109 @@ class ProductCatalogLinePublic(BaseModel):
     listing_price_usd: Optional[float] = None
     opening_inventory_qty: Optional[float] = None
     sort_order: int
+    stock_units: list[PackageStockUnitPublic] = Field(
+        default_factory=list,
+        description="Unidades en bodega (lotes) con credenciales para reconciliación en edición.",
+    )
 
 
-def _catalog_lines_public_from_product(data: Product) -> list[ProductCatalogLinePublic]:
+_CREDENTIALS_LOCKED_MSG = "No puedes eliminar credenciales que ya han sido asignadas o vendidas."
+
+
+def _norm_cred_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s if s else None
+
+
+def _batch_aggregate_status(rows: list[ScreenStock]) -> str:
+    statuses = {str(r.status or "free") for r in rows}
+    if "assigned" in statuses:
+        return "assigned"
+    if "reserved" in statuses:
+        return "reserved"
+    return "free"
+
+
+def _batch_is_editable(rows: list[ScreenStock]) -> bool:
+    return all(str(r.status or "free") == "free" for r in rows)
+
+
+def _load_stock_batches_for_package(
+    db: Session,
+    product_id: int,
+    package_label: str,
+) -> dict[str, list[ScreenStock]]:
+    rows = (
+        db.query(ScreenStock)
+        .filter(
+            ScreenStock.product_id == int(product_id),
+            ScreenStock.package == str(package_label or "").strip(),
+        )
+        .order_by(ScreenStock.id.asc())
+        .all()
+    )
+    batches: dict[str, list[ScreenStock]] = {}
+    for row in rows:
+        batches.setdefault(str(row.batch_id), []).append(row)
+    return batches
+
+
+def _stock_units_public_from_batches(
+    batches: dict[str, list[ScreenStock]],
+) -> list[PackageStockUnitPublic]:
+    ordered_batch_ids = sorted(
+        batches.keys(),
+        key=lambda bid: min(int(r.id) for r in batches[bid]),
+    )
+    units: list[PackageStockUnitPublic] = []
+    for batch_id in ordered_batch_ids:
+        batch_rows = batches[batch_id]
+        rep = batch_rows[0]
+        agg = _batch_aggregate_status(batch_rows)
+        units.append(
+            PackageStockUnitPublic(
+                batch_id=batch_id,
+                screen_stock_id=int(rep.id),
+                username=rep.iptv_username,
+                password=rep.iptv_password,
+                status=agg,  # type: ignore[arg-type]
+                locked=agg != "free",
+                screens_in_unit=len(batch_rows),
+                expiration_date=rep.expiration_date,
+            )
+        )
+    return units
+
+
+def _catalog_lines_public_from_product(db: Session, data: Product) -> list[ProductCatalogLinePublic]:
     pid = int(data.id)
     raw = getattr(data, "package_catalog_lines", None) or []
     owned = [ln for ln in raw if int(getattr(ln, "product_id", -1)) == pid]
     owned.sort(key=lambda ln: int(ln.sort_order))
-    return [
-        ProductCatalogLinePublic(
-            id=int(ln.id),
-            product_id=int(ln.product_id),
-            package_label=ln.package_label,
-            screens_per_package=int(ln.screens_per_package),
-            reference_cost_usd=ln.reference_cost_usd,
-            listing_price_usd=ln.listing_price_usd,
-            opening_inventory_qty=float(ln.opening_inventory_qty)
-            if ln.opening_inventory_qty is not None
-            else None,
-            sort_order=int(ln.sort_order),
+    lines: list[ProductCatalogLinePublic] = []
+    for ln in owned:
+        label = str(ln.package_label or "").strip()
+        batches = _load_stock_batches_for_package(db, pid, label)
+        stock_units = _stock_units_public_from_batches(batches)
+        opening_qty = float(ln.opening_inventory_qty) if ln.opening_inventory_qty is not None else None
+        if stock_units:
+            opening_qty = float(len(stock_units))
+        lines.append(
+            ProductCatalogLinePublic(
+                id=int(ln.id),
+                product_id=int(ln.product_id),
+                package_label=ln.package_label,
+                screens_per_package=int(ln.screens_per_package),
+                reference_cost_usd=ln.reference_cost_usd,
+                listing_price_usd=ln.listing_price_usd,
+                opening_inventory_qty=opening_qty,
+                sort_order=int(ln.sort_order),
+                stock_units=stock_units,
+            )
         )
-        for ln in owned
-    ]
+    return lines
 
 
 class ProductResponse(BaseModel):
@@ -612,7 +728,29 @@ class ProductResponse(BaseModel):
                 "preferred_vendor_id": data.preferred_vendor_id,
                 "color": getattr(data, "color", None) or "#6366f1",
                 "logo_url": getattr(data, "logo_url", None),
-                "catalog_packages": _catalog_lines_public_from_product(data),
+                "catalog_packages": [
+                    {
+                        "id": int(ln.id),
+                        "product_id": int(ln.product_id),
+                        "package_label": ln.package_label,
+                        "screens_per_package": int(ln.screens_per_package),
+                        "reference_cost_usd": ln.reference_cost_usd,
+                        "listing_price_usd": ln.listing_price_usd,
+                        "opening_inventory_qty": float(ln.opening_inventory_qty)
+                        if ln.opening_inventory_qty is not None
+                        else None,
+                        "sort_order": int(ln.sort_order),
+                        "stock_units": [],
+                    }
+                    for ln in sorted(
+                        [
+                            x
+                            for x in (getattr(data, "package_catalog_lines", None) or [])
+                            if int(getattr(x, "product_id", -1)) == int(data.id)
+                        ],
+                        key=lambda ln: int(ln.sort_order),
+                    )
+                ],
             }
         return data
 
@@ -620,15 +758,17 @@ class ProductResponse(BaseModel):
 def _product_response_from_orm(db: Session, product: Product) -> ProductResponse:
     """Serializa producto con stock IPTV real disponible (misma regla que activación de ventas)."""
     row = ProductResponse.model_validate(product)
+    payload = row.model_dump()
+    if _is_credito_pantalla_product(product):
+        payload["catalog_packages"] = _catalog_lines_public_from_product(db, product)
     if not _is_credito_normal_product(product):
-        return row
+        return ProductResponse(**payload)
     from app.services.catalog_inventory import (
         catalog_consumed_credits,
         catalog_credits_available,
         catalog_physical_credits_total,
     )
 
-    payload = row.model_dump()
     payload["inventory_physical_total"] = round(catalog_physical_credits_total(db, product), 4)
     payload["available_credits"] = catalog_credits_available(db, product)
     payload["inventory_reserved_qty"] = round(float(product.inventory_credit_reserved_qty or 0), 4)
@@ -858,6 +998,223 @@ def _bootstrap_screen_stock_opening_from_packages(
                         product_id=int(product.id),
                     )
                 )
+
+
+def _credentials_payload_changed(
+    batch_rows: list[ScreenStock],
+    cred: PackageOpeningCredentialItem,
+) -> bool:
+    rep = batch_rows[0]
+    new_u = _norm_cred_text(cred.username)
+    new_p = _norm_cred_text(cred.password)
+    return _norm_cred_text(rep.iptv_username) != new_u or _norm_cred_text(rep.iptv_password) != new_p
+
+
+def _apply_credentials_to_batch_rows(
+    batch_rows: list[ScreenStock],
+    cred: PackageOpeningCredentialItem,
+) -> None:
+    u = _norm_cred_text(cred.username)
+    p = _norm_cred_text(cred.password)
+    for row in batch_rows:
+        row.iptv_username = u
+        row.iptv_password = p
+
+
+def _sync_batch_screen_row_count(
+    db: Session,
+    batch_rows: list[ScreenStock],
+    *,
+    screens_per: int,
+    provider: str,
+    package_label: str,
+    product_id: int,
+    cost: Optional[float],
+    expiration_date: Optional[date],
+    cred: PackageOpeningCredentialItem,
+) -> None:
+    current = len(batch_rows)
+    if current == screens_per:
+        for row in batch_rows:
+            row.batch_size = screens_per
+        return
+    if not _batch_is_editable(batch_rows):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_CREDENTIALS_LOCKED_MSG)
+    rep = batch_rows[0]
+    u = _norm_cred_text(cred.username)
+    p = _norm_cred_text(cred.password)
+    exp = expiration_date if expiration_date is not None else rep.expiration_date
+    if screens_per > current:
+        for _ in range(screens_per - current):
+            db.add(
+                ScreenStock(
+                    provider=provider,
+                    package=package_label,
+                    expiration_date=exp,
+                    iptv_username=u,
+                    iptv_password=p,
+                    status="free",
+                    cost_per_package=cost,
+                    batch_id=rep.batch_id,
+                    batch_size=screens_per,
+                    sale_id=None,
+                    product_id=int(product_id),
+                )
+            )
+    else:
+        removable = sorted(batch_rows, key=lambda r: int(r.id), reverse=True)
+        deleted_ids: set[int] = set()
+        for row in removable[: current - screens_per]:
+            deleted_ids.add(int(row.id))
+            db.delete(row)
+        for row in batch_rows:
+            if int(row.id) not in deleted_ids:
+                row.batch_size = screens_per
+
+
+def _create_screen_stock_batch_from_cred(
+    db: Session,
+    *,
+    cred: PackageOpeningCredentialItem,
+    screens_per: int,
+    cost: Optional[float],
+    provider: str,
+    package_label: str,
+    product_id: int,
+    expiration_date: date,
+) -> str:
+    batch_id = str(uuid.uuid4())
+    u = _norm_cred_text(cred.username)
+    p = _norm_cred_text(cred.password)
+    for _ in range(screens_per):
+        db.add(
+            ScreenStock(
+                provider=provider,
+                package=package_label,
+                expiration_date=expiration_date,
+                iptv_username=u,
+                iptv_password=p,
+                status="free",
+                cost_per_package=cost,
+                batch_id=batch_id,
+                batch_size=screens_per,
+                sale_id=None,
+                product_id=int(product_id),
+            )
+        )
+    return batch_id
+
+
+def _reconcile_screen_stock_for_packages(
+    db: Session,
+    product: Product,
+    packages: Optional[list[ProductPackageItemCreate]],
+    *,
+    opening_date: Optional[date],
+) -> None:
+    """
+    Sincroniza ScreenStock con el payload de edición: metadatos, credenciales y cantidad.
+    Solo elimina o modifica unidades con estado ``free``.
+    """
+    if not _is_credito_pantalla_product(product):
+        return
+    provider = (product.iptv_provider or "").strip()
+    if not provider:
+        return
+    pid = int(product.id)
+    default_opening = opening_date or date.today()
+
+    for pkg in packages or []:
+        d = pkg.model_dump(mode="python")
+        label = str(d["package_label"]).strip()
+        screens_per = int(d["screens_per_package"])
+        cost = d.get("cost_usd")
+        qty_raw = d.get("inventory_initial_qty")
+        creds: list[PackageOpeningCredentialItem] = list(pkg.initial_credentials or [])
+
+        if qty_raw is not None and int(qty_raw) > 0:
+            target_count = int(qty_raw)
+        elif creds:
+            target_count = len(creds)
+        else:
+            target_count = 0
+
+        if creds and len(creds) > target_count:
+            raise ValueError(
+                "initial_credentials no puede tener más elementos que la cantidad inicial de paquetes.",
+            )
+
+        while len(creds) < target_count:
+            creds.append(PackageOpeningCredentialItem())
+
+        batches = _load_stock_batches_for_package(db, pid, label)
+        kept_batch_ids: set[str] = set()
+        unmatched_batch_ids = sorted(
+            batches.keys(),
+            key=lambda bid: min(int(r.id) for r in batches[bid]),
+        )
+
+        for cred in creds[:target_count]:
+            batch_id = _norm_cred_text(cred.batch_id)
+            if not batch_id and unmatched_batch_ids:
+                batch_id = unmatched_batch_ids.pop(0)
+
+            if batch_id and batch_id in batches:
+                batch_rows = batches[batch_id]
+                editable = _batch_is_editable(batch_rows)
+                if not editable and _credentials_payload_changed(batch_rows, cred):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=_CREDENTIALS_LOCKED_MSG,
+                    )
+                if editable:
+                    _apply_credentials_to_batch_rows(batch_rows, cred)
+                    _sync_batch_screen_row_count(
+                        db,
+                        batch_rows,
+                        screens_per=screens_per,
+                        provider=provider,
+                        package_label=label,
+                        product_id=pid,
+                        cost=cost,
+                        expiration_date=default_opening,
+                        cred=cred,
+                    )
+                for row in batch_rows:
+                    if getattr(row, "id", None) is None:
+                        continue
+                    row.cost_per_package = cost
+                    row.package = label
+                kept_batch_ids.add(batch_id)
+                if batch_id in unmatched_batch_ids:
+                    unmatched_batch_ids.remove(batch_id)
+                continue
+
+            if batch_id and batch_id not in batches:
+                raise ValueError(f"Lote de stock desconocido: {batch_id}")
+
+            new_batch_id = _create_screen_stock_batch_from_cred(
+                db,
+                cred=cred,
+                screens_per=screens_per,
+                cost=cost,
+                provider=provider,
+                package_label=label,
+                product_id=pid,
+                expiration_date=default_opening,
+            )
+            kept_batch_ids.add(new_batch_id)
+
+        for batch_id, batch_rows in batches.items():
+            if batch_id in kept_batch_ids:
+                continue
+            if not _batch_is_editable(batch_rows):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=_CREDENTIALS_LOCKED_MSG,
+                )
+            for row in batch_rows:
+                db.delete(row)
 
 
 def _is_credito_normal_product(p: Product) -> bool:
@@ -1295,6 +1652,12 @@ async def replace_product(product_id: int, request: Request, db: DbDep, _: Produ
 
         if eff.product_type == "credito_pantalla":
             _upsert_product_catalog_packages(db, int(product_id), eff.packages)
+            _reconcile_screen_stock_for_packages(
+                db,
+                product,
+                eff.packages,
+                opening_date=payload.packages_inventory_opening_date,
+            )
         else:
             db.query(ProductPackageCatalog).filter(ProductPackageCatalog.product_id == int(product_id)).delete(
                 synchronize_session=False,
@@ -1302,6 +1665,9 @@ async def replace_product(product_id: int, request: Request, db: DbDep, _: Produ
             product.screens_count = None
 
         db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     except ValueError as ve:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(ve)) from ve
@@ -1327,7 +1693,7 @@ async def replace_product(product_id: int, request: Request, db: DbDep, _: Produ
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Producto no encontrado tras actualización.",
         )
-    return refreshed
+    return _product_response_from_orm(db, refreshed)
 
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
