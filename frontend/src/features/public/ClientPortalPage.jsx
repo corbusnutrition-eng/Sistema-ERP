@@ -1351,11 +1351,20 @@ function portalCurrencyMismatchDetail(extractedCurrency, accountCurrency) {
 function portalCurrencyMismatchWarningMessage(extractedCurrency, accountCurrency) {
   const detail = portalCurrencyMismatchDetail(extractedCurrency, accountCurrency)
   if (!detail) return null
-  return `⚠️ Atención: El recibo está en ${detail.detected} pero la cuenta seleccionada acepta ${detail.expected}.`
+  return `⚠️ La IA detectó que el recibo está en ${detail.detected}, pero esta cuenta es para ${detail.expected}. Al enviar, quedará pendiente de aprobación manual.`
 }
 
-function portalCurrencyMismatchConfirmMessage(detected, expected) {
-  return `El comprobante detectado está en una moneda distinta (${detected}) a la solicitada (${expected}). ¿Deseas enviar el comprobante de todos modos para que sea revisado manualmente por administración?`
+function confirmPortalCurrencyMismatchSubmit(extractedCurrency, accountCurrency) {
+  const detail = portalCurrencyMismatchDetail(extractedCurrency, accountCurrency)
+  if (!detail) return true
+  return window.confirm(
+    `El recibo está en ${detail.detected} pero la cuenta requiere ${detail.expected}. ¿Deseas enviar el comprobante de todos modos para su revisión manual?`,
+  )
+}
+
+function isLegacyPortalCurrencyMismatchError(message) {
+  if (!message || typeof message !== 'string') return false
+  return /moneda incorrecta/i.test(message)
 }
 
 /**
@@ -1372,7 +1381,6 @@ function portalDebtPayMissingHint({
   receiptCount,
   analyzing,
   paidOk,
-  hasBlockingMultiCurrencyError,
   illegibleWithReceipt = false,
 }) {
   if (submitting) return null
@@ -1388,7 +1396,6 @@ function portalDebtPayMissingHint({
   }
   if (receiptCount === 0) return '⚠️ Sube la foto o el PDF de tu comprobante.'
   if (analyzing) return '⚠️ Esperando a que la IA procese el importe del comprobante…'
-  if (hasBlockingMultiCurrencyError) return '⚠️ Corrige el error indicado más arriba antes de enviar.'
   if (illegibleWithReceipt) {
     return 'ℹ️ No pudimos leer el monto automáticamente. Puedes enviar el comprobante; un operador lo revisará.'
   }
@@ -1416,7 +1423,6 @@ function portalNewOrderPayMissingHint({
   firstFileMime,
   isAnalyzing,
   paidOk,
-  hasBlockingMultiCurrencyError,
   illegibleWithReceipt = false,
 }) {
   if (submitting || reservationExpired) return null
@@ -1437,7 +1443,6 @@ function portalNewOrderPayMissingHint({
   }
   if (fileArrLen === 0) return '⚠️ Sube la foto o el PDF de tu comprobante.'
   if (isAnalyzing) return '⚠️ Esperando a que la IA procese el importe del comprobante…'
-  if (hasBlockingMultiCurrencyError) return '⚠️ Corrige el error indicado más arriba antes de enviar.'
   if (illegibleWithReceipt) {
     return 'ℹ️ No pudimos leer el monto automáticamente. Puedes enviar el comprobante; un operador lo revisará.'
   }
@@ -2336,31 +2341,6 @@ function ClientPortalPageInner() {
   const [contactLocalNumber, setContactLocalNumber] = useState('')
   const [contactSaving, setContactSaving] = useState(false)
   const [contactErr, setContactErr] = useState(null)
-  const [currencyMismatchConfirm, setCurrencyMismatchConfirm] = useState(null)
-  const currencyMismatchConfirmRef = useRef(null)
-
-  const requestPortalCurrencyMismatchConfirm = useCallback((detected, expected) => {
-    return new Promise((resolve) => {
-      currencyMismatchConfirmRef.current = resolve
-      setCurrencyMismatchConfirm({ detected, expected })
-    })
-  }, [])
-
-  const closePortalCurrencyMismatchConfirm = useCallback((accepted) => {
-    const resolve = currencyMismatchConfirmRef.current
-    currencyMismatchConfirmRef.current = null
-    setCurrencyMismatchConfirm(null)
-    if (resolve) resolve(Boolean(accepted))
-  }, [])
-
-  const confirmPortalCurrencyMismatchIfNeeded = useCallback(
-    async (extractedCurrency, accountCurrency) => {
-      const detail = portalCurrencyMismatchDetail(extractedCurrency, accountCurrency)
-      if (!detail) return true
-      return requestPortalCurrencyMismatchConfirm(detail.detected, detail.expected)
-    },
-    [requestPortalCurrencyMismatchConfirm],
-  )
 
   const phoneCountryOptions = useMemo(() => phoneCountrySelectOptions(), [])
 
@@ -5100,22 +5080,17 @@ function ClientPortalPageInner() {
         }))
         return
       }
-      const allowedPm = portalParentMethods(salePayTree)
-      const allowedPmIds = new Set(allowedPm.map((m) => Number(m.id)))
-      if (allowedPmIds.size && !allowedPmIds.has(Number(pm))) {
-        setSubmitErrorBySale((p) => ({ ...p, [sid]: 'Método de pago no permitido para este pedido.' }))
-        return
-      }
-      const allowedAccIds = new Set(accs.map((a) => Number(a.id)))
-      if (allowedAccIds.size && dep && !allowedAccIds.has(Number(dep))) {
-        setSubmitErrorBySale((p) => ({ ...p, [sid]: 'Cuenta no permitida para este pedido.' }))
-        return
-      }
-
       const paidStr = String(paidAmountBySale[sid] ?? '').trim().replace(',', '.')
       const paidParsed = parseFloat(paidStr)
       const manualEdit = Boolean(isManuallyEditedBySale[sid])
       const aiResult = aiResultBySale[sid]
+      const depIdForConfirm = dep || (accs[0] ? String(accs[0].id) : '')
+      const selAccForConfirm = accs.find((d) => String(d.id) === String(depIdForConfirm))
+      if (
+        !confirmPortalCurrencyMismatchSubmit(aiResult?.extracted_currency, selAccForConfirm?.currency)
+      ) {
+        return
+      }
       const illegible = isIllegibleReceiptAi(aiResult) && !manualEdit
 
       if (manualEdit) {
@@ -5136,6 +5111,18 @@ function ClientPortalPageInner() {
         return
       }
 
+      const allowedPm = portalParentMethods(salePayTree)
+      const allowedPmIds = new Set(allowedPm.map((m) => Number(m.id)))
+      if (allowedPmIds.size && !allowedPmIds.has(Number(pm))) {
+        setSubmitErrorBySale((p) => ({ ...p, [sid]: 'Método de pago no permitido para este pedido.' }))
+        return
+      }
+      const allowedAccIds = new Set(accs.map((a) => Number(a.id)))
+      if (allowedAccIds.size && dep && !allowedAccIds.has(Number(dep))) {
+        setSubmitErrorBySale((p) => ({ ...p, [sid]: 'Cuenta no permitida para este pedido.' }))
+        return
+      }
+
       const submitAmount = manualEdit ? paidParsed : illegible ? 0 : paidParsed
 
       setSubmittingSaleId(sid)
@@ -5144,15 +5131,6 @@ function ClientPortalPageInner() {
         const depId = dep || (accs[0] ? String(accs[0].id) : '')
         if (!depId) {
           setSubmitErrorBySale((p) => ({ ...p, [sid]: 'Elige la cuenta donde realizaste el depósito.' }))
-          setSubmittingSaleId(null)
-          return
-        }
-        const selAcc = accs.find((d) => String(d.id) === String(depId))
-        const mismatchAcknowledged = await confirmPortalCurrencyMismatchIfNeeded(
-          aiResult?.extracted_currency,
-          selAcc?.currency,
-        )
-        if (!mismatchAcknowledged) {
           setSubmittingSaleId(null)
           return
         }
@@ -5205,7 +5183,6 @@ function ClientPortalPageInner() {
       receiptFilesBySale,
       thumbnailUrlsBySale,
       token,
-      confirmPortalCurrencyMismatchIfNeeded,
     ],
   )
 
@@ -5345,11 +5322,17 @@ function ClientPortalPageInner() {
     }
     const { method, account, amount, aiResult } = debtForm
     const receiptList = [...debtReceiptFiles].slice(0, 1).filter(Boolean)
+    const depId = account || (debtPaymentAccounts[0] ? String(debtPaymentAccounts[0].id) : '')
+    const selDebt = debtPaymentAccounts.find((d) => String(d.id) === String(depId))
+    if (
+      !confirmPortalCurrencyMismatchSubmit(aiResult?.extracted_currency, selDebt?.currency)
+    ) {
+      return
+    }
     if (!method) {
       setDebtForm((p) => ({ ...p, error: 'Elige un método de pago.' }))
       return
     }
-    const depId = account || (debtPaymentAccounts[0] ? String(debtPaymentAccounts[0].id) : '')
     if (!depId) {
       setDebtForm((p) => ({ ...p, error: 'Elige la cuenta donde realizaste el depósito.' }))
       return
@@ -5364,7 +5347,6 @@ function ClientPortalPageInner() {
       setDebtForm((p) => ({ ...p, error: 'Cuenta de depósito no permitida para esta deuda.' }))
       return
     }
-    const selDebt = debtPaymentAccounts.find((d) => String(d.id) === String(depId))
     const amt = parseFloat(String(amount).trim().replace(',', '.'))
     const illegible = isIllegibleReceiptAi(aiResult) && !debtForm.isManuallyEdited
     if (aiResult?._multi_currency) {
@@ -5391,11 +5373,6 @@ function ClientPortalPageInner() {
       setDebtForm((p) => ({ ...p, error: 'Adjunta el comprobante (imagen o PDF).' }))
       return
     }
-    const mismatchAcknowledged = await confirmPortalCurrencyMismatchIfNeeded(
-      aiResult?.extracted_currency,
-      selDebt?.currency,
-    )
-    if (!mismatchAcknowledged) return
     setDebtForm((p) => ({ ...p, submitting: true, error: null }))
     try {
       const fd = new FormData()
@@ -5449,7 +5426,6 @@ function ClientPortalPageInner() {
     api,
     token,
     loadPortal,
-    confirmPortalCurrencyMismatchIfNeeded,
   ])
 
   const submitDebtPaymentWithCredit = useCallback(async () => {
@@ -5700,6 +5676,12 @@ function ClientPortalPageInner() {
       const { paymentMethodId, depositAccountId, selectedAccount: selAcc, accounts: depList, methods: pmList } =
         paySel
 
+      if (
+        !confirmPortalCurrencyMismatchSubmit(form.aiResult?.extracted_currency, selAcc?.currency)
+      ) {
+        return
+      }
+
       if (!paymentMethodId) {
         patchRechargePayForm(setRechargeFormById, rid, { error: 'Elige un método de pago.' })
         return
@@ -5744,11 +5726,6 @@ function ClientPortalPageInner() {
         patchRechargePayForm(setRechargeFormById, rid, { error: 'Adjunta el comprobante (imagen o PDF).' })
         return
       }
-      const mismatchAcknowledged = await confirmPortalCurrencyMismatchIfNeeded(
-        form.aiResult?.extracted_currency,
-        selAcc?.currency,
-      )
-      if (!mismatchAcknowledged) return
       patchRechargePayForm(setRechargeFormById, rid, { submitting: true, error: null })
       try {
         const fd = new FormData()
@@ -5807,7 +5784,6 @@ function ClientPortalPageInner() {
       token,
       loadPortal,
       loadWalletRecharges,
-      confirmPortalCurrencyMismatchIfNeeded,
     ],
   )
 
@@ -6268,8 +6244,7 @@ function ClientPortalPageInner() {
         ? debtPaymentMethods.length === 0 || debtPaymentAccounts.length === 0
         : debtReceiptFiles.length === 0 ||
           (!debtIllegible &&
-            (!Number.isFinite(debtPaidOk) || !(debtPaidOk > 0))) ||
-          Boolean(debtMultiMsg)) ||
+            (!Number.isFinite(debtPaidOk) || !(debtPaidOk > 0)))) ||
       debtPaymentMethods.length === 0 ||
       debtPaymentAccounts.length === 0 ||
       (needsDebtDepositPick &&
@@ -6286,7 +6261,6 @@ function ClientPortalPageInner() {
       receiptCount: debtReceiptFiles.length,
       analyzing: debtForm.analyzing,
       paidOk: Number.isFinite(debtPaidOk) && debtPaidOk > 0,
-      hasBlockingMultiCurrencyError: Boolean(debtMultiMsg),
       illegibleWithReceipt: debtIllegible,
     })
     const debtCreditAvail = obligationReady
@@ -6571,7 +6545,7 @@ function ClientPortalPageInner() {
         inputClassName="mb-2 w-full rounded-xl border border-white/18 bg-gray-950/55 px-4 py-3 text-[15px] text-fuchsia-50 box-border"
       />
       {debtMultiMsg ? (
-        <p className="mb-2 text-[13px] font-semibold leading-relaxed text-red-300">{`❌ ${debtMultiMsg}`}</p>
+        <p className="mb-2 text-[13px] font-medium leading-relaxed text-amber-300">{debtMultiMsg}</p>
       ) : null}
       {debtCurrencyWarningMsg ? (
         <p className="mb-2 rounded-lg border border-amber-500/35 bg-amber-950/25 px-3 py-2 text-[13px] font-medium leading-relaxed text-amber-200">
@@ -6599,7 +6573,7 @@ function ClientPortalPageInner() {
       </>
       ) : null}
 
-      {debtForm.error && !(isDebtRetiro && retiroErpErrorByScope?.scope === 'debt') ? (
+      {debtForm.error && !(isDebtRetiro && retiroErpErrorByScope?.scope === 'debt') && !isLegacyPortalCurrencyMismatchError(debtForm.error) ? (
         <p style={{ margin: '0 0 10px', fontSize: 13, color: '#fecaca', textAlign: 'center' }}>{debtForm.error}</p>
       ) : null}
 
@@ -7025,8 +6999,7 @@ function ClientPortalPageInner() {
                 ? false
                 : rechargeReceiptFiles.length === 0 ||
                   (!featIllegible &&
-                    (!Number.isFinite(featPaidOk) || !(featPaidOk > 0))) ||
-                  Boolean(featMultiMsg))
+                    (!Number.isFinite(featPaidOk) || !(featPaidOk > 0))))
             const dragOverFeat = Boolean(rechargeForm.dragOver)
             const headlineAmt =
               isFeatPartial ? pend
@@ -7051,7 +7024,6 @@ function ClientPortalPageInner() {
               firstFileMime: rechargeReceiptFiles[0]?.type || '',
               isAnalyzing: rechargeForm.analyzing,
               paidOk: Number.isFinite(featPaidOk) && featPaidOk > 0,
-              hasBlockingMultiCurrencyError: Boolean(featMultiMsg),
               illegibleWithReceipt: featIllegible,
             })
             const featCreditAvail = portalCreditForCurrency(data, creditRowsDisplay, cur)
@@ -7499,12 +7471,7 @@ function ClientPortalPageInner() {
                       hintStyle={{ margin: '0 0 8px', fontSize: 12, opacity: 0.65 }}
                     />
                     {featMultiMsg ?
-                      <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-red-300">{`❌ ${featMultiMsg}`}</p>
-                    : null}
-                    {featCurrencyWarningMsg ?
-                      <p className="mt-2 mb-0 rounded-lg border border-amber-500/35 bg-amber-950/20 px-3 py-2 text-[13px] font-medium leading-relaxed text-amber-200">
-                        {featCurrencyWarningMsg}
-                      </p>
+                      <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-amber-300">{featMultiMsg}</p>
                     : null}
 
                     {rechargeForm.analyzing ?
@@ -7521,6 +7488,11 @@ function ClientPortalPageInner() {
                       </p>
                     : rechargeForm.aiResult != null ?
                       rechargeForm.aiResult.is_readable ?
+                        featCurrencyWarningMsg ? (
+                          <p className="mt-2 mb-3 rounded-lg border border-amber-500/35 bg-amber-950/20 px-3 py-2 text-[13px] font-medium leading-relaxed text-amber-200">
+                            {featCurrencyWarningMsg}
+                          </p>
+                        ) : (
                         (() => {
                           const detectedAmt = rechargeForm.aiResult.extracted_amount
                           const detectedCur = portalCurrencyIsoLabel(
@@ -7543,6 +7515,7 @@ function ClientPortalPageInner() {
                             </p>
                           )
                         })()
+                        )
                       : (
                         <p
                           style={{
@@ -7560,7 +7533,7 @@ function ClientPortalPageInner() {
                     </>
                     )}
 
-                    {rechargeForm.error ?
+                    {rechargeForm.error && !isLegacyPortalCurrencyMismatchError(rechargeForm.error) ?
                       <p
                         style={{
                           margin: '0 0 12px',
@@ -7739,7 +7712,6 @@ function ClientPortalPageInner() {
                     || (needsDepositPick && depList.length > 0 && !resolvedDepId)
                     || fileArr.length === 0
                     || (!saleIllegible && !paidOkMixed)
-                    || Boolean(multiCurrencyAiAlert)
 
                 const newOrderUxHint = portalNewOrderPayMissingHint({
                   submitting: submittingSaleId === sid,
@@ -7755,7 +7727,6 @@ function ClientPortalPageInner() {
                   firstFileMime: fileArr[0]?.type || '',
                   isAnalyzing,
                   paidOk,
-                  hasBlockingMultiCurrencyError: Boolean(multiCurrencyAiAlert),
                   illegibleWithReceipt: saleIllegible,
                 })
 
@@ -8158,13 +8129,8 @@ function ClientPortalPageInner() {
                           hintStyle={{ margin: '0 0 8px', fontSize: 12, opacity: 0.65 }}
                         />
                           {multiCurrencyAiAlert ? (
-                            <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-red-300">
-                              {multiCurrencyAiAlert}
-                            </p>
-                          ) : null}
-                          {currencyMismatchWarning ? (
-                            <p className="mt-2 mb-0 rounded-lg border border-amber-500/35 bg-amber-950/20 px-3 py-2 text-[13px] font-medium leading-relaxed text-amber-200">
-                              {currencyMismatchWarning}
+                            <p className="mt-2 mb-0 text-[13px] font-medium leading-relaxed text-amber-300">
+                              {multiCurrencyAiAlert.replace(/^❌\s*/, '')}
                             </p>
                           ) : null}
 
@@ -8197,6 +8163,13 @@ function ClientPortalPageInner() {
                                 </p>
                               )
                             }
+                            if (currencyMismatchWarning) {
+                              return (
+                                <p className="mt-2 mb-3 rounded-lg border border-amber-500/35 bg-amber-950/20 px-3 py-2 text-[13px] font-medium leading-relaxed text-amber-200">
+                                  {currencyMismatchWarning}
+                                </p>
+                              )
+                            }
                             const detectedAmt = aiResult.extracted_amount
                             const detectedCur = portalCurrencyIsoLabel(
                               aiResult.extracted_currency || saleCurrency,
@@ -8225,7 +8198,7 @@ function ClientPortalPageInner() {
                           </>
                         ) : null}
 
-                        {submitErrorBySale[sid] ? (
+                        {submitErrorBySale[sid] && !isLegacyPortalCurrencyMismatchError(submitErrorBySale[sid]) ? (
                           <p
                             style={{
                               margin: '0 0 12px',
@@ -9515,57 +9488,6 @@ function ClientPortalPageInner() {
           Este enlace es permanente: puedes volver cuando quieras para ver cambios en tu cuenta.
         </p>
       </div>
-
-      {currencyMismatchConfirm ? (
-        <div
-          className="fixed inset-0 z-[130] flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="portal-currency-mismatch-confirm-title"
-        >
-          <button
-            type="button"
-            aria-label="Cancelar envío"
-            className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm"
-            onClick={() => closePortalCurrencyMismatchConfirm(false)}
-          />
-          <div
-            className="relative z-10 w-full max-w-md rounded-2xl border border-amber-400/40 px-5 py-6 shadow-[0_24px_64px_rgba(0,0,0,0.55)]"
-            style={{
-              background: 'linear-gradient(160deg, rgba(69,26,3,0.97), rgba(15,23,42,0.98))',
-            }}
-          >
-            <h2
-              id="portal-currency-mismatch-confirm-title"
-              className="m-0 text-lg font-extrabold tracking-tight text-amber-50"
-            >
-              Confirmar envío del comprobante
-            </h2>
-            <p className="mt-3 mb-0 text-sm leading-relaxed text-slate-200/90">
-              {portalCurrencyMismatchConfirmMessage(
-                currencyMismatchConfirm.detected,
-                currencyMismatchConfirm.expected,
-              )}
-            </p>
-            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => closePortalCurrencyMismatchConfirm(false)}
-                className="rounded-xl border border-slate-500/45 bg-slate-900/60 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:bg-slate-800/80"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => closePortalCurrencyMismatchConfirm(true)}
-                className="rounded-xl border-0 bg-gradient-to-r from-amber-400 to-amber-300 px-4 py-2.5 text-sm font-bold text-slate-900 shadow-lg transition hover:brightness-105"
-              >
-                Sí, enviar comprobante
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {confirmingPurchase ? (
         <div
