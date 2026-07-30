@@ -99,6 +99,41 @@ def get_client_wallet_balance(client: Client, currency: str) -> Decimal:
     return client_wallet_balances_map(client).get(cur, Decimal("0"))
 
 
+def resolve_client_portal_wallet_for_auto_purchase(client: Client) -> tuple[Decimal, str]:
+    """
+    Saldo BaaS disponible y moneda a debitar en autocompra portal.
+
+    Espejo de ``resolvePortalWalletBalanceUsd`` (frontend): bucket USD → legacy USD →
+    ``saldo_baas`` (saldo primario del mini-dashboard).
+    """
+    balances = client_wallet_balances_map(client)
+    usd_bucket = balances.get("USD", Decimal("0"))
+    if usd_bucket > _WALLET_EPS:
+        return usd_bucket.quantize(Decimal("0.01")), "USD"
+
+    summary = compute_client_wallet_summary(client)
+    primary_cur = normalize_currency_code(str(summary.get("wallet_balance_currency") or "USD"), "USD")
+    primary_bal = Decimal(str(summary.get("wallet_balance") or 0)).quantize(Decimal("0.01"))
+
+    if primary_cur == "USD" and primary_bal > _WALLET_EPS:
+        return primary_bal, "USD"
+
+    legacy_col = Decimal(str(getattr(client, "wallet_balance", 0) or 0)).quantize(Decimal("0.01"))
+    if legacy_col > _WALLET_EPS:
+        return legacy_col, "USD"
+
+    if primary_bal > _WALLET_EPS:
+        return primary_bal, primary_cur
+
+    return Decimal("0"), "USD"
+
+
+def resolve_client_portal_wallet_balance_usd(client: Client) -> Decimal:
+    """Saldo efectivo mostrado en portal para compras BaaS (USD)."""
+    balance, _ = resolve_client_portal_wallet_for_auto_purchase(client)
+    return balance
+
+
 def list_client_wallet_balance_rows(
     client: Client,
     *,
