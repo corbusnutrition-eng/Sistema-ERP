@@ -45,7 +45,7 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-xl">
-        <h3 className="m-0 text-lg font-bold text-gray-900">
+        <h3 className="notranslate m-0 text-lg font-bold text-gray-900" translate="no">
           Editar tasa — {row.currency_code}
         </h3>
         <p className="m-0 mt-1 text-sm text-gray-500">
@@ -196,7 +196,7 @@ export default function ExchangeRatesWidget() {
   }
 
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white shadow-sm">
+    <div className="notranslate rounded-2xl border border-gray-100 bg-white shadow-sm" translate="no">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
         <div>
           <h2 className="m-0 text-lg font-bold text-gray-900">Tipos de Cambio P2P (USDT)</h2>
@@ -240,11 +240,13 @@ export default function ExchangeRatesWidget() {
           <p className="m-0 text-sm text-emerald-700">{syncMessage}</p>
         ) : null}
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto notranslate" translate="no">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="px-2 py-2 font-semibold">Moneda</th>
+                <th className="notranslate px-2 py-2 font-semibold" translate="no">
+                  Moneda
+                </th>
                 <th className="px-2 py-2 font-semibold">Tasa Binance</th>
                 <th className="px-2 py-2 font-semibold">Tasa activa</th>
                 {isAdmin ? <th className="px-2 py-2 font-semibold text-right">Acción</th> : null}
@@ -266,7 +268,12 @@ export default function ExchangeRatesWidget() {
               ) : (
                 filteredItems.map((row) => (
                   <tr key={row.currency_code} className="border-b border-gray-50 last:border-0">
-                    <td className="px-2 py-3 font-semibold text-gray-900">{row.currency_code}</td>
+                    <td
+                      className="notranslate px-2 py-3 font-semibold text-gray-900"
+                      translate="no"
+                    >
+                      {row.currency_code}
+                    </td>
                     <td className="px-2 py-3 text-gray-700">
                       <div>{formatRate(row.binance_rate)}</div>
                       <div className="text-[11px] text-gray-400">{formatUpdatedAt(row.updated_at)}</div>
