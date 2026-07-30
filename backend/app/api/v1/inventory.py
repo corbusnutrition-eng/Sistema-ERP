@@ -77,6 +77,10 @@ _SCREEN_DELETE_BLOCKED_DETAIL = (
     "Solo puedes eliminar pantallas disponibles en bodega."
 )
 
+_LOT_DELETE_BLOCKED_DETAIL = (
+    "Error: No se puede eliminar un lote que contiene pantallas ya asignadas a clientes."
+)
+
 
 def _catalog_product_kind(p: Product) -> str:
     if p.product_type:
@@ -1380,4 +1384,46 @@ def delete_screen_stock(screen_id: int, db: DbDep, _: InventoryDeleteDep) -> Non
             detail=_SCREEN_DELETE_BLOCKED_DETAIL,
         )
     db.delete(item)
+    db.commit()
+
+
+@router.delete("/lots/{batch_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_screen_stock_lot(batch_id: str, db: DbDep, _: InventoryDeleteDep) -> None:
+    """
+    Elimina un lote completo de pantallas en bodega (mismo ``batch_id``).
+
+    Solo procede si **todas** las filas del lote están disponibles (``free``).
+    También elimina el despiece de créditos Recarga Total asociado al lote, si existe.
+    """
+    bid = (batch_id or "").strip()
+    if not bid or len(bid) > 36:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="batch_id inválido.",
+        )
+
+    rows = (
+        db.query(ScreenStock)
+        .filter(func.trim(ScreenStock.batch_id) == bid)
+        .all()
+    )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lote no encontrado.",
+        )
+
+    if any(str(r.status or "free") in ("reserved", "held", "assigned") for r in rows):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_LOT_DELETE_BLOCKED_DETAIL,
+        )
+
+    for row in rows:
+        db.delete(row)
+
+    db.query(InventoryScreenCreditDrawdown).filter(
+        InventoryScreenCreditDrawdown.batch_id == bid,
+    ).delete(synchronize_session=False)
+
     db.commit()

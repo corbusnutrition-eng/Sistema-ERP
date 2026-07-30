@@ -486,23 +486,25 @@ function KpiCard({ label, value, color, bg, icon: Icon }) {
 
 // ── Row action buttons ─────────────────────────────────────────────────────────
 
-function RowActions({ onEdit, onDelete, hideDelete }) {
+function RowActions({ onEdit, onDelete, hideDelete, deleteTitle = 'Eliminar' }) {
   return (
     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-      <button
-        type="button"
-        onClick={onEdit}
-        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-        title="Editar"
-      >
-        <Pencil size={13} />
-      </button>
+      {onEdit ? (
+        <button
+          type="button"
+          onClick={onEdit}
+          className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+          title="Editar"
+        >
+          <Pencil size={13} />
+        </button>
+      ) : null}
       {hideDelete ? null : (
         <button
           type="button"
           onClick={onDelete}
           className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-          title="Eliminar"
+          title={deleteTitle}
         >
           <Trash2 size={13} />
         </button>
@@ -513,7 +515,7 @@ function RowActions({ onEdit, onDelete, hideDelete }) {
 
 // ── Delete confirmation modal ─────────────────────────────────────────────────
 
-function DeleteConfirmModal({ label, onConfirm, onCancel, loading }) {
+function DeleteConfirmModal({ title = 'Eliminar registro', description, label, onConfirm, onCancel, loading }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-xl w-[95%] sm:w-full max-w-sm p-6 space-y-5 max-h-[90vh] overflow-y-auto">
@@ -522,10 +524,14 @@ function DeleteConfirmModal({ label, onConfirm, onCancel, loading }) {
             <AlertTriangle size={18} className="text-red-500" />
           </div>
           <div>
-            <h3 className="font-semibold text-gray-900">Eliminar registro</h3>
+            <h3 className="font-semibold text-gray-900">{title}</h3>
             <p className="text-sm text-gray-500 mt-1 leading-relaxed">
-              ¿Estás seguro de que deseas eliminar <span className="font-medium text-gray-700">{label}</span>?
-              Esta acción no se puede deshacer.
+              {description ?? (
+                <>
+                  ¿Estás seguro de que deseas eliminar{' '}
+                  <span className="font-medium text-gray-700">{label}</span>? Esta acción no se puede deshacer.
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -835,12 +841,17 @@ export default function Inventory() {
     try {
       if (deleteTarget.type === 'full') {
         await api.delete(`/api/v1/inventory/accounts/${deleteTarget.id}`)
+      } else if (deleteTarget.type === 'batch') {
+        await api.delete(`/api/v1/inventory/lots/${encodeURIComponent(deleteTarget.batchId)}`)
       } else {
         await api.delete(`/api/v1/inventory/screens/${deleteTarget.id}`)
       }
       setDeleteTarget(null)
       refreshInventoryData()
-      showToast('Registro eliminado correctamente.')
+      setSummaryKey((k) => k + 1)
+      showToast(
+        deleteTarget.type === 'batch' ? 'Lote eliminado correctamente.' : 'Registro eliminado correctamente.',
+      )
     } catch (err) {
       showToast(err?.response?.data?.detail ?? 'Error al eliminar.', 'error')
     } finally {
@@ -1273,7 +1284,9 @@ export default function Inventory() {
       )}
       {deleteTarget && (
         <DeleteConfirmModal
+          title={deleteTarget.type === 'batch' ? 'Eliminar lote' : 'Eliminar registro'}
           label={deleteTarget.label}
+          description={deleteTarget.description}
           onConfirm={handleDelete}
           onCancel={() => setDeleteTarget(null)}
           loading={deleting}
@@ -1717,6 +1730,17 @@ export default function Inventory() {
                       parts.push(`${assignedC} asig.`)
                       const statusSummary = parts.join(' · ')
                       const batchShort = `${(batchId ?? '').slice(0, 8)}${batchId ? '…' : ''}`
+                      const batchAllFree =
+                        !String(batchId).startsWith('orphan-') && rows.every((r) => r.status === 'free')
+                      const openBatchDelete = (e) => {
+                        e.stopPropagation()
+                        setDeleteTarget({
+                          type: 'batch',
+                          batchId,
+                          label: `lote ${batchShort}`,
+                          description: `¿Estás seguro de que deseas eliminar este lote de inventario? Se eliminarán ${rows.length} pantalla${rows.length === 1 ? '' : 's'} disponibles. Esta acción no se puede deshacer.`,
+                        })
+                      }
 
                       return (
                         <Fragment key={batchId}>
@@ -1747,7 +1771,16 @@ export default function Inventory() {
                             </td>
                             <BatchCredentialsTd rows={rows} />
                             <td className="px-4 py-3 whitespace-nowrap text-gray-400 text-sm">—</td>
-                            <td className={`${stickyActionsTdClass(stripe, { muted: true, parentBatch: true })} text-gray-300 text-xs`}>—</td>
+                            <td
+                              className={`${stickyActionsTdClass(stripe, { muted: true, parentBatch: true })}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <RowActions
+                                hideDelete={!batchAllFree}
+                                deleteTitle="Eliminar lote"
+                                onDelete={openBatchDelete}
+                              />
+                            </td>
                           </tr>
                           {expanded && rows.map((scr, i) => (
                             <tr
