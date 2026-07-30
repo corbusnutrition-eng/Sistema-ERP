@@ -210,14 +210,6 @@ function portalSaleUnitPrice(product, assignedPricesMap, clientCurrency) {
 function portalAutoPurchaseUnitPriceUsd(product) {
   const usd = parseMoneyNum(product?.custom_price)
   if (Number.isFinite(usd) && usd > 0) return usd
-  const cur = String(product?.currency ?? '')
-    .trim()
-    .toUpperCase()
-    .slice(0, 10)
-  if (cur === 'USD') {
-    const localAsUsd = parseMoneyNum(product?.precio_venta_local)
-    if (Number.isFinite(localAsUsd) && localAsUsd > 0) return localAsUsd
-  }
   return NaN
 }
 
@@ -260,12 +252,12 @@ function parentPackageAcquisitionPrice(pkg, assignedPricesMap) {
 
 /** Costo de adquisición del distribuidor en USD (BaaS / sub-clientes). */
 function parentPackageAcquisitionPriceUsd(pkg, assignedPricesMapUsd) {
+  const usdFromApi = parseMoneyNum(pkg?.parent_floor_price_usd)
+  if (Number.isFinite(usdFromApi) && usdFromApi > 0) return usdFromApi
+
   const pid = String(pkg?.package_catalog_id ?? '')
   const fromMap = parseMoneyNum(assignedPricesMapUsd?.[pid])
   if (Number.isFinite(fromMap) && fromMap > 0) return fromMap
-
-  const usdFloor = parseMoneyNum(pkg?.parent_floor_price_usd)
-  if (Number.isFinite(usdFloor) && usdFloor > 0) return usdFloor
 
   const refUsd = parseMoneyNum(pkg?.reference_cost_usd)
   return Number.isFinite(refUsd) && refUsd > 0 ? refUsd : 0
@@ -3333,15 +3325,6 @@ function ClientPortalPageInner() {
       const customUsd = parseMoneyNum(row?.custom_price)
       if (pid && Number.isFinite(customUsd) && customUsd > 0) {
         out[pid] = customUsd
-        continue
-      }
-      const cur = String(row?.currency ?? 'USD')
-        .trim()
-        .toUpperCase()
-        .slice(0, 10)
-      if (cur === 'USD') {
-        const n = parseMoneyNum(row?.precio_venta_local)
-        if (pid && Number.isFinite(n) && n > 0) out[pid] = n
       }
     }
     return out
@@ -3383,7 +3366,7 @@ function ClientPortalPageInner() {
       const price = parseMoneyNum(raw)
       if (!Number.isFinite(price) || price <= 0) return 'Ingresa un precio válido.'
       if (price + 1e-9 < floor) {
-        return `El precio no puede ser menor a tu costo de adquisición de ${formatPortalWalletMoney(floor)}`
+        return `El precio no puede ser menor a tu costo de adquisición (${formatPortalWalletMoney(floor)})`
       }
       return null
     },
@@ -10638,7 +10621,7 @@ function ClientPortalPageInner() {
                     if (!Number.isFinite(price) || price <= 0) continue
                     if (price + 1e-9 < floor) {
                       setPricingErr(
-                        `El precio no puede ser menor a tu costo de adquisición de ${formatMoney(floor, clientBaseCurrency)}`,
+                        `El precio no puede ser menor a tu costo de adquisición (${formatPortalWalletMoney(floor)})`,
                       )
                       return
                     }

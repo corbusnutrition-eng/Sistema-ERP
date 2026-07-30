@@ -37,8 +37,8 @@ BAAS_TRANSFER_LEDGER_TYPES = frozenset(
 
 
 def acquisition_cost_message(floor_usd: float, *, currency: str = "USD") -> str:
-    cur = normalize_currency_code(currency, "USD")
-    return f"El precio no puede ser menor a tu costo de adquisición de {float(floor_usd):.2f} {cur}"
+    _ = currency  # Portal BaaS: mensaje siempre en USD
+    return f"El precio no puede ser menor a tu costo de adquisición (US$ {float(floor_usd):.2f})"
 
 
 def get_parent_acquisition_cost_usd(
@@ -47,9 +47,7 @@ def get_parent_acquisition_cost_usd(
     parent_id: int,
     package_catalog_id: int,
 ) -> float:
-    """
-    Costo de adquisición del distribuidor padre en su moneda base (precio asignado).
-    """
+    """Costo de adquisición del distribuidor padre en USD (``custom_price`` BaaS)."""
     parent = db.get(Client, int(parent_id))
     if parent is None:
         raise HTTPException(
@@ -66,24 +64,15 @@ def get_parent_acquisition_cost_usd(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No tienes autorización de venta para uno de los paquetes indicados.",
         )
-    from app.services.client_product_price_service import resolve_client_package_sale_price
+    from app.services.client_product_price_service import resolve_client_package_sale_price_usd
 
-    local_floor, _cur = resolve_client_package_sale_price(db, client=parent, cpp=row)
-    if local_floor > 0:
-        return float(local_floor)
     try:
-        cost = float(row.custom_price)
-    except (TypeError, ValueError):
+        return float(resolve_client_package_sale_price_usd(row))
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tarifa de adquisición inválida para uno de los paquetes.",
-        )
-    if cost <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tarifa de adquisición inválida para uno de los paquetes.",
-        )
-    return cost
+            detail="Tarifa de adquisición USD inválida para uno de los paquetes.",
+        ) from exc
 
 
 def validate_subclient_price_vs_acquisition_cost(
@@ -297,9 +286,6 @@ def _validate_subclient_price_items_for_parent(
             detail="No tienes paquetes Flujo autorizados para revender. Solicita tu matriz de precios al administrador.",
         )
     authorized_by_pkg = {int(p["package_catalog_id"]): p for p in authorized}
-    from app.services.client_currency_service import get_client_currency
-
-    parent_cur = get_client_currency(parent)
     if require_all_authorized:
         submitted_ids = {int(i.package_catalog_id) for i in items}
         missing = set(authorized_by_pkg.keys()) - submitted_ids
@@ -322,7 +308,7 @@ def _validate_subclient_price_items_for_parent(
         validate_subclient_price_vs_acquisition_cost(
             custom_price=float(item.custom_price),
             acquisition_cost_usd=acquisition,
-            currency=parent_cur,
+            currency="USD",
         )
         validated.append(
             ClientProductPriceItem(
@@ -391,7 +377,7 @@ def create_subclient_with_prices(
             db,
             child_id=int(child.id),
             items=validated,
-            price_currency=parent_cur,
+            price_currency="USD",
         )
 
         _apply_baas_transfer_parent_to_child(db, parent, child, amt, currency=parent_cur)
@@ -669,13 +655,12 @@ def upsert_subclient_product_prices(
     validated = _validate_subclient_price_items_for_parent(
         db, parent, items, require_all_authorized=False
     )
-    from app.services.client_currency_service import get_client_currency
 
     touched = _persist_client_product_prices_for_child(
         db,
         child_id=int(child.id),
         items=validated,
-        price_currency=get_client_currency(parent),
+        price_currency="USD",
     )
     db.commit()
     return touched
