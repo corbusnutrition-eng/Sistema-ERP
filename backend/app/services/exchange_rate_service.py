@@ -259,6 +259,41 @@ def update_exchange_rate(
     return row
 
 
+def reorder_exchange_rates(
+    db: Session,
+    *,
+    order_updates: Iterable[tuple[str, int]],
+) -> None:
+    """Actualiza ``display_order`` de varias monedas en una sola transacción."""
+    updates: list[tuple[str, int]] = []
+    seen_codes: set[str] = set()
+    for raw_code, raw_order in order_updates:
+        code = normalize_currency_code(str(raw_code or "").strip())
+        if not code or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        updates.append((code, int(raw_order)))
+
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debe indicar al menos una moneda para reordenar.",
+        )
+
+    now = now_ecuador()
+    for code, display_order in updates:
+        row = db.get(ExchangeRate, code)
+        if row is None or not row.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Moneda {code} no encontrada en la lista activa.",
+            )
+        row.display_order = display_order
+        row.updated_at = now
+
+    db.commit()
+
+
 def sync_exchange_rates_from_binance(
     db: Session,
     *,

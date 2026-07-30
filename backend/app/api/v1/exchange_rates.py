@@ -13,12 +13,14 @@ from app.schemas.exchange_rate import (
     ExchangeRateCreateRequest,
     ExchangeRateListResponse,
     ExchangeRateRead,
+    ExchangeRateReorderRequest,
     ExchangeRateSyncResult,
     ExchangeRateUpdateRequest,
 )
 from app.services.exchange_rate_service import (
     create_exchange_rate,
     list_exchange_rates,
+    reorder_exchange_rates,
     resolve_active_rate,
     sync_exchange_rates_from_binance,
     update_exchange_rate,
@@ -62,6 +64,19 @@ def post_exchange_rate(
     """Agrega (o reactiva) una moneda y obtiene su tasa desde Open Exchange Rates."""
     row = create_exchange_rate(db, currency_code=payload.currency_code)
     return _to_read(row)
+
+
+@router.post("/reorder", status_code=204)
+def post_exchange_rates_reorder(
+    payload: ExchangeRateReorderRequest,
+    db: DbDep,
+    _: AdminDep,
+) -> None:
+    """Actualiza ``display_order`` de varias monedas en una sola transacción."""
+    reorder_exchange_rates(
+        db,
+        order_updates=[(item.currency_code, item.display_order) for item in payload.items],
+    )
 
 
 @router.put("/{currency_code}", response_model=ExchangeRateRead)

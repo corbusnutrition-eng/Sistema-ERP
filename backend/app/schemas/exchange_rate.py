@@ -29,6 +29,15 @@ class ExchangeRateUpdateRequest(BaseModel):
     display_order: Optional[int] = Field(default=None, ge=0)
 
 
+class ExchangeRateOrderItem(BaseModel):
+    currency_code: str = Field(..., min_length=3, max_length=10)
+    display_order: int = Field(..., ge=0)
+
+
+class ExchangeRateReorderRequest(BaseModel):
+    items: list[ExchangeRateOrderItem] = Field(..., min_length=1)
+
+
 class ExchangeRateSyncResult(BaseModel):
     ok: bool = True
     synced: int = Field(ge=0)

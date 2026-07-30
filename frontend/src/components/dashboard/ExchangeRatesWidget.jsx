@@ -233,11 +233,22 @@ export default function ExchangeRatesWidget() {
     setPage(1)
   }, [search])
 
+  const sortByDisplayOrder = useCallback((list) => {
+    return [...list].sort((a, b) => {
+      const oa = Number(a.display_order ?? 0)
+      const ob = Number(b.display_order ?? 0)
+      if (oa !== ob) return oa - ob
+      return String(a.currency_code).localeCompare(String(b.currency_code))
+    })
+  }, [])
+
+  const sortedItems = useMemo(() => sortByDisplayOrder(items), [items, sortByDisplayOrder])
+
   const filteredItems = useMemo(() => {
     const q = search.trim().toUpperCase()
-    if (!q) return items
-    return items.filter((row) => String(row?.currency_code ?? '').toUpperCase().includes(q))
-  }, [items, search])
+    if (!q) return sortedItems
+    return sortedItems.filter((row) => String(row?.currency_code ?? '').toUpperCase().includes(q))
+  }, [sortedItems, search])
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE)),
@@ -253,17 +264,17 @@ export default function ExchangeRatesWidget() {
     return filteredItems.slice(start, start + PAGE_SIZE)
   }, [filteredItems, page])
 
-  const mergeRowUpdate = useCallback((updated) => {
-    setItems((prev) => {
-      const next = prev.map((row) => (row.currency_code === updated.currency_code ? updated : row))
-      return [...next].sort((a, b) => {
-        const oa = Number(a.display_order ?? 0)
-        const ob = Number(b.display_order ?? 0)
-        if (oa !== ob) return oa - ob
-        return String(a.currency_code).localeCompare(String(b.currency_code))
+  const mergeRowUpdate = useCallback(
+    (updated) => {
+      setItems((prev) => {
+        const next = prev.map((row) =>
+          row.currency_code === updated.currency_code ? updated : row,
+        )
+        return sortByDisplayOrder(next)
       })
-    })
-  }, [])
+    },
+    [sortByDisplayOrder],
+  )
 
   const patchRow = useCallback(
     async (currencyCode, payload, { silent = false } = {}) => {
@@ -288,26 +299,77 @@ export default function ExchangeRatesWidget() {
     [isAdmin, mergeRowUpdate],
   )
 
-  const moveRowOrder = useCallback(
-    async (row, direction) => {
-      if (!isAdmin || reorderingCode) return
-      const list = filteredItems
-      const idx = list.findIndex((r) => r.currency_code === row.currency_code)
-      const targetIdx = direction === 'up' ? idx - 1 : idx + 1
-      if (idx < 0 || targetIdx < 0 || targetIdx >= list.length) return
+  const persistReorder = useCallback(
+    async (payload) => {
+      await api.post('/api/v1/exchange-rates/reorder', { items: payload })
+    },
+    [],
+  )
 
-      const other = list[targetIdx]
-      setReorderingCode(row.currency_code)
+  const swapDisplayOrder = useCallback(
+    async (globalIndex, direction) => {
+      if (!isAdmin || reorderingCode) return
+      const targetIndex = direction === 'up' ? globalIndex - 1 : globalIndex + 1
+      if (
+        globalIndex < 0 ||
+        targetIndex < 0 ||
+        targetIndex >= sortedItems.length ||
+        globalIndex >= sortedItems.length
+      ) {
+        return
+      }
+
+      const current = sortedItems[globalIndex]
+      const other = sortedItems[targetIndex]
+      const currentOrder = Number(current.display_order ?? 0)
+      const otherOrder = Number(other.display_order ?? 0)
+
+      const reorderPayload = [
+        { currency_code: current.currency_code, display_order: otherOrder },
+        { currency_code: other.currency_code, display_order: currentOrder },
+      ]
+
+      const previousItems = items
+      setReorderingCode(current.currency_code)
+      setItems((prev) =>
+        sortByDisplayOrder(
+          prev.map((row) => {
+            if (row.currency_code === current.currency_code) {
+              return { ...row, display_order: otherOrder }
+            }
+            if (row.currency_code === other.currency_code) {
+              return { ...row, display_order: currentOrder }
+            }
+            return row
+          }),
+        ),
+      )
+
       try {
-        await Promise.all([
-          patchRow(row.currency_code, { display_order: other.display_order }, { silent: true }),
-          patchRow(other.currency_code, { display_order: row.display_order }, { silent: true }),
-        ])
+        await persistReorder(reorderPayload)
+      } catch (err) {
+        setItems(previousItems)
+        const detail = err?.response?.data?.detail
+        setError(typeof detail === 'string' ? detail : 'No se pudo reordenar las monedas.')
       } finally {
         setReorderingCode(null)
       }
     },
-    [filteredItems, isAdmin, patchRow, reorderingCode],
+    [isAdmin, items, persistReorder, reorderingCode, sortByDisplayOrder, sortedItems],
+  )
+
+  const handleMoveUp = useCallback(
+    (globalIndex) => {
+      void swapDisplayOrder(globalIndex, 'up')
+    },
+    [swapDisplayOrder],
+  )
+
+  const handleMoveDown = useCallback(
+    (globalIndex) => {
+      void swapDisplayOrder(globalIndex, 'down')
+    },
+    [swapDisplayOrder],
   )
 
   const handleSync = async () => {
@@ -458,7 +520,7 @@ export default function ExchangeRatesWidget() {
                 </tr>
               ) : (
                 paginatedItems.map((row) => {
-                  const globalIdx = filteredItems.findIndex(
+                  const globalIdx = sortedItems.findIndex(
                     (r) => r.currency_code === row.currency_code,
                   )
                   const alert = hasMarginAlert(row)
@@ -470,10 +532,8 @@ export default function ExchangeRatesWidget() {
                             <div className="flex flex-col gap-0.5">
                               <button
                                 type="button"
-                                disabled={
-                                  reorderingCode != null || globalIdx <= 0
-                                }
-                                onClick={() => void moveRowOrder(row, 'up')}
+                                disabled={reorderingCode != null || globalIdx <= 0}
+                                onClick={() => handleMoveUp(globalIdx)}
                                 className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30"
                                 aria-label={`Subir ${row.currency_code}`}
                               >
@@ -484,9 +544,9 @@ export default function ExchangeRatesWidget() {
                                 disabled={
                                   reorderingCode != null ||
                                   globalIdx < 0 ||
-                                  globalIdx >= filteredItems.length - 1
+                                  globalIdx >= sortedItems.length - 1
                                 }
-                                onClick={() => void moveRowOrder(row, 'down')}
+                                onClick={() => handleMoveDown(globalIdx)}
                                 className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-30"
                                 aria-label={`Bajar ${row.currency_code}`}
                               >
