@@ -1,4 +1,4 @@
-"""API de tipos de cambio Binance P2P con override manual."""
+"""API de tipos de cambio de mercado USD con override manual."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def post_exchange_rates_sync(
     elif failed:
         message = f"Sincronizadas {synced} moneda(s). Fallaron: {', '.join(failed)}."
     else:
-        message = f"Sincronizadas {synced} moneda(s) desde Binance P2P."
+        message = f"Sincronizadas {synced} moneda(s) desde Open Exchange Rates."
     return ExchangeRateSyncResult(
         synced=synced,
         failed=failed,

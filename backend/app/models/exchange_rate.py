@@ -11,7 +11,7 @@ from app.timezone_utils import now_ecuador
 
 
 class ExchangeRate(Base):
-    """Tasa USDT/fiat desde Binance P2P con override manual opcional."""
+    """Tasa USD/fiat de mercado con override manual opcional."""
 
     __tablename__ = "exchange_rates"
 

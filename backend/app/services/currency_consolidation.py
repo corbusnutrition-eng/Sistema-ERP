@@ -90,7 +90,7 @@ def get_last_exchange_rate(db: Session, currency: str) -> tuple[float, bool]:
     """
     Última tasa usada en la moneda (venta, pago o recarga BaaS), para autollenar formularios.
 
-    Prioridad: tabla ``exchange_rates`` (Binance/override manual) → historial transaccional.
+    Prioridad: tabla ``exchange_rates`` (mercado USD/override manual) → historial transaccional.
 
     Returns:
         (exchange_rate, from_history) — ``from_history`` es False si no hay registros previos.

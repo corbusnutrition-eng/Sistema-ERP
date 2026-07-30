@@ -1,4 +1,9 @@
-"""Extracción de tipos de cambio desde Binance P2P (USDT vs fiat)."""
+"""
+Proveedor de tasas de cambio USD → fiat (Open Exchange Rates).
+
+Mantiene nombres legacy ``fetch_binance_p2p_*`` para no romper imports del scheduler
+y ``exchange_rate_service``; la columna BD ``binance_rate`` almacena la tasa de mercado.
+"""
 
 from __future__ import annotations
 
@@ -9,21 +14,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-BINANCE_P2P_SEARCH_URL = "https://p2p.binance.com/bapi/c2c/v2/public/c2c/adv/search"
-DEFAULT_ROWS = 5
-DEFAULT_SAMPLE_SIZE = 5
-
-BINANCE_P2P_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "*/*",
-    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-    "Content-Type": "application/json",
-    "Origin": "https://p2p.binance.com",
-    "Referer": "https://p2p.binance.com/es/trade/buy/USDT",
-}
+OPEN_EXCHANGE_RATES_URL = "https://open.er-api.com/v6/latest/USD"
+DEFAULT_TIMEOUT = 15.0
 
 
 def _response_debug_snippet(response: httpx.Response, *, limit: int = 500) -> str:
@@ -34,143 +26,113 @@ def _response_debug_snippet(response: httpx.Response, *, limit: int = 500) -> st
         return (response.text or "")[:limit]
 
 
-def _is_success_code(code: object) -> bool:
-    return code in (None, "000000", 0, "0", 200, "200")
-
-
-def _parse_prices(adv_list: list[dict]) -> list[float]:
-    prices: list[float] = []
-    for adv in adv_list:
-        if not isinstance(adv, dict):
-            continue
-        raw = adv.get("adv", {}).get("price") if isinstance(adv.get("adv"), dict) else adv.get("price")
-        try:
-            price = float(raw)
-        except (TypeError, ValueError):
-            continue
-        if price > 0:
-            prices.append(price)
-    return prices
-
-
-def _build_binance_payload(fiat_code: str, *, rows: int = DEFAULT_ROWS) -> dict:
-    """Payload completo requerido por la API pública P2P de Binance (v2)."""
-    return {
-        "fiat": fiat_code,
-        "page": 1,
-        "rows": max(3, min(int(rows), 20)),
-        "tradeType": "BUY",
-        "asset": "USDT",
-        "countries": [],
-        "proMerchantAds": False,
-        "shieldMerchantAds": False,
-        "publisherType": None,
-        "payTypes": [],
-        "classifies": ["mass", "profession"],
-    }
-
-
-def fetch_binance_p2p_rate(
-    fiat_code: str,
-    *,
-    rows: int = DEFAULT_ROWS,
-    sample_size: int = DEFAULT_SAMPLE_SIZE,
-    timeout: float = 15.0,
-) -> float | None:
+def fetch_usd_market_rates(*, timeout: float = DEFAULT_TIMEOUT) -> dict[str, float] | None:
     """
-    Consulta Binance P2P y devuelve el promedio de los primeros anuncios BUY USDT.
+    GET único a Open Exchange Rates (base USD).
 
-    ``tradeType=BUY`` → precio en fiat por 1 USDT (equivalente operativo a 1 USD).
+    Returns:
+        Diccionario ``{ "BOB": 6.91, "COP": 3950.5, ... }`` o ``None`` si falla.
     """
-    fiat = str(fiat_code or "").strip().upper()
-    if not fiat or fiat in {"USD", "USDT", "USDC"}:
-        return None
-
-    payload = _build_binance_payload(fiat, rows=rows)
-
     try:
-        with httpx.Client(timeout=timeout, headers=BINANCE_P2P_HEADERS) as client:
-            response = client.post(BINANCE_P2P_SEARCH_URL, json=payload)
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(OPEN_EXCHANGE_RATES_URL)
         status = int(response.status_code)
         if status != 200:
             logger.warning(
-                "Binance P2P HTTP %s para %s — cuerpo: %s",
+                "Open Exchange Rates HTTP %s — cuerpo: %s",
                 status,
-                fiat,
                 _response_debug_snippet(response),
             )
             return None
         body = response.json()
     except Exception:
-        logger.exception("Error de red consultando Binance P2P para %s", fiat)
+        logger.exception("Error de red consultando Open Exchange Rates")
         return None
 
     if not isinstance(body, dict):
+        logger.warning("Open Exchange Rates respuesta no-JSON: %s", str(body)[:500])
+        return None
+
+    if str(body.get("result") or "").lower() != "success":
         logger.warning(
-            "Binance P2P respuesta no-JSON para %s: %s",
-            fiat,
+            "Open Exchange Rates result=%s — respuesta: %s",
+            body.get("result"),
             str(body)[:500],
         )
         return None
 
-    api_code = body.get("code")
-    if not _is_success_code(api_code):
+    raw_rates = body.get("rates")
+    if not isinstance(raw_rates, dict) or not raw_rates:
         logger.warning(
-            "Binance P2P code=%s message=%s para %s — payload=%s",
-            api_code,
-            body.get("message") or body.get("msg"),
-            fiat,
+            "Open Exchange Rates sin diccionario rates — respuesta: %s",
             str(body)[:500],
         )
         return None
 
-    data = body.get("data")
-    if not isinstance(data, list):
-        logger.warning(
-            "Binance P2P sin lista data para %s — respuesta: %s",
-            fiat,
-            str(body)[:500],
-        )
+    parsed: dict[str, float] = {}
+    for code, value in raw_rates.items():
+        cur = str(code or "").strip().upper()
+        if not cur:
+            continue
+        try:
+            rate = float(value)
+        except (TypeError, ValueError):
+            continue
+        if rate > 0:
+            parsed[cur] = round(rate, 6)
+
+    if not parsed:
+        logger.warning("Open Exchange Rates: ninguna tasa parseable en la respuesta.")
         return None
 
-    if len(data) == 0:
-        logger.warning(
-            f"Binance devolvió data vacía para {fiat}. "
-            "La IP del servidor podría estar restringida silenciosamente para datos P2P."
-        )
-        logger.warning(
-            "Binance P2P data vacía para %s (HTTP 200, code=%s) — respuesta: %s",
-            fiat,
-            api_code,
-            str(body)[:500],
-        )
-        return None
+    logger.info("Open Exchange Rates: %s monedas cargadas (base USD).", len(parsed))
+    return parsed
 
-    prices = _parse_prices(data)[: max(3, min(int(sample_size), len(data)))]
-    if not prices:
-        logger.warning(
-            "Binance P2P sin precios parseables para %s — items=%s muestra=%s",
-            fiat,
-            len(data),
-            str(data[0])[:300] if data else "[]",
-        )
-        return None
 
-    avg = round(sum(prices) / len(prices), 6)
-    logger.info("Binance P2P %s → %.6f (muestra n=%s)", fiat, avg, len(prices))
-    return avg
+def fetch_market_rates_for_currencies(
+    fiat_codes: Iterable[str],
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> dict[str, float | None]:
+    """Resuelve tasas USD→fiat para una lista de códigos con una sola petición HTTP."""
+    codes = [str(c or "").strip().upper() for c in fiat_codes if str(c or "").strip()]
+    market = fetch_usd_market_rates(timeout=timeout)
+    if market is None:
+        return {code: None for code in codes}
+
+    out: dict[str, float | None] = {}
+    for code in codes:
+        if code in {"USD", "USDT", "USDC"}:
+            out[code] = 1.0
+            continue
+        rate = market.get(code)
+        if rate is None or rate <= 0:
+            logger.warning("Open Exchange Rates: moneda %s no encontrada en rates.", code)
+            out[code] = None
+        else:
+            out[code] = rate
+    return out
+
+
+def fetch_binance_p2p_rate(
+    fiat_code: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+    **_legacy_kwargs: object,
+) -> float | None:
+    """Alias legacy: devuelve tasa de mercado USD→``fiat_code`` vía Open Exchange Rates."""
+    fiat = str(fiat_code or "").strip().upper()
+    if not fiat or fiat in {"USD", "USDT", "USDC"}:
+        return None
+    rates = fetch_market_rates_for_currencies([fiat], timeout=timeout)
+    return rates.get(fiat)
 
 
 def fetch_binance_p2p_rates(
     fiat_codes: Iterable[str],
     *,
-    rows: int = DEFAULT_ROWS,
-    sample_size: int = DEFAULT_SAMPLE_SIZE,
+    timeout: float = DEFAULT_TIMEOUT,
+    **_legacy_kwargs: object,
 ) -> dict[str, float | None]:
-    out: dict[str, float | None] = {}
-    for raw in fiat_codes:
-        code = str(raw or "").strip().upper()
-        if not code:
-            continue
-        out[code] = fetch_binance_p2p_rate(code, rows=rows, sample_size=sample_size)
-    return out
+    """Alias legacy: tasas de mercado para múltiples monedas (una sola petición)."""
+    return fetch_market_rates_for_currencies(fiat_codes, timeout=timeout)

@@ -1,4 +1,4 @@
-"""Persistencia y sincronización de tasas Binance P2P con override manual."""
+"""Persistencia y sincronización de tasas de mercado USD con override manual."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.currency_utils import normalize_currency_code
 from app.models.exchange_rate import ExchangeRate
-from app.services.binance_p2p_service import fetch_binance_p2p_rate
+from app.services.binance_p2p_service import fetch_market_rates_for_currencies
 from app.timezone_utils import now_ecuador
 
 logger = logging.getLogger(__name__)
@@ -143,23 +143,25 @@ def sync_exchange_rates_from_binance(
     fiat_codes: Iterable[str] | None = None,
 ) -> tuple[int, list[str]]:
     """
-    Actualiza ``binance_rate`` por moneda. Si Binance falla, conserva la tasa anterior.
+    Actualiza ``binance_rate`` (tasa mercado USD) por moneda vía Open Exchange Rates.
+
+    Si la API falla o una moneda no viene en la respuesta, conserva la tasa anterior.
 
     Returns:
         (synced_count, failed_codes)
     """
     codes = [normalize_currency_code(c) for c in (fiat_codes or get_configured_fiat_codes())]
+    active_codes = [c for c in codes if c not in {"USD", "USDT", "USDC"}]
+    market_rates = fetch_market_rates_for_currencies(active_codes)
     synced = 0
     failed: list[str] = []
 
-    for code in codes:
-        if code in {"USD", "USDT", "USDC"}:
-            continue
+    for code in active_codes:
         row = _ensure_row(db, code)
-        rate = fetch_binance_p2p_rate(code)
+        rate = market_rates.get(code)
         if rate is None:
             failed.append(code)
-            logger.warning("Sync Binance omitido para %s; se conserva tasa previa.", code)
+            logger.warning("Sync mercado omitido para %s; se conserva tasa previa.", code)
             continue
         row.binance_rate = rate
         row.updated_at = now_ecuador()

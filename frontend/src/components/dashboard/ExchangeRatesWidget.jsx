@@ -49,7 +49,7 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
           Editar tasa — {row.currency_code}
         </h3>
         <p className="m-0 mt-1 text-sm text-gray-500">
-          Unidades de moneda local por 1 USDT (referencia Binance P2P).
+          Unidades de moneda local por 1 USD (referencia mercado internacional).
         </p>
 
         <div className="mt-4 space-y-4">
@@ -75,12 +75,12 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
               onChange={(e) => setUseManual(e.target.checked)}
               className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
             />
-            Usar tasa manual (ignorar Binance)
+            Usar tasa manual (ignorar mercado)
           </label>
 
           {row.binance_rate != null ? (
             <p className="m-0 text-xs text-gray-400">
-              Binance actual: {formatRate(row.binance_rate)} · actualizado{' '}
+              Mercado actual: {formatRate(row.binance_rate)} · actualizado{' '}
               {formatUpdatedAt(row.updated_at)}
             </p>
           ) : null}
@@ -168,7 +168,7 @@ export default function ExchangeRatesWidget() {
       await loadRates()
     } catch (err) {
       const detail = err?.response?.data?.detail
-      setError(typeof detail === 'string' ? detail : 'No se pudo sincronizar con Binance.')
+      setError(typeof detail === 'string' ? detail : 'No se pudo sincronizar las tasas de mercado.')
     } finally {
       setSyncing(false)
     }
@@ -199,9 +199,9 @@ export default function ExchangeRatesWidget() {
     <div className="notranslate rounded-2xl border border-gray-100 bg-white shadow-sm" translate="no">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
         <div>
-          <h2 className="m-0 text-lg font-bold text-gray-900">Tipos de Cambio P2P (USDT)</h2>
+          <h2 className="m-0 text-lg font-bold text-gray-900">Tipos de Cambio (Mercado USD)</h2>
           <p className="m-0 mt-0.5 text-sm text-gray-500">
-            Referencia Binance P2P · actualización automática cada hora
+            Referencia Mercado Internacional (Open Exchange) · actualización automática cada hora
           </p>
         </div>
         {isAdmin ? (
@@ -247,7 +247,7 @@ export default function ExchangeRatesWidget() {
                 <th className="notranslate px-2 py-2 font-semibold" translate="no">
                   Moneda
                 </th>
-                <th className="px-2 py-2 font-semibold">Tasa Binance</th>
+                <th className="px-2 py-2 font-semibold">Tasa Mercado</th>
                 <th className="px-2 py-2 font-semibold">Tasa activa</th>
                 {isAdmin ? <th className="px-2 py-2 font-semibold text-right">Acción</th> : null}
               </tr>

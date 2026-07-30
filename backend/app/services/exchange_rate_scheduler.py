@@ -1,4 +1,4 @@
-"""Scheduler asyncio: sincroniza tasas Binance P2P cada hora."""
+"""Scheduler asyncio: sincroniza tasas de mercado USD cada hora."""
 
 from __future__ import annotations
 
