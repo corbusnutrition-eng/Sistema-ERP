@@ -126,6 +126,48 @@ def _send_tolerance_variation_alert(row: ExchangeRate) -> None:
     send_telegram_alert(message)
 
 
+def evaluate_and_notify_tolerance_for_row(row: ExchangeRate) -> None:
+    """Evalúa reglas de tolerancia para una moneda y envía alerta Telegram si aplica."""
+    if is_tolerance_breached(row):
+        _send_tolerance_variation_alert(row)
+
+
+def _manual_rates_differ(before: float | None, after: float | None) -> bool:
+    if before is None and after is None:
+        return False
+    if before is None or after is None:
+        return True
+    return round(float(before), 6) != round(float(after), 6)
+
+
+def _send_manual_rate_change_alert(row: ExchangeRate) -> None:
+    manual = _format_rate_for_telegram(row.manual_rate)
+    message = (
+        f"✍️ Cambio de Tasa Manual: El administrador ha actualizado la moneda {row.currency_code}. "
+        f"Nueva tasa manual: {manual}."
+    )
+    send_telegram_alert(message)
+
+
+def build_morning_summary_message(rows: list[ExchangeRate]) -> str:
+    lines = ["🌅 Resumen Matutino de Divisas (9 AM)"]
+    for row in rows:
+        active = resolve_active_rate(row)
+        rate_str = _format_rate_for_telegram(active)
+        source = "Manual" if row.use_manual_override else "Oficial"
+        lines.append(f"• {row.currency_code}: {rate_str} ({source})")
+    return "\n".join(lines)
+
+
+def send_morning_exchange_rate_report(db: Session) -> None:
+    """Envía resumen matutino de tasas activas por Telegram."""
+    rows = list_exchange_rates(db)
+    if not rows:
+        return
+    message = build_morning_summary_message(rows)
+    send_telegram_alert(message)
+
+
 def _notify_market_sync_and_evaluate_alerts(db: Session) -> None:
     rows = (
         db.query(ExchangeRate)
@@ -306,6 +348,7 @@ def update_exchange_rate(
     tolerance_type: str | None = None,
     tolerance_value: float | None = None,
     clear_tolerance: bool = False,
+    updated_fields: set[str] | None = None,
 ) -> ExchangeRate:
     code = normalize_currency_code(currency_code)
     row = db.get(ExchangeRate, code)
@@ -314,6 +357,10 @@ def update_exchange_rate(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Moneda no encontrada en la lista activa.",
         )
+
+    old_manual_rate = row.manual_rate
+    old_use_manual_override = bool(row.use_manual_override)
+    fields = updated_fields or set()
 
     if manual_rate is not None:
         if float(manual_rate) <= 0:
@@ -367,6 +414,22 @@ def update_exchange_rate(
     row.updated_at = now_ecuador()
     db.commit()
     db.refresh(row)
+
+    manual_rate_changed = "manual_rate" in fields and _manual_rates_differ(old_manual_rate, row.manual_rate)
+    override_changed = (
+        "use_manual_override" in fields
+        and bool(row.use_manual_override) != old_use_manual_override
+    )
+    if manual_rate_changed or override_changed:
+        try:
+            _send_manual_rate_change_alert(row)
+            evaluate_and_notify_tolerance_for_row(row)
+        except Exception:
+            logger.exception(
+                "Error enviando alertas Telegram tras cambio manual de %s.",
+                row.currency_code,
+            )
+
     return row
 
 

@@ -100,6 +100,7 @@ def put_exchange_rate(
         tolerance_type=payload.tolerance_type,
         tolerance_value=payload.tolerance_value,
         clear_tolerance=clear_tolerance,
+        updated_fields=set(payload_data.keys()),
     )
     return _to_read(row)
 
