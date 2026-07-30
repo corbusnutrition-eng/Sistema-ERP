@@ -36,6 +36,7 @@ export default function ClientRechargeRequestModal({
   token,
   api,
   clientBaseCurrency = 'USD',
+  allowedPaymentCurrencies = [],
   onSuccess,
   mode = 'create',
   rechargeId = null,
@@ -53,14 +54,23 @@ export default function ClientRechargeRequestModal({
     portalApi: api,
   })
 
+  const allowedCurrencySet = useMemo(() => {
+    const list = Array.isArray(allowedPaymentCurrencies) ? allowedPaymentCurrencies : []
+    return new Set(list.map((c) => normalizeCurrencyCode(c, '')).filter(Boolean))
+  }, [allowedPaymentCurrencies])
+
+  const hasPaymentCurrencies = allowedCurrencySet.size > 0
+
   const paymentCurrencyOptions = useMemo(() => {
-    const codes = new Set(['USD'])
+    if (!hasPaymentCurrencies) return []
+
+    const codes = new Set()
     for (const row of rates) {
       const code = normalizeCurrencyCode(row?.currency_code, '')
-      if (code) codes.add(code)
+      if (code && allowedCurrencySet.has(code)) codes.add(code)
     }
-    const base = normalizeCurrencyCode(clientBaseCurrency, 'USD')
-    if (base) codes.add(base)
+    if (allowedCurrencySet.has('USD')) codes.add('USD')
+
     return [...codes].sort((a, b) => a.localeCompare(b)).map((code) => {
       const meta = SALES_CURRENCIES.find((c) => c.code === code)
       return {
@@ -68,7 +78,7 @@ export default function ClientRechargeRequestModal({
         label: meta ? `${meta.flag ?? ''} ${meta.label}`.trim() : code,
       }
     })
-  }, [rates, clientBaseCurrency])
+  }, [rates, allowedCurrencySet, hasPaymentCurrencies])
 
   const paymentCurrencyCodes = useMemo(
     () => paymentCurrencyOptions.map((o) => o.value),
@@ -104,11 +114,15 @@ export default function ClientRechargeRequestModal({
   useEffect(() => {
     if (!open || isEditMode || ratesLoading) return
     const base = normalizeCurrencyCode(clientBaseCurrency, 'USD')
-    setPaymentCurrency((prev) => {
-      if (prev && paymentCurrencyCodes.includes(prev)) return prev
-      if (paymentCurrencyCodes.includes(base)) return base
-      return paymentCurrencyCodes[0] || 'USD'
-    })
+    if (paymentCurrencyCodes.length === 0) {
+      setPaymentCurrency('')
+      return
+    }
+    if (paymentCurrencyCodes.includes(base)) {
+      setPaymentCurrency(base)
+    } else {
+      setPaymentCurrency(paymentCurrencyCodes[0])
+    }
   }, [open, isEditMode, ratesLoading, clientBaseCurrency, paymentCurrencyCodes])
 
   async function handleSubmit(e) {
@@ -197,6 +211,9 @@ export default function ClientRechargeRequestModal({
   if (!open) return null
 
   const editCurLabel = normalizeCurrencyCode(editCurrency, 'USD')
+  const createBlockedNoPaymentMethods = !isEditMode && !ratesLoading && !hasPaymentCurrencies
+  const createBlockedNoCurrencyOptions =
+    !isEditMode && !ratesLoading && hasPaymentCurrencies && paymentCurrencyCodes.length === 0
 
   return (
     <div className="fixed inset-0 z-[130] flex items-center justify-center p-4" role="dialog" aria-modal="true">
@@ -279,7 +296,8 @@ export default function ClientRechargeRequestModal({
                   value={paymentCurrency}
                   onChange={setPaymentCurrency}
                   options={paymentCurrencyOptions}
-                  disabled={submitting || ratesLoading}
+                  disabled={submitting || ratesLoading || !hasPaymentCurrencies}
+                  placeholder="Selecciona moneda de pago…"
                   buttonClassName="rounded-lg border-slate-600 bg-slate-950 text-sm"
                 />
                 {ratesLoading ? (
@@ -287,7 +305,16 @@ export default function ClientRechargeRequestModal({
                     <Loader2 size={12} className="animate-spin" aria-hidden />
                     Cargando tasas del ERP…
                   </p>
-                ) : activeRate == null && paymentCurrency !== 'USD' ? (
+                ) : createBlockedNoPaymentMethods ? (
+                  <p className="mt-1.5 mb-0 text-[11px] text-amber-300">
+                    No tienes métodos de pago asignados en tu portal. Contacta a soporte para habilitar opciones de
+                    pago antes de solicitar una recarga.
+                  </p>
+                ) : createBlockedNoCurrencyOptions ? (
+                  <p className="mt-1.5 mb-0 text-[11px] text-amber-300">
+                    Ninguna de tus monedas de pago tiene tasa activa en el ERP. Contacta a soporte.
+                  </p>
+                ) : activeRate == null && paymentCurrency && paymentCurrency !== 'USD' ? (
                   <p className="mt-1.5 mb-0 text-[11px] text-amber-300">
                     No hay tasa activa para {paymentCurrency}. Elige otra moneda o contacta soporte.
                   </p>
@@ -326,7 +353,14 @@ export default function ClientRechargeRequestModal({
             </button>
             <button
               type="submit"
-              disabled={submitting || (!isEditMode && ratesLoading)}
+              disabled={
+                submitting
+                || (!isEditMode
+                  && (ratesLoading
+                    || !hasPaymentCurrencies
+                    || paymentCurrencyCodes.length === 0
+                    || !paymentCurrency))
+              }
               className="inline-flex items-center gap-2 rounded-xl border-0 bg-gradient-to-r from-indigo-500 via-violet-500 to-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-[0_10px_28px_rgba(99,102,241,0.35)] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? (

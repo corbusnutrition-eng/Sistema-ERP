@@ -1187,6 +1187,32 @@ function buildPortalPaymentTreeFromAssigned(data, currency) {
   return []
 }
 
+/** Monedas únicas soportadas por métodos/cuentas de depósito asignadas al portal (CRM). */
+function extractPortalPaymentCurrencies(portalData) {
+  const codes = new Set()
+  const add = (raw) => {
+    const c = normalizePortalCurrency(raw)
+    if (c) codes.add(c)
+  }
+
+  const methods = portalData?.assigned_payment_methods
+  if (Array.isArray(methods)) {
+    for (const m of methods) {
+      const nested = m?.deposit_accounts
+      if (Array.isArray(nested)) {
+        for (const acc of nested) add(acc?.currency)
+      }
+    }
+  }
+
+  const flat = portalData?.assigned_deposit_accounts
+  if (Array.isArray(flat)) {
+    for (const acc of flat) add(acc?.currency)
+  }
+
+  return [...codes].sort((a, b) => a.localeCompare(b))
+}
+
 function mergePortalPaymentTrees(primary, supplemental) {
   if (!supplemental.length) return primary
   if (!primary.length) return supplemental
@@ -3140,6 +3166,11 @@ function ClientPortalPageInner() {
     }
     return 'USD'
   }, [data?.client?.currency, data?.client?.wallet_balance_currency])
+
+  const portalPaymentCurrencies = useMemo(
+    () => extractPortalPaymentCurrencies(data),
+    [data?.assigned_payment_methods, data?.assigned_deposit_accounts],
+  )
 
   const openEditTrackedPurchase = useCallback(
     (item) => {
@@ -10572,6 +10603,7 @@ function ClientPortalPageInner() {
           token={token}
           api={api}
           clientBaseCurrency={clientBaseCurrency}
+          allowedPaymentCurrencies={portalPaymentCurrencies}
           onSuccess={(created) => void handleClientRechargeRequestSuccess(created)}
         />
       ) : null}
