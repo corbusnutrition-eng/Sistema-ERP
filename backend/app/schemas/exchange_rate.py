@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ExchangeRateRead(BaseModel):
@@ -13,6 +13,8 @@ class ExchangeRateRead(BaseModel):
     use_manual_override: bool = False
     is_active: bool = True
     display_order: int = 0
+    tolerance_type: Optional[Literal["percentage", "value"]] = None
+    tolerance_value: Optional[float] = None
     active_rate: Optional[float] = None
     updated_at: datetime.datetime
 
@@ -27,6 +29,16 @@ class ExchangeRateUpdateRequest(BaseModel):
     manual_rate: Optional[float] = Field(default=None, gt=0)
     use_manual_override: Optional[bool] = None
     display_order: Optional[int] = Field(default=None, ge=0)
+    tolerance_type: Optional[Literal["percentage", "value"]] = None
+    tolerance_value: Optional[float] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_tolerance_pair(self) -> "ExchangeRateUpdateRequest":
+        if self.tolerance_type is None:
+            return self
+        if self.tolerance_value is None or float(self.tolerance_value) <= 0:
+            raise ValueError("Indica un valor de tolerancia válido para la regla seleccionada.")
+        return self
 
 
 class ExchangeRateOrderItem(BaseModel):

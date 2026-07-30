@@ -7,6 +7,7 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  Settings,
 } from 'lucide-react'
 import api from '../../api/axios'
 import { useAuth } from '../../context/AuthContext'
@@ -59,22 +60,150 @@ function formatUpdatedAt(value) {
   }
 }
 
-function hasMarginAlert(row) {
-  if (!row?.use_manual_override) return false
+function computeToleranceBreach(row) {
+  if (!row?.use_manual_override) return null
+
+  const toleranceType = String(row?.tolerance_type ?? '').trim().toLowerCase()
+  const toleranceLimit = Number(row?.tolerance_value)
+  if (!toleranceType || !Number.isFinite(toleranceLimit) || toleranceLimit <= 0) return null
+
+  const official = Number(row?.binance_rate)
   const manual = Number(row?.manual_rate)
-  const market = Number(row?.binance_rate)
-  return Number.isFinite(manual) && manual > 0 && Number.isFinite(market) && market > manual
+  if (!Number.isFinite(official) || official <= 0 || !Number.isFinite(manual) || manual <= 0) {
+    return null
+  }
+
+  let diff
+  let message
+  if (toleranceType === 'value') {
+    diff = Math.abs(official - manual)
+    if (diff <= toleranceLimit) return null
+    message =
+      `Brecha absoluta de ${formatRate(diff)} supera el límite de ${formatRate(toleranceLimit)}. ` +
+      `Tasa oficial: ${formatRate(official)} | Tasa manual: ${formatRate(manual)}.`
+  } else if (toleranceType === 'percentage') {
+    diff = Math.abs((official - manual) / manual) * 100
+    if (diff <= toleranceLimit) return null
+    message =
+      `Variación del ${diff.toFixed(2)}% supera el límite del ${toleranceLimit.toFixed(2)}%. ` +
+      `Tasa oficial: ${formatRate(official)} | Tasa manual: ${formatRate(manual)}.`
+  } else {
+    return null
+  }
+
+  return { diff, message, toleranceType }
 }
 
-function MarginAlertIcon() {
+function ToleranceAlertIcon({ tooltip }) {
   return (
     <span
-      className="ml-1 inline-flex cursor-help text-base leading-none text-orange-500"
-      title="Alerta: La tasa oficial del mercado es mayor a tu tasa manual."
-      aria-label="Alerta: La tasa oficial del mercado es mayor a tu tasa manual."
+      className="ml-1 inline-flex animate-pulse cursor-help text-base leading-none text-red-500"
+      title={tooltip}
+      aria-label={tooltip}
     >
       ⚠️
     </span>
+  )
+}
+
+function ToleranceRulesModal({ open, row, saving, onClose, onSave }) {
+  const [ruleType, setRuleType] = useState('none')
+  const [ruleValue, setRuleValue] = useState('')
+
+  useEffect(() => {
+    if (!open || !row) return
+    const type = String(row.tolerance_type ?? '').trim().toLowerCase()
+    if (type === 'value' || type === 'percentage') {
+      setRuleType(type)
+      setRuleValue(
+        row.tolerance_value != null && Number(row.tolerance_value) > 0
+          ? String(row.tolerance_value)
+          : '',
+      )
+    } else {
+      setRuleType('none')
+      setRuleValue('')
+    }
+  }, [open, row])
+
+  if (!open || !row) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-xl">
+        <h3 className="notranslate m-0 text-lg font-bold text-gray-900" translate="no">
+          Reglas de tolerancia — {row.currency_code}
+        </h3>
+        <p className="m-0 mt-1 text-sm text-gray-500">
+          Alerta cuando la tasa oficial se aleje de tu tasa manual en uso.
+        </p>
+
+        <label className="mt-4 block">
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Tipo de regla
+          </span>
+          <select
+            value={ruleType}
+            onChange={(e) => setRuleType(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none ring-blue-500 focus:ring-2"
+          >
+            <option value="none">Ninguna</option>
+            <option value="value">Valor Absoluto</option>
+            <option value="percentage">Porcentaje (%)</option>
+          </select>
+        </label>
+
+        {ruleType !== 'none' ? (
+          <label className="mt-4 block">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+              {ruleType === 'percentage' ? 'Límite (%)' : 'Límite (valor absoluto)'}
+            </span>
+            <input
+              type="number"
+              min="0"
+              step={ruleType === 'percentage' ? '0.01' : '0.0001'}
+              value={ruleValue}
+              onChange={(e) => setRuleValue(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900 outline-none ring-blue-500 focus:ring-2"
+              placeholder={ruleType === 'percentage' ? 'Ej. 2.5' : 'Ej. 0.50'}
+            />
+          </label>
+        ) : null}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              if (ruleType === 'none') {
+                onSave({ tolerance_type: null, tolerance_value: null })
+                return
+              }
+              const parsed = Number(ruleValue)
+              if (!Number.isFinite(parsed) || parsed <= 0) {
+                window.alert('Ingresa un valor de tolerancia válido.')
+                return
+              }
+              onSave({
+                tolerance_type: ruleType,
+                tolerance_value: parsed,
+              })
+            }}
+            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? 'Guardando…' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -229,6 +358,7 @@ export default function ExchangeRatesWidget() {
   const [page, setPage] = useState(1)
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE)
   const [editingRow, setEditingRow] = useState(null)
+  const [toleranceRow, setToleranceRow] = useState(null)
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [addingCurrency, setAddingCurrency] = useState(false)
 
@@ -459,6 +589,12 @@ export default function ExchangeRatesWidget() {
     if (updated) setEditingRow(null)
   }
 
+  const handleSaveTolerance = async (payload) => {
+    if (!toleranceRow || saving) return
+    const updated = await patchRow(toleranceRow.currency_code, payload)
+    if (updated) setToleranceRow(null)
+  }
+
   const handleActiveSourceChange = async (row, useManual) => {
     if (!isAdmin) return
     if (useManual) {
@@ -576,7 +712,7 @@ export default function ExchangeRatesWidget() {
                   const globalIdx = sortedItems.findIndex(
                     (r) => r.currency_code === row.currency_code,
                   )
-                  const alert = hasMarginAlert(row)
+                  const toleranceBreach = computeToleranceBreach(row)
                   const isDragging = draggingCode === row.currency_code
                   const isDropTarget =
                     dragOverCode === row.currency_code && draggingCode !== row.currency_code
@@ -633,7 +769,9 @@ export default function ExchangeRatesWidget() {
                       <td className="px-2 py-3 tabular-nums text-gray-800">
                         <span className="inline-flex items-center">
                           {formatPersonalRate(row.manual_rate)}
-                          {alert ? <MarginAlertIcon /> : null}
+                          {toleranceBreach ? (
+                            <ToleranceAlertIcon tooltip={toleranceBreach.message} />
+                          ) : null}
                         </span>
                       </td>
                       <td className="px-2 py-3">
@@ -678,21 +816,34 @@ export default function ExchangeRatesWidget() {
                             }`}
                           >
                             {formatRate(row.active_rate)}
-                            {alert ? <MarginAlertIcon /> : null}
+                            {toleranceBreach ? (
+                              <ToleranceAlertIcon tooltip={toleranceBreach.message} />
+                            ) : null}
                           </span>
                         </div>
                       </td>
                       {isAdmin ? (
                         <td className="px-2 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => setEditingRow(row)}
-                            disabled={saving || reordering}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                            aria-label={`Editar tasa manual ${row.currency_code}`}
-                          >
-                            <Pencil size={14} />
-                          </button>
+                          <div className="inline-flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setToleranceRow(row)}
+                              disabled={saving || reordering}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                              aria-label={`Reglas de tolerancia ${row.currency_code}`}
+                            >
+                              <Settings size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingRow(row)}
+                              disabled={saving || reordering}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                              aria-label={`Editar tasa manual ${row.currency_code}`}
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          </div>
                         </td>
                       ) : null}
                     </tr>
@@ -776,6 +927,16 @@ export default function ExchangeRatesWidget() {
           if (!saving) setEditingRow(null)
         }}
         onSave={handleSaveEdit}
+      />
+
+      <ToleranceRulesModal
+        open={Boolean(toleranceRow)}
+        row={toleranceRow}
+        saving={saving}
+        onClose={() => {
+          if (!saving) setToleranceRow(null)
+        }}
+        onSave={handleSaveTolerance}
       />
     </div>
   )

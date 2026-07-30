@@ -36,6 +36,8 @@ class ExchangeRate(Base):
         default=0,
         server_default="0",
     )
+    tolerance_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    tolerance_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.currency_utils import normalize_currency_code
 from app.models.exchange_rate import ExchangeRate
 from app.services.binance_p2p_service import fetch_market_rates_for_currencies
+from app.services.telegram_service import send_telegram_alert
 from app.timezone_utils import now_ecuador
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,83 @@ def resolve_active_rate(row: ExchangeRate) -> float | None:
     if row.manual_rate is not None and float(row.manual_rate) > 0:
         return round(float(row.manual_rate), 6)
     return None
+
+
+def compute_tolerance_difference(row: ExchangeRate) -> float | None:
+    """Calcula la diferencia según tolerance_type. None si no aplica."""
+    tolerance_type = str(getattr(row, "tolerance_type", "") or "").strip().lower()
+    tolerance_value = getattr(row, "tolerance_value", None)
+    if tolerance_type not in {"percentage", "value"}:
+        return None
+    if tolerance_value is None or float(tolerance_value) <= 0:
+        return None
+    if not row.use_manual_override:
+        return None
+
+    official = row.binance_rate
+    manual = row.manual_rate
+    if official is None or manual is None:
+        return None
+    official_f = float(official)
+    manual_f = float(manual)
+    if official_f <= 0 or manual_f <= 0:
+        return None
+
+    if tolerance_type == "value":
+        return abs(official_f - manual_f)
+    return abs((official_f - manual_f) / manual_f) * 100
+
+
+def is_tolerance_breached(row: ExchangeRate) -> bool:
+    diff = compute_tolerance_difference(row)
+    if diff is None:
+        return False
+    tolerance_value = float(row.tolerance_value)  # type: ignore[arg-type]
+    return diff > tolerance_value
+
+
+def _format_rate_for_telegram(value: float | None) -> str:
+    if value is None or float(value) <= 0:
+        return "—"
+    return f"{float(value):,.4f}".rstrip("0").rstrip(".")
+
+
+def _build_market_update_message(rows: list[ExchangeRate]) -> str:
+    parts: list[str] = []
+    for row in rows:
+        if row.binance_rate is None or float(row.binance_rate) <= 0:
+            continue
+        parts.append(f"{row.currency_code}: {_format_rate_for_telegram(row.binance_rate)}")
+    if not parts:
+        return ""
+    return "🔄 Actualización de mercado: " + ", ".join(parts)
+
+
+def _send_tolerance_variation_alert(row: ExchangeRate) -> None:
+    official = _format_rate_for_telegram(row.binance_rate)
+    manual = _format_rate_for_telegram(row.manual_rate)
+    message = (
+        f"⚠️ ALERTA DE VARIACIÓN: La moneda {row.currency_code} tiene una brecha excesiva. "
+        f"Tasa Oficial: {official} | Tu Tasa Manual: {manual}. "
+        "Por favor, ingresa al panel para ajustar tu tasa manual."
+    )
+    send_telegram_alert(message)
+
+
+def _notify_market_sync_and_evaluate_alerts(db: Session) -> None:
+    rows = (
+        db.query(ExchangeRate)
+        .filter(ExchangeRate.is_active.is_(True))
+        .order_by(ExchangeRate.display_order.asc(), ExchangeRate.currency_code.asc())
+        .all()
+    )
+    summary = _build_market_update_message(rows)
+    if summary:
+        send_telegram_alert(summary)
+
+    for row in rows:
+        if is_tolerance_breached(row):
+            _send_tolerance_variation_alert(row)
 
 
 def _validate_currency_code(raw: str) -> str:
@@ -225,6 +303,9 @@ def update_exchange_rate(
     manual_rate: float | None = None,
     use_manual_override: bool | None = None,
     display_order: int | None = None,
+    tolerance_type: str | None = None,
+    tolerance_value: float | None = None,
+    clear_tolerance: bool = False,
 ) -> ExchangeRate:
     code = normalize_currency_code(currency_code)
     row = db.get(ExchangeRate, code)
@@ -247,11 +328,41 @@ def update_exchange_rate(
         if row.use_manual_override and (row.manual_rate is None or float(row.manual_rate) <= 0):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Indica una tasa personalizada válida antes de activarla.",
+                detail="Indica una tasa manual válida antes de activarla.",
             )
 
     if display_order is not None:
         row.display_order = int(display_order)
+
+    if clear_tolerance:
+        row.tolerance_type = None
+        row.tolerance_value = None
+    elif tolerance_type is not None:
+        normalized_type = str(tolerance_type).strip().lower()
+        if normalized_type not in {"percentage", "value"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="tolerance_type debe ser 'percentage' o 'value'.",
+            )
+        if tolerance_value is None or float(tolerance_value) <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Indica un valor de tolerancia válido.",
+            )
+        row.tolerance_type = normalized_type
+        row.tolerance_value = round(float(tolerance_value), 6)
+    elif tolerance_value is not None:
+        if float(tolerance_value) <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Indica un valor de tolerancia válido.",
+            )
+        if not row.tolerance_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selecciona un tipo de tolerancia antes de indicar el valor.",
+            )
+        row.tolerance_value = round(float(tolerance_value), 6)
 
     row.updated_at = now_ecuador()
     db.commit()
@@ -337,4 +448,11 @@ def sync_exchange_rates_from_binance(
         synced += 1
 
     db.commit()
+
+    if synced > 0:
+        try:
+            _notify_market_sync_and_evaluate_alerts(db)
+        except Exception:
+            logger.exception("Error enviando alertas Telegram tras sync de exchange rates.")
+
     return synced, failed

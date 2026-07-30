@@ -40,6 +40,8 @@ def _to_read(row) -> ExchangeRateRead:
         use_manual_override=bool(row.use_manual_override),
         is_active=bool(row.is_active),
         display_order=int(row.display_order or 0),
+        tolerance_type=row.tolerance_type,
+        tolerance_value=row.tolerance_value,
         active_rate=resolve_active_rate(row),
         updated_at=row.updated_at,
     )
@@ -86,12 +88,18 @@ def put_exchange_rate(
     db: DbDep,
     _: AdminDep,
 ) -> ExchangeRateRead:
+    payload_data = payload.model_dump(exclude_unset=True)
+    clear_tolerance = "tolerance_type" in payload_data and payload_data["tolerance_type"] is None
+
     row = update_exchange_rate(
         db,
         currency_code=normalize_currency_code(currency_code),
         manual_rate=payload.manual_rate,
         use_manual_override=payload.use_manual_override,
         display_order=payload.display_order,
+        tolerance_type=payload.tolerance_type,
+        tolerance_value=payload.tolerance_value,
+        clear_tolerance=clear_tolerance,
     )
     return _to_read(row)
 

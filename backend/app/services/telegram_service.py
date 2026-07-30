@@ -84,6 +84,39 @@ async def send_telegram_notification(message: str) -> bool:
         return False
 
 
+def send_telegram_alert(message: str) -> bool:
+    """Envío síncrono de alerta vía Telegram Bot API (requests + variables de entorno)."""
+    import os
+
+    import requests
+
+    token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    chat_id = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+    text = str(message or "").strip()
+    if not token or not chat_id or not text:
+        logger.debug("Telegram alert omitida: credenciales o mensaje vacío.")
+        return False
+
+    url = f"{TELEGRAM_API_BASE}/bot{token}/sendMessage"
+    try:
+        response = requests.post(
+            url,
+            json={"chat_id": chat_id, "text": text},
+            timeout=12,
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "Telegram alert respondió status=%s body=%s",
+                response.status_code,
+                (response.text or "")[:500],
+            )
+            return False
+        return True
+    except Exception:
+        logger.exception("No se pudo enviar alerta Telegram.")
+        return False
+
+
 def schedule_telegram_notification(
     background_tasks: Optional["BackgroundTasks"],
     message: str,
