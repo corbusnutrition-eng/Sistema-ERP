@@ -1,5 +1,5 @@
 import { normalizeCurrencyCode } from './currencyCode'
-import { fetchLastExchangeRate } from './exchangeRateApi'
+import { loadActiveRateStringForCurrency } from './exchangeRatesActive'
 
 /**
  * Busca una cuenta del plan de cuentas / depósito por id.
@@ -62,10 +62,7 @@ export function currencyFromLastSelectedDepositIds(
  * @returns {Promise<string>}
  */
 export async function loadExchangeRateStringForCurrency(currencyCode) {
-  const code = normalizeCurrencyCode(currencyCode || 'USD', 'USD')
-  if (code === 'USD') return '1'
-  const { rate } = await fetchLastExchangeRate(code)
-  return String(rate)
+  return loadActiveRateStringForCurrency(currencyCode)
 }
 
 /**

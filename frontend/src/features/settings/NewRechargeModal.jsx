@@ -19,6 +19,7 @@ import ReportedDepositDestinationAlert, {
 } from '../../components/ui/ReportedDepositDestinationAlert'
 import { SALES_CURRENCIES, salesCurrencyDefaultRate } from '../sales/salesCurrencies'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
+import useExchangeRatesCatalog from '../../hooks/useExchangeRatesCatalog'
 /** Fila nueva para la tabla multilinea (recarga BaaS; moneda unificada). */
 export function newRechargeLineRow() {
   return {
@@ -213,6 +214,10 @@ export default function NewRechargeModal({
 
   /** Evita que efectos de catálogo/tasa borren precios ya hidratados en edición. */
   const editPricingHydratedRef = useRef(false)
+  const prevBillingCurrencyRef = useRef(null)
+
+  const catalogEnabled = open && !isReadOnly
+  const { getActiveRate, loading: exchangeRatesLoading } = useExchangeRatesCatalog(catalogEnabled)
 
   const cargarClientesDesdeRender = useCallback(async ({ signal } = {}) => {
     try {
@@ -359,9 +364,11 @@ export default function NewRechargeModal({
     if (open) {
       setExistingReceiptCleared(false)
       editPricingHydratedRef.current = false
+      prevBillingCurrencyRef.current = null
       return undefined
     }
     editPricingHydratedRef.current = false
+    prevBillingCurrencyRef.current = null
     setFlujoPriceByPackageId({})
     setExchangeRates({})
     setBillingExchangeRateStr('1')
@@ -534,56 +541,53 @@ export default function NewRechargeModal({
     [rechargeLineItems],
   )
 
+  const applyActiveRateToFlujo = useCallback(
+    (currencyCode, { forceAllRows = false } = {}) => {
+      const code = normalizeCurrencyCode(currencyCode || 'USD', 'USD')
+      const active = getActiveRate(code)
+      const rateStr =
+        active != null && active > 0
+          ? String(active)
+          : code === 'USD'
+            ? '1'
+            : String(salesCurrencyDefaultRate(code))
+      setBillingExchangeRateStr(rateStr)
+      setExchangeRates((prev) => {
+        const list = Array.isArray(flujoPackages) ? flujoPackages : []
+        if (!list.length) return prev
+        const next = forceAllRows ? {} : { ...prev }
+        for (const pkg of list) {
+          const pkgId = Number(pkg?.package_catalog_id)
+          if (!Number.isFinite(pkgId)) continue
+          const key = String(pkgId)
+          if (forceAllRows || String(prev[key] ?? '').trim() === '') {
+            next[key] = rateStr
+          }
+        }
+        return next
+      })
+    },
+    [flujoPackages, getActiveRate],
+  )
+
   useEffect(() => {
-    if (!open || isReadOnly) return undefined
+    if (!catalogEnabled || exchangeRatesLoading) return undefined
     const cur = tableBillingCurrency
-    const ac = new AbortController()
-    api
-      .get('/api/v1/sales/last-exchange-rate', {
-        params: { currency: cur },
-        signal: ac.signal,
-      })
-      .then(({ data }) => {
-        const rate = Number(data?.exchange_rate)
-        const xr = Number.isFinite(rate) && rate > 0 ? rate : cur === 'USD' ? 1 : salesCurrencyDefaultRate(cur)
-        const xrStr = String(xr)
-        setBillingExchangeRateStr(xrStr)
-        if (editPricingHydratedRef.current) return
-        setExchangeRates((prev) => {
-          const list = Array.isArray(flujoPackages) ? flujoPackages : []
-          if (!list.length) return prev
-          const next = { ...prev }
-          for (const pkg of list) {
-            const pkgId = Number(pkg?.package_catalog_id)
-            if (!Number.isFinite(pkgId)) continue
-            const key = String(pkgId)
-            if (String(next[key] ?? '').trim() !== '') continue
-            next[key] = xrStr
-          }
-          return next
-        })
-      })
-      .catch((err) => {
-        if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') return
-        const fallback = cur === 'USD' ? '1' : String(salesCurrencyDefaultRate(cur))
-        setBillingExchangeRateStr(fallback)
-        if (editPricingHydratedRef.current) return
-        setExchangeRates((prev) => {
-          const list = Array.isArray(flujoPackages) ? flujoPackages : []
-          if (!list.length) return prev
-          const next = { ...prev }
-          for (const pkg of list) {
-            const pkgId = Number(pkg?.package_catalog_id)
-            if (!Number.isFinite(pkgId)) continue
-            const key = String(pkgId)
-            if (String(next[key] ?? '').trim() !== '') continue
-            next[key] = fallback
-          }
-          return next
-        })
-      })
-    return () => ac.abort()
-  }, [open, isReadOnly, tableBillingCurrency, flujoPackages])
+    const isCurrencyChange =
+      prevBillingCurrencyRef.current != null && prevBillingCurrencyRef.current !== cur
+    prevBillingCurrencyRef.current = cur
+
+    if (editPricingHydratedRef.current && !isCurrencyChange) return undefined
+
+    applyActiveRateToFlujo(cur, { forceAllRows: isCurrencyChange || !editPricingHydratedRef.current })
+    return undefined
+  }, [
+    applyActiveRateToFlujo,
+    catalogEnabled,
+    exchangeRatesLoading,
+    flujoPackages,
+    tableBillingCurrency,
+  ])
 
   const leadLineId = useMemo(() => {
     const list = Array.isArray(rechargeLineItems) ? rechargeLineItems : []

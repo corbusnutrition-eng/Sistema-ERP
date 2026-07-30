@@ -52,6 +52,7 @@ import {
 } from '../../inventory/components/InventorySummaryCards'
 import { SALES_CURRENCIES } from '../salesCurrencies'
 import { currencyFromLastSelectedDepositIds } from '../../../lib/accountCurrencyCascade'
+import { computeLineRateFromProduct } from '../../../lib/exchangeRatesActive'
 import useExchangeRateForCurrency from '../../../hooks/useExchangeRateForCurrency'
 import { salesApiOrigin, copySalePaymentLink } from '../saleTableHelpers'
 import { normalizeCurrencyCode } from '../../../lib/currencyCode'
@@ -2258,6 +2259,40 @@ export default function NuevaVentaModal({
     skip: skipCurrencyRateFetchRef,
   })
 
+  const invoiceRateRecalcSkipRef = useRef(true)
+
+  useEffect(() => {
+    if (!showInvoiceLayout || saleIsViewOnly || isLegacyPending) return
+    if (invoiceRateRecalcSkipRef.current) {
+      invoiceRateRecalcSkipRef.current = false
+      return
+    }
+    const saleCur = normalizeCurrencyCode(form.currency || 'USD', 'USD')
+    const xr = parseDecimalInput(form.exchange_rate) || 1
+    setLineItems((prev) => {
+      let changed = false
+      const next = prev.map((li) => {
+        const pk = String(li?.productKey || '').trim()
+        if (!pk || pk === '__loading_inv' || pk === 'draft:pending') return li
+        const meta = salesInventoryMetaByKey[pk]
+        const computed = computeLineRateFromProduct(meta, saleCur, xr)
+        if (computed == null) return li
+        const rateStr = String(computed)
+        if (String(li.rate ?? '') === rateStr) return li
+        changed = true
+        return { ...li, rate: rateStr }
+      })
+      return changed ? next : prev
+    })
+  }, [
+    form.currency,
+    form.exchange_rate,
+    isLegacyPending,
+    saleIsViewOnly,
+    salesInventoryMetaByKey,
+    showInvoiceLayout,
+  ])
+
   useEffect(() => {
     if (!initialSale) return
     if (!initialSale.id && !isSyntheticLedgerRecharge) return
@@ -3527,17 +3562,15 @@ export default function NuevaVentaModal({
           : ''
       let patch = { productKey: pk, description: descDefault, rate: '' }
 
-      if (pk.startsWith('cn:')) {
-        const meta = salesInventoryMetaByKey[pk]
-        const rp = meta?.reference_price
-        const saleCur = normalizeCurrencyCode(form.currency || 'USD', 'USD')
-        const refCur = normalizeCurrencyCode(meta?.reference_currency || 'USD', 'USD')
-        if (rp != null && Number.isFinite(Number(rp)) && Number(rp) >= 0 && saleCur === refCur) {
-          patch = { ...patch, rate: String(Number(rp)) }
-        }
+      const meta = salesInventoryMetaByKey[pk]
+      const saleCur = normalizeCurrencyCode(form.currency || 'USD', 'USD')
+      const xr = parseDecimalInput(form.exchange_rate) || 1
+      const computedRate = meta ? computeLineRateFromProduct(meta, saleCur, xr) : null
+      if (computedRate != null) {
+        patch = { ...patch, rate: String(computedRate) }
       }
+
       if (pk.startsWith('cp|') || pk.startsWith('ss:')) {
-        const meta = salesInventoryMetaByKey[pk]
         const unitCost = parseDecimalInput(meta?.reference_cost_usd)
         patch = {
           ...patch,
@@ -3586,7 +3619,7 @@ export default function NuevaVentaModal({
 
       updateSaleLine(lineId, patch)
     },
-    [clients, pickedPortalUser, form.client_id, form.currency, salesInventoryMetaByKey, updateSaleLine],
+    [clients, pickedPortalUser, form.client_id, form.currency, form.exchange_rate, salesInventoryMetaByKey, updateSaleLine],
   )
 
   const openInvoiceRecharge = useCallback(() => {
@@ -4643,7 +4676,7 @@ export default function NuevaVentaModal({
             />
             <p className="mt-1 text-[11px] text-gray-500">
               Se actualiza al marcar una cuenta de depósito según su moneda en el plan de cuentas; la tasa se
-              completa con el último tipo de cambio usado.
+              completa con la tasa activa del panel de tipos de cambio.
             </p>
           </div>
 

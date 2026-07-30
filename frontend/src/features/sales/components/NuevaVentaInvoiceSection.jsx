@@ -553,7 +553,7 @@ export default function NuevaVentaInvoiceSection(props) {
           />
           <p className="mt-1 text-[11px] text-gray-500">
             Se actualiza al marcar una cuenta de depósito según su moneda en el plan de cuentas; la tasa se
-            completa con el último tipo de cambio usado.
+            completa con la tasa activa del panel de tipos de cambio.
           </p>
         </div>
         <div>
