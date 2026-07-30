@@ -35,7 +35,25 @@ function parseLineNum(s) {
   return Number.isFinite(n) ? n : NaN
 }
 
-/** Convierte snapshot/API de precios Flujo al estado local del modal (packageId → texto). */
+function formatFlujoLocalAmount(amount, currencyCode) {
+  const n = Number(amount)
+  if (!Number.isFinite(n)) return '—'
+  return `${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencyCode}`
+}
+
+function usdPriceFromDraftRow(row) {
+  const customUsd = row?.custom_price ?? row?.price_usd ?? row?.sale_price_usd
+  if (customUsd != null && Number(customUsd) > 0) return Number(customUsd)
+  const local = row?.local_price ?? row?.sale_price_local ?? row?.precio_venta_local
+  const xr = Number(row?.exchange_rate)
+  if (local != null && Number(local) > 0 && Number.isFinite(xr) && xr > 0) {
+    return Math.round((Number(local) / xr) * 10000) / 10000
+  }
+  if (local != null && Number(local) > 0) return Number(local)
+  return null
+}
+
+/** Convierte snapshot/API de precios Flujo al estado local del modal (packageId → USD texto). */
 function draftFlujoPricingFromAssignedRows(rows) {
   const list = Array.isArray(rows) ? rows : []
   const prices = {}
@@ -43,10 +61,9 @@ function draftFlujoPricingFromAssignedRows(rows) {
   for (const row of list) {
     const pid = String(row?.package_catalog_id ?? row?.package_id ?? '').trim()
     if (!pid) continue
-    const local =
-      row?.local_price ?? row?.sale_price_local ?? row?.precio_venta_local ?? row?.custom_price
-    if (local != null && Number(local) > 0) {
-      prices[pid] = String(local)
+    const usd = usdPriceFromDraftRow(row)
+    if (usd != null && usd > 0) {
+      prices[pid] = String(usd)
     }
     const xr = row?.exchange_rate
     if (xr != null && Number(xr) > 0) {
@@ -837,6 +854,15 @@ export default function NewRechargeModal({
     return Math.round(safeCost * packageExchangeRateNum(packageCatalogId) * 100) / 100
   }
 
+  function packageLocalSalePrice(usdPrice, packageCatalogId) {
+    const usd = Number(usdPrice)
+    if (!Number.isFinite(usd)) return NaN
+    if (billingCode === 'USD') return usd
+    return Math.round(usd * packageExchangeRateNum(packageCatalogId) * 100) / 100
+  }
+
+  const showLocalSaleColumn = billingCode !== 'USD'
+
   function resolveBillingExchangeRate() {
     const billing = parseLineNum(billingExchangeRateStr)
     if (Number.isFinite(billing) && billing > 0) return billing
@@ -848,14 +874,6 @@ export default function NewRechargeModal({
     return billingCode === 'USD' ? 1 : salesCurrencyDefaultRate(billingCode)
   }
 
-  function salePriceToUsd(localPrice, packageCatalogId) {
-    const price = Number(localPrice)
-    if (!Number.isFinite(price)) return NaN
-    if (billingCode === 'USD') return price
-    const xr = packageExchangeRateNum(packageCatalogId)
-    return Math.round((price / xr) * 10000) / 10000
-  }
-
   const flujoPriceRowsForSubmit = useMemo(() => {
     const list = Array.isArray(flujoPackages) ? flujoPackages : []
     const out = []
@@ -864,11 +882,11 @@ export default function NewRechargeModal({
       if (!Number.isFinite(pkgId)) continue
       const raw = flujoPriceByPackageId[String(pkgId)]
       if (raw == null || String(raw).trim() === '') continue
-      const localPrice = parseLineNum(raw)
-      if (!Number.isFinite(localPrice) || localPrice <= 0) continue
+      const usdPrice = parseLineNum(raw)
+      if (!Number.isFinite(usdPrice) || usdPrice <= 0) continue
       const costUsd = Number(pkg?.reference_cost_usd ?? 0)
       const localCost = packageLocalCost(costUsd, pkgId)
-      const usdPrice = salePriceToUsd(localPrice, pkgId)
+      const localPrice = packageLocalSalePrice(usdPrice, pkgId)
       out.push({
         package_catalog_id: pkgId,
         product_id: Number(pkg?.product_id),
@@ -897,8 +915,8 @@ export default function NewRechargeModal({
       if (!Number.isFinite(pkgId)) continue
       const raw = flujoPriceByPackageId[String(pkgId)]
       if (raw == null || String(raw).trim() === '') continue
-      const localPrice = parseLineNum(raw)
-      if (!Number.isFinite(localPrice) || localPrice <= 0) {
+      const usdPrice = parseLineNum(raw)
+      if (!Number.isFinite(usdPrice) || usdPrice <= 0) {
         return 'Cada precio de venta asignado debe ser un número mayor que cero.'
       }
       const xrRaw = exchangeRates[String(pkgId)]
@@ -1274,10 +1292,17 @@ export default function NewRechargeModal({
                                   billingExchangeRateStr ??
                                   (billingCode === 'USD' ? '1' : String(salesCurrencyDefaultRate(billingCode)))
                                 const rawPrice = flujoPriceByPackageId[String(pkgId)] ?? ''
-                                const priceNum = parseLineNum(rawPrice)
+                                const usdPriceNum = parseLineNum(rawPrice)
                                 const localCost = packageLocalCost(cost, pkgId)
+                                const localSalePrice = packageLocalSalePrice(usdPriceNum, pkgId)
                                 const belowCost =
-                                  rawPrice !== '' && Number.isFinite(priceNum) && priceNum + 1e-9 < localCost
+                                  rawPrice !== '' &&
+                                  Number.isFinite(localSalePrice) &&
+                                  localSalePrice + 1e-9 < localCost
+                                const localSaleLabel =
+                                  rawPrice === '' || !Number.isFinite(usdPriceNum)
+                                    ? '—'
+                                    : formatFlujoLocalAmount(localSalePrice, billingCode)
                                 return (
                                   <div
                                     key={`flujo-pkg-card-${pkgId}`}
@@ -1292,12 +1317,7 @@ export default function NewRechargeModal({
                                       </p>
                                       <p className="text-[11px] text-gray-600 mt-1.5 tabular-nums">
                                         Stock {Number(pkg?.free_stock ?? 0)} · Costo base ${cost.toFixed(2)} ·
-                                        Costo local{' '}
-                                        {localCost.toLocaleString('es-ES', {
-                                          minimumFractionDigits: 2,
-                                          maximumFractionDigits: 2,
-                                        })}{' '}
-                                        {billingCode}
+                                        Costo local {formatFlujoLocalAmount(localCost, billingCode)}
                                       </p>
                                     </div>
                                     <div className="flex flex-col space-y-3 w-full">
@@ -1316,7 +1336,7 @@ export default function NewRechargeModal({
                                       </div>
                                       <div className="w-full">
                                         <label className="block text-xs font-medium text-gray-500 mb-1">
-                                          Precio venta ({billingCode})
+                                          Precio venta (USD)
                                         </label>
                                         <input
                                           className={`${icls} w-full tabular-nums text-sm ${belowCost ? 'border-red-400 bg-red-50' : ''}`}
@@ -1327,6 +1347,12 @@ export default function NewRechargeModal({
                                           placeholder="—"
                                           aria-invalid={belowCost}
                                         />
+                                        {showLocalSaleColumn ? (
+                                          <p className="mt-1.5 text-xs tabular-nums text-gray-600">
+                                            Precio venta ({billingCode}):{' '}
+                                            <span className="font-semibold text-gray-800">{localSaleLabel}</span>
+                                          </p>
+                                        ) : null}
                                         {belowCost ?
                                           <p className="mt-1 text-[11px] text-red-700 leading-snug">
                                             {marginBelowLocalCostMessage(localCost)}
@@ -1341,15 +1367,20 @@ export default function NewRechargeModal({
 
                             {/* Escritorio: tabla con scroll horizontal suave */}
                             <div className="hidden md:block w-full overflow-x-auto scrollbar-hide">
-                              <table className="w-full text-sm min-w-[640px]">
+                              <table className="w-full text-sm min-w-[720px]">
                                 <thead>
                                   <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
                                     <th className="px-2 py-2 font-semibold min-w-[140px]">Paquete Flujo</th>
                                     <th className="px-2 py-2 font-semibold w-14 text-center">Stock</th>
                                     <th className="px-2 py-2 font-semibold w-20">Costo base</th>
                                     <th className="px-2 py-2 font-semibold w-24">Tipo de cambio</th>
-                                    <th className="px-2 py-2 font-semibold w-24">Costo local</th>
-                                    <th className="px-2 py-2 font-semibold w-28">Precio venta ({billingCode})</th>
+                                    <th className="px-2 py-2 font-semibold w-28">Costo local</th>
+                                    <th className="px-2 py-2 font-semibold w-28">Precio venta (USD)</th>
+                                    {showLocalSaleColumn ? (
+                                      <th className="px-2 py-2 font-semibold w-32">
+                                        Precio venta ({billingCode})
+                                      </th>
+                                    ) : null}
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -1361,10 +1392,17 @@ export default function NewRechargeModal({
                                       billingExchangeRateStr ??
                                       (billingCode === 'USD' ? '1' : String(salesCurrencyDefaultRate(billingCode)))
                                     const rawPrice = flujoPriceByPackageId[String(pkgId)] ?? ''
-                                    const priceNum = parseLineNum(rawPrice)
+                                    const usdPriceNum = parseLineNum(rawPrice)
                                     const localCost = packageLocalCost(cost, pkgId)
+                                    const localSalePrice = packageLocalSalePrice(usdPriceNum, pkgId)
                                     const belowCost =
-                                      rawPrice !== '' && Number.isFinite(priceNum) && priceNum + 1e-9 < localCost
+                                      rawPrice !== '' &&
+                                      Number.isFinite(localSalePrice) &&
+                                      localSalePrice + 1e-9 < localCost
+                                    const localSaleLabel =
+                                      rawPrice === '' || !Number.isFinite(usdPriceNum)
+                                        ? '—'
+                                        : formatFlujoLocalAmount(localSalePrice, billingCode)
                                     return (
                                       <tr key={`flujo-pkg-${pkgId}`} className="border-t border-gray-100 align-middle">
                                         <td className="px-2 py-2">
@@ -1388,11 +1426,7 @@ export default function NewRechargeModal({
                                           />
                                         </td>
                                         <td className="px-2 py-2 tabular-nums text-gray-700 text-sm whitespace-nowrap">
-                                          {localCost.toLocaleString('es-ES', {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}{' '}
-                                          {billingCode}
+                                          {formatFlujoLocalAmount(localCost, billingCode)}
                                         </td>
                                         <td className="px-2 py-2">
                                           <input
@@ -1410,6 +1444,11 @@ export default function NewRechargeModal({
                                             </p>
                                           : null}
                                         </td>
+                                        {showLocalSaleColumn ? (
+                                          <td className="px-2 py-2 tabular-nums text-gray-800 text-sm font-medium whitespace-nowrap">
+                                            {localSaleLabel}
+                                          </td>
+                                        ) : null}
                                       </tr>
                                     )
                                   })}
