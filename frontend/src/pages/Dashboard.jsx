@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Users, Banknote, Clock, Bell, ShoppingBag, RefreshCw, AlertCircle, Package } from 'lucide-react'
 import InventorySummaryCards from '../features/inventory/components/InventorySummaryCards'
+import ExchangeRatesWidget from '../components/dashboard/ExchangeRatesWidget'
 import { formatDateEcuador } from '../utils/datetime'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
@@ -191,6 +192,9 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* ── Exchange rates (Binance P2P) ── */}
+      <ExchangeRatesWidget />
 
       {/* ── Inventory summary ── */}
       <div className="space-y-4">

@@ -90,12 +90,23 @@ def get_last_exchange_rate(db: Session, currency: str) -> tuple[float, bool]:
     """
     Última tasa usada en la moneda (venta, pago o recarga BaaS), para autollenar formularios.
 
+    Prioridad: tabla ``exchange_rates`` (Binance/override manual) → historial transaccional.
+
     Returns:
         (exchange_rate, from_history) — ``from_history`` es False si no hay registros previos.
     """
     cur = normalize_currency_code(currency)
     if cur in ("USD", "USDT", "USDC"):
         return 1.0, True
+
+    from app.models.exchange_rate import ExchangeRate
+    from app.services.exchange_rate_service import resolve_active_rate
+
+    rate_row = db.get(ExchangeRate, cur)
+    if rate_row is not None:
+        active = resolve_active_rate(rate_row)
+        if active is not None and float(active) > 0:
+            return float(active), True
 
     last_sale = (
         db.query(Sale.exchange_rate)

@@ -8,6 +8,7 @@ from app.models.client_payment_method_account import ClientPaymentMethodAccount
 from app.models.client_debt_payment import ClientDebtPayment, DebtPaymentStatus
 from app.models.client_note import ClientNote
 from app.models.client_notification import ClientNotification
+from app.models.exchange_rate import ExchangeRate
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
 from app.models.distributor_custom_price import DistributorCustomPrice
 from app.models.expense import Expense, ExpenseLine
@@ -41,6 +42,7 @@ __all__ = [
     "ClientDebtPayment",
     "ClientNote",
     "ClientNotification",
+    "ExchangeRate",
     "ClientPayment",
     "ClientPaymentStatus",
     "DebtPaymentStatus",

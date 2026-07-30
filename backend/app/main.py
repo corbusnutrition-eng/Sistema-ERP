@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Cargar variables del archivo .env antes de cualquier otra importación.
@@ -32,6 +33,19 @@ UPLOAD_DIR = str(UPLOAD_ROOT)
 UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 (UPLOAD_ROOT / "logos").mkdir(parents=True, exist_ok=True)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from app.services.exchange_rate_scheduler import (
+        start_exchange_rate_scheduler,
+        stop_exchange_rate_scheduler,
+    )
+
+    task, stop_event = start_exchange_rate_scheduler()
+    yield
+    await stop_exchange_rate_scheduler(task, stop_event)
+
+
 # ── CORS: registrar ANTES de app.include_router / mount (orden del middleware global) ──
 app = FastAPI(
     title="Sistema de Facturación ERP",
@@ -39,6 +53,7 @@ app = FastAPI(
     description="API central para gestión de clientes, inventario IPTV y facturación.",
     # Evita redirecciones 307 entre `/resource` y `/resource/` que suelen perder cabeceras CORS en el navegador.
     redirect_slashes=False,
+    lifespan=lifespan,
 )
 
 app.state.limiter = limiter
@@ -124,6 +139,7 @@ from app.api.v1 import external_api as external_api_router
 from app.api.v1 import admin_notifications as admin_notifications_router
 from app.api.v1 import notifications as notifications_router
 from app.api.v1 import currency as currency_router
+from app.api.v1 import exchange_rates as exchange_rates_router
 from app.api.v1 import permissions_catalog as permissions_catalog_router
 from app.api.v1 import webhooks_codigos_retiro as webhooks_codigos_retiro_router
 
@@ -162,6 +178,7 @@ app.include_router(distributors_router.router, prefix=API_V1_PREFIX)
 app.include_router(notifications_router.router, prefix=API_V1_PREFIX)
 app.include_router(external_api_router.router, prefix=API_V1_PREFIX)
 app.include_router(currency_router.router, prefix=API_V1_PREFIX)
+app.include_router(exchange_rates_router.router, prefix=API_V1_PREFIX)
 app.include_router(webhooks_codigos_retiro_router.router, prefix=API_V1_PREFIX)
 app.include_router(vendors_ap_router.router, prefix=API_V1_PREFIX)
 app.include_router(vendors_ap_router.bill_router, prefix=API_V1_PREFIX)

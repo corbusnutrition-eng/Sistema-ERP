@@ -20,6 +20,7 @@ _MODEL_MODULES: Final[tuple[str, ...]] = (
     "app.models.client_debt_payment",
     "app.models.client_payment",
     "app.models.distributor_custom_price",
+    "app.models.exchange_rate",
     "app.models.expense",
     "app.models.inventory_audit_report",
     "app.models.inventory_screen_credit_drawdown",
