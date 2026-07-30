@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Iterable
 
 from fastapi import HTTPException, status
@@ -34,6 +35,8 @@ DEFAULT_FIAT_CODES: tuple[str, ...] = (
     "NIO",
 )
 
+_CURRENCY_CODE_RE = re.compile(r"^[A-Z]{3,10}$")
+
 
 def get_configured_fiat_codes() -> list[str]:
     raw = (os.getenv("EXCHANGE_RATE_FIAT_CODES") or "").strip()
@@ -61,7 +64,22 @@ def resolve_active_rate(row: ExchangeRate) -> float | None:
     return None
 
 
-def _ensure_row(db: Session, currency_code: str) -> ExchangeRate:
+def _validate_currency_code(raw: str) -> str:
+    code = normalize_currency_code(str(raw or "").strip())
+    if code in {"USD", "USDT", "USDC"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="USD/USDT/USDC no requieren tasa de cambio.",
+        )
+    if not _CURRENCY_CODE_RE.match(code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Código de moneda inválido. Use 3–10 letras (ej. EUR, JPY).",
+        )
+    return code
+
+
+def _ensure_row(db: Session, currency_code: str, *, is_active: bool = True) -> ExchangeRate:
     code = normalize_currency_code(currency_code)
     row = db.get(ExchangeRate, code)
     if row is None:
@@ -70,6 +88,7 @@ def _ensure_row(db: Session, currency_code: str) -> ExchangeRate:
             binance_rate=None,
             manual_rate=None,
             use_manual_override=False,
+            is_active=bool(is_active),
             updated_at=now_ecuador(),
         )
         db.add(row)
@@ -77,32 +96,96 @@ def _ensure_row(db: Session, currency_code: str) -> ExchangeRate:
     return row
 
 
-def list_exchange_rates(db: Session) -> list[ExchangeRate]:
-    configured = get_configured_fiat_codes()
+def _seed_default_rows(db: Session) -> bool:
     changed = False
-    for code in configured:
-        if db.get(ExchangeRate, code) is None:
+    for code in get_configured_fiat_codes():
+        row = db.get(ExchangeRate, code)
+        if row is None:
             db.add(
                 ExchangeRate(
                     currency_code=code,
                     binance_rate=None,
                     manual_rate=None,
                     use_manual_override=False,
+                    is_active=True,
                     updated_at=now_ecuador(),
                 )
             )
             changed = True
-    if changed:
+    return changed
+
+
+def _active_currency_codes(db: Session) -> list[str]:
+    rows = (
+        db.query(ExchangeRate.currency_code)
+        .filter(ExchangeRate.is_active.is_(True))
+        .order_by(ExchangeRate.currency_code.asc())
+        .all()
+    )
+    codes = [str(r[0]) for r in rows if r and r[0]]
+    if codes:
+        return [c for c in codes if c not in {"USD", "USDT", "USDC"}]
+    return get_configured_fiat_codes()
+
+
+def list_exchange_rates(db: Session) -> list[ExchangeRate]:
+    if _seed_default_rows(db):
         db.commit()
+
+    configured = get_configured_fiat_codes()
+    order_map = {code: idx for idx, code in enumerate(configured)}
 
     rows = (
         db.query(ExchangeRate)
-        .filter(ExchangeRate.currency_code.in_(configured))
+        .filter(ExchangeRate.is_active.is_(True))
         .all()
     )
-    order_map = {code: idx for idx, code in enumerate(configured)}
-    rows.sort(key=lambda r: order_map.get(r.currency_code, 999))
+    rows.sort(
+        key=lambda r: (
+            order_map.get(r.currency_code, 999),
+            str(r.currency_code),
+        )
+    )
     return rows
+
+
+def create_exchange_rate(db: Session, *, currency_code: str) -> ExchangeRate:
+    code = _validate_currency_code(currency_code)
+    row = db.get(ExchangeRate, code)
+
+    if row is not None and row.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"La moneda {code} ya está en la lista activa.",
+        )
+
+    market_rates = fetch_market_rates_for_currencies([code])
+    rate = market_rates.get(code)
+    if rate is None or float(rate) <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No se encontró tasa de mercado para {code} en Open Exchange Rates.",
+        )
+
+    now = now_ecuador()
+    if row is None:
+        row = ExchangeRate(
+            currency_code=code,
+            binance_rate=float(rate),
+            manual_rate=None,
+            use_manual_override=False,
+            is_active=True,
+            updated_at=now,
+        )
+        db.add(row)
+    else:
+        row.is_active = True
+        row.binance_rate = float(rate)
+        row.updated_at = now
+
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def update_exchange_rate(
@@ -113,7 +196,12 @@ def update_exchange_rate(
     use_manual_override: bool | None = None,
 ) -> ExchangeRate:
     code = normalize_currency_code(currency_code)
-    row = _ensure_row(db, code)
+    row = db.get(ExchangeRate, code)
+    if row is None or not row.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Moneda no encontrada en la lista activa.",
+        )
 
     if manual_rate is not None:
         if float(manual_rate) <= 0:
@@ -150,14 +238,26 @@ def sync_exchange_rates_from_binance(
     Returns:
         (synced_count, failed_codes)
     """
-    codes = [normalize_currency_code(c) for c in (fiat_codes or get_configured_fiat_codes())]
-    active_codes = [c for c in codes if c not in {"USD", "USDT", "USDC"}]
+    if fiat_codes is None:
+        active_codes = _active_currency_codes(db)
+    else:
+        active_codes = [
+            normalize_currency_code(c)
+            for c in fiat_codes
+            if normalize_currency_code(c) not in {"USD", "USDT", "USDC"}
+        ]
+
+    if not active_codes:
+        return 0, []
+
     market_rates = fetch_market_rates_for_currencies(active_codes)
     synced = 0
     failed: list[str] = []
 
     for code in active_codes:
-        row = _ensure_row(db, code)
+        row = db.get(ExchangeRate, code)
+        if row is None or not row.is_active:
+            row = _ensure_row(db, code, is_active=True)
         rate = market_rates.get(code)
         if rate is None:
             failed.append(code)

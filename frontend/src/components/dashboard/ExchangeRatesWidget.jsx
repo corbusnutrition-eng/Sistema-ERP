@@ -119,6 +119,66 @@ function EditRateModal({ open, row, saving, onClose, onSave }) {
   )
 }
 
+function AddCurrencyModal({ open, saving, onClose, onSave }) {
+  const [code, setCode] = useState('')
+
+  useEffect(() => {
+    if (open) setCode('')
+  }, [open])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-5 shadow-xl">
+        <h3 className="m-0 text-lg font-bold text-gray-900">Agregar moneda</h3>
+        <p className="m-0 mt-1 text-sm text-gray-500">
+          Se consultará la tasa de mercado USD al guardar.
+        </p>
+        <label className="mt-4 block">
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Código ISO
+          </span>
+          <input
+            type="text"
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="Ej. EUR, JPY, GBP"
+            maxLength={10}
+            className="notranslate w-full rounded-lg border border-gray-200 px-3 py-2 text-sm uppercase text-gray-900 outline-none ring-blue-500 focus:ring-2"
+            translate="no"
+          />
+        </label>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              const normalized = String(code ?? '').trim().toUpperCase()
+              if (normalized.length < 3) {
+                window.alert('Ingresa un código de moneda válido (mín. 3 letras).')
+                return
+              }
+              onSave(normalized)
+            }}
+            className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving ? 'Guardando…' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ExchangeRatesWidget() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
@@ -131,6 +191,8 @@ export default function ExchangeRatesWidget() {
   const [syncMessage, setSyncMessage] = useState('')
   const [search, setSearch] = useState('')
   const [editingRow, setEditingRow] = useState(null)
+  const [addModalOpen, setAddModalOpen] = useState(false)
+  const [addingCurrency, setAddingCurrency] = useState(false)
 
   const loadRates = useCallback(async () => {
     setLoading(true)
@@ -157,6 +219,14 @@ export default function ExchangeRatesWidget() {
     return items.filter((row) => String(row?.currency_code ?? '').toUpperCase().includes(q))
   }, [items, search])
 
+  const visibleItems = useMemo(() => {
+    const q = search.trim()
+    if (q) return filteredItems
+    return filteredItems.slice(0, 10)
+  }, [filteredItems, search])
+
+  const isShowingTopTenOnly = !search.trim() && filteredItems.length > 10
+
   const handleSync = async () => {
     if (!isAdmin || syncing) return
     setSyncing(true)
@@ -171,6 +241,23 @@ export default function ExchangeRatesWidget() {
       setError(typeof detail === 'string' ? detail : 'No se pudo sincronizar las tasas de mercado.')
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const handleAddCurrency = async (currencyCode) => {
+    if (!isAdmin || addingCurrency) return
+    setAddingCurrency(true)
+    setError('')
+    try {
+      await api.post('/api/v1/exchange-rates', { currency_code: currencyCode })
+      setAddModalOpen(false)
+      setSyncMessage(`Moneda ${currencyCode} agregada correctamente.`)
+      await loadRates()
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      setError(typeof d === 'string' ? d : 'No se pudo agregar la moneda.')
+    } finally {
+      setAddingCurrency(false)
     }
   }
 
@@ -205,15 +292,25 @@ export default function ExchangeRatesWidget() {
           </p>
         </div>
         {isAdmin ? (
-          <button
-            type="button"
-            onClick={() => void handleSync()}
-            disabled={syncing || loading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-          >
-            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Sincronizando…' : 'Sincronizar ahora'}
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setAddModalOpen(true)}
+              disabled={loading || addingCurrency}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              + Agregar Moneda
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSync()}
+              disabled={syncing || loading || addingCurrency}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+              {syncing ? 'Sincronizando…' : 'Sincronizar ahora'}
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -259,14 +356,14 @@ export default function ExchangeRatesWidget() {
                     Cargando tasas…
                   </td>
                 </tr>
-              ) : filteredItems.length === 0 ? (
+              ) : visibleItems.length === 0 ? (
                 <tr>
                   <td colSpan={isAdmin ? 4 : 3} className="px-2 py-6 text-center text-gray-400">
                     No hay monedas que coincidan con la búsqueda.
                   </td>
                 </tr>
               ) : (
-                filteredItems.map((row) => (
+                visibleItems.map((row) => (
                   <tr key={row.currency_code} className="border-b border-gray-50 last:border-0">
                     <td
                       className="notranslate px-2 py-3 font-semibold text-gray-900"
@@ -310,7 +407,23 @@ export default function ExchangeRatesWidget() {
             </tbody>
           </table>
         </div>
+
+        {isShowingTopTenOnly ? (
+          <p className="m-0 text-center text-[11px] text-gray-500">
+            Mostrando las 10 primeras de {filteredItems.length} monedas. Usa el buscador para ver
+            todas.
+          </p>
+        ) : null}
       </div>
+
+      <AddCurrencyModal
+        open={addModalOpen}
+        saving={addingCurrency}
+        onClose={() => {
+          if (!addingCurrency) setAddModalOpen(false)
+        }}
+        onSave={(code) => void handleAddCurrency(code)}
+      />
 
       <EditRateModal
         open={Boolean(editingRow)}

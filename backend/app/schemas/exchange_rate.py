@@ -11,10 +11,15 @@ class ExchangeRateRead(BaseModel):
     binance_rate: Optional[float] = None
     manual_rate: Optional[float] = None
     use_manual_override: bool = False
+    is_active: bool = True
     active_rate: Optional[float] = None
     updated_at: datetime.datetime
 
     model_config = {"from_attributes": True}
+
+
+class ExchangeRateCreateRequest(BaseModel):
+    currency_code: str = Field(..., min_length=3, max_length=10)
 
 
 class ExchangeRateUpdateRequest(BaseModel):

@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 from app.api.v1.dependencies import AdminDep, UserDep
 from app.database import get_db
 from app.schemas.exchange_rate import (
+    ExchangeRateCreateRequest,
     ExchangeRateListResponse,
     ExchangeRateRead,
     ExchangeRateSyncResult,
     ExchangeRateUpdateRequest,
 )
 from app.services.exchange_rate_service import (
+    create_exchange_rate,
     list_exchange_rates,
     resolve_active_rate,
     sync_exchange_rates_from_binance,
@@ -34,6 +36,7 @@ def _to_read(row) -> ExchangeRateRead:
         binance_rate=row.binance_rate,
         manual_rate=row.manual_rate,
         use_manual_override=bool(row.use_manual_override),
+        is_active=bool(row.is_active),
         active_rate=resolve_active_rate(row),
         updated_at=row.updated_at,
     )
@@ -47,6 +50,17 @@ def get_exchange_rates(
     rows = list_exchange_rates(db)
     items = [_to_read(row) for row in rows]
     return ExchangeRateListResponse(items=items, total=len(items))
+
+
+@router.post("", response_model=ExchangeRateRead, status_code=201)
+def post_exchange_rate(
+    payload: ExchangeRateCreateRequest,
+    db: DbDep,
+    _: AdminDep,
+) -> ExchangeRateRead:
+    """Agrega (o reactiva) una moneda y obtiene su tasa desde Open Exchange Rates."""
+    row = create_exchange_rate(db, currency_code=payload.currency_code)
+    return _to_read(row)
 
 
 @router.put("/{currency_code}", response_model=ExchangeRateRead)
