@@ -564,6 +564,7 @@ export default function InventorySummaryCards({
           )}
         </div>
       </div>
+      </div>
     </>
   )
 }
