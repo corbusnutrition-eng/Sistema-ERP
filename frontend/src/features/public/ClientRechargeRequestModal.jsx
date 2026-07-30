@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import useExchangeRatesCatalog from '../../hooks/useExchangeRatesCatalog'
 import { normalizeCurrencyCode } from '../../lib/currencyCode'
+import { SALES_CURRENCIES } from '../sales/salesCurrencies'
+import PortalCustomSelect from './PortalCustomSelect'
 
 function parseAmount(raw) {
   const n = parseFloat(String(raw ?? '').trim().replace(',', '.'))
@@ -59,8 +61,19 @@ export default function ClientRechargeRequestModal({
     }
     const base = normalizeCurrencyCode(clientBaseCurrency, 'USD')
     if (base) codes.add(base)
-    return [...codes].sort((a, b) => a.localeCompare(b))
+    return [...codes].sort((a, b) => a.localeCompare(b)).map((code) => {
+      const meta = SALES_CURRENCIES.find((c) => c.code === code)
+      return {
+        value: code,
+        label: meta ? `${meta.flag ?? ''} ${meta.label}`.trim() : code,
+      }
+    })
   }, [rates, clientBaseCurrency])
+
+  const paymentCurrencyCodes = useMemo(
+    () => paymentCurrencyOptions.map((o) => o.value),
+    [paymentCurrencyOptions],
+  )
 
   const activeRate = useMemo(() => {
     const rate = getActiveRate(paymentCurrency)
@@ -92,11 +105,11 @@ export default function ClientRechargeRequestModal({
     if (!open || isEditMode || ratesLoading) return
     const base = normalizeCurrencyCode(clientBaseCurrency, 'USD')
     setPaymentCurrency((prev) => {
-      if (prev && paymentCurrencyOptions.includes(prev)) return prev
-      if (paymentCurrencyOptions.includes(base)) return base
-      return paymentCurrencyOptions[0] || 'USD'
+      if (prev && paymentCurrencyCodes.includes(prev)) return prev
+      if (paymentCurrencyCodes.includes(base)) return base
+      return paymentCurrencyCodes[0] || 'USD'
     })
-  }, [open, isEditMode, ratesLoading, clientBaseCurrency, paymentCurrencyOptions])
+  }, [open, isEditMode, ratesLoading, clientBaseCurrency, paymentCurrencyCodes])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -260,20 +273,15 @@ export default function ClientRechargeRequestModal({
                 <label htmlFor="client-recharge-pay-currency" className="mb-1.5 block text-xs font-semibold text-slate-300">
                   Moneda de pago
                 </label>
-                <select
+                <PortalCustomSelect
                   id="client-recharge-pay-currency"
                   required
                   value={paymentCurrency}
-                  onChange={(ev) => setPaymentCurrency(ev.target.value)}
+                  onChange={setPaymentCurrency}
+                  options={paymentCurrencyOptions}
                   disabled={submitting || ratesLoading}
-                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white"
-                >
-                  {paymentCurrencyOptions.map((code) => (
-                    <option key={code} value={code}>
-                      {code}
-                    </option>
-                  ))}
-                </select>
+                  buttonClassName="rounded-lg border-slate-600 bg-slate-950 text-sm"
+                />
                 {ratesLoading ? (
                   <p className="mt-1.5 mb-0 flex items-center gap-1.5 text-[11px] text-slate-400">
                     <Loader2 size={12} className="animate-spin" aria-hidden />
