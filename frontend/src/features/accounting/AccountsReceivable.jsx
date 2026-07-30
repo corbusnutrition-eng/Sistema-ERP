@@ -65,13 +65,13 @@ function CurrencyTotals({ totals, currencyFilter }) {
   const rows = Array.isArray(totals) ? totals : []
   if (currencyFilter && rows.length === 1) {
     return (
-      <p className="text-sm font-bold text-gray-900 tabular-nums">
+      <div className="text-sm font-bold text-gray-900 tabular-nums">
         {formatMoney(rows[0].total_amount_due, rows[0].currency)}
-      </p>
+      </div>
     )
   }
   if (rows.length === 0) {
-    return <p className="text-sm text-gray-400">—</p>
+    return <div className="text-sm text-gray-400">—</div>
   }
   return (
     <div className="flex flex-col items-end gap-0.5">
@@ -401,10 +401,10 @@ export default function AccountsReceivable({ backHref = '/contabilidad/plan-de-c
                                                 <tr className="bg-slate-50/80">
                                                   <td colSpan={6} className="px-4 py-3">
                                                     {payments.length === 0 ? (
-                                                      <p className="text-xs text-gray-500 italic flex items-center gap-1.5 pl-6">
-                                                        <Receipt size={14} className="opacity-50" />
+                                                      <div className="text-xs text-gray-500 italic flex items-center gap-1.5 pl-6">
+                                                        <Receipt size={14} className="opacity-50" aria-hidden />
                                                         Sin cobros registrados aplicados a esta factura.
-                                                      </p>
+                                                      </div>
                                                     ) : (
                                                       <div className="ml-6 rounded-lg border border-gray-200 bg-white overflow-hidden">
                                                         <div className="px-3 py-2 border-b border-gray-100 bg-gray-50/90">
