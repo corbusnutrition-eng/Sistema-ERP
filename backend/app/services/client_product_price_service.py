@@ -47,6 +47,17 @@ def margin_below_cost_message(cost_usd: float) -> str:
     return f"El precio de venta no puede ser menor al costo base de (${float(cost_usd):.2f} USD)"
 
 
+def resolve_client_package_sale_price_usd(cpp: ClientProductPrice) -> float:
+    """Precio de venta en USD (``custom_price``) para cobro con billetera BaaS."""
+    try:
+        usd = round(float(cpp.custom_price), 4)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Precio USD no configurado para este paquete.") from exc
+    if usd <= 0:
+        raise ValueError("Precio USD no configurado para este paquete.")
+    return usd
+
+
 def resolve_client_package_sale_price(
     db: Session,
     *,

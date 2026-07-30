@@ -32,10 +32,12 @@ from app.services.client_product_price_service import (
     _package_display_name,
     _package_base_cost_usd,
     get_client_package_price_row,
-    margin_below_cost_message,
-    resolve_client_package_sale_price,
+    resolve_client_package_sale_price_usd,
     validate_custom_price_vs_package_cost,
 )
+
+# Autocompra portal: la billetera BaaS opera en USD (wallet_credit_usd / saldo USD).
+PORTAL_WALLET_AUTO_PURCHASE_CURRENCY = "USD"
 from app.services.sale_accounting_sync import sync_sale_accounting_ledgers
 
 logger = logging.getLogger(__name__)
@@ -237,38 +239,20 @@ def execute_portal_auto_purchase(
     if not pkg_label:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Paquete sin etiqueta válida.")
 
-    unit_price, price_cur = resolve_client_package_sale_price(
-        db,
-        client=client,
-        cpp=price_row,
-    )
+    try:
+        unit_price_usd = resolve_client_package_sale_price_usd(price_row)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc) or "Precio USD no configurado para este paquete.",
+        ) from exc
+
     cost = _package_base_cost_usd(db, product=product, catalog_line=catalog_line)
-    if price_cur == "USD":
-        validate_custom_price_vs_package_cost(custom_price=unit_price, cost_usd=cost)
-    else:
-        from app.services.currency_consolidation import get_last_exchange_rate
+    validate_custom_price_vs_package_cost(custom_price=unit_price_usd, cost_usd=cost)
 
-        xr, _ = get_last_exchange_rate(db, price_cur)
-        local_cost = round(float(cost) * float(xr if xr > 0 else 1.0), 4)
-        if unit_price + 1e-9 < local_cost:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=margin_below_cost_message(cost),
-            )
-
-    total_price = round(unit_price * qty, 4)
+    total_price_usd = round(unit_price_usd * qty, 4)
     display = _package_display_name(pkg_label)
-    from app.services.client_currency_service import get_client_currency
-
-    purchase_currency = price_cur or get_client_currency(client)
-
-    from app.services.currency_consolidation import get_last_exchange_rate
-
     sale_xr = 1.0
-    if purchase_currency != "USD":
-        hist_xr, _ = get_last_exchange_rate(db, purchase_currency)
-        if hist_xr > 0:
-            sale_xr = float(hist_xr)
 
     from app.services.wallet_balance_service import get_client_wallet_balance, lock_client_for_wallet_update
 
@@ -286,14 +270,14 @@ def execute_portal_auto_purchase(
         {
             "description": display,
             "qty": qty,
-            "rate": unit_price,
-            "amount": total_price,
+            "rate": unit_price_usd,
+            "amount": total_price_usd,
             "line_inventory_kind": "screen_stock",
             "inventory_option_key": inv_key,
         }
     ]
 
-    amount_dec = Decimal(str(total_price))
+    amount_dec = Decimal(str(total_price_usd))
     credentials: list[dict] = []
     fulfilled = 0
     flow = "pending_assignment"
@@ -332,10 +316,10 @@ def execute_portal_auto_purchase(
         inventory_tg: list[str] = []
         client = lock_client_for_wallet_update(db, client)
 
-        if float(get_client_wallet_balance(client, purchase_currency)) + 1e-9 < total_price:
+        if float(get_client_wallet_balance(client, PORTAL_WALLET_AUTO_PURCHASE_CURRENCY)) + 1e-9 < total_price_usd:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Saldo BaaS insuficiente en {purchase_currency}.",
+                detail="Saldo BaaS insuficiente en USD.",
             )
 
         sale = Sale(
@@ -344,7 +328,7 @@ def execute_portal_auto_purchase(
             iptv_screen_id=None,
             screen_stock_id=None,
             amount=amount_dec,
-            currency=purchase_currency,
+            currency=PORTAL_WALLET_AUTO_PURCHASE_CURRENCY,
             exchange_rate=sale_xr,
             local_amount=amount_dec,
             amount_paid=amount_dec,
@@ -374,8 +358,8 @@ def execute_portal_auto_purchase(
         _debit_client_wallet(
             db,
             client,
-            total_price,
-            currency=purchase_currency,
+            total_price_usd,
+            currency=PORTAL_WALLET_AUTO_PURCHASE_CURRENCY,
             product_name=display,
             sale_id=int(sale.id),
         )
@@ -391,8 +375,8 @@ def execute_portal_auto_purchase(
                 package_catalog_id=int(package_catalog_id),
                 quantity=qty,
                 sale_id=int(sale.id),
-                purchase_currency=purchase_currency,
-                unit_price_paid=float(unit_price),
+                purchase_currency=PORTAL_WALLET_AUTO_PURCHASE_CURRENCY,
+                unit_price_paid=float(unit_price_usd),
                 product_name=display,
                 product=product,
                 catalog_line=catalog_line,
@@ -494,7 +478,9 @@ def execute_portal_auto_purchase(
         flow=flow,
         message=message,
         sale_id=int(sale.id),
-        wallet_balance_remaining=float(get_client_wallet_balance(client, purchase_currency)),
+        wallet_balance_remaining=float(
+            get_client_wallet_balance(client, PORTAL_WALLET_AUTO_PURCHASE_CURRENCY)
+        ),
         quantity_requested=qty,
         quantity_fulfilled=fulfilled,
         credentials=[
