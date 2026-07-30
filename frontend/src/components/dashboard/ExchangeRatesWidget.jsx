@@ -11,7 +11,8 @@ import {
 import api from '../../api/axios'
 import { useAuth } from '../../context/AuthContext'
 
-const PAGE_SIZE = 5
+const DEFAULT_ROWS_PER_PAGE = 5
+const ROWS_PER_PAGE_ALL = 'all'
 const DRAG_MIME = 'application/x-exchange-rate-code'
 
 function reorderWithSequentialOrder(list, fromIndex, toIndex) {
@@ -226,6 +227,7 @@ export default function ExchangeRatesWidget() {
   const [syncMessage, setSyncMessage] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE)
   const [editingRow, setEditingRow] = useState(null)
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [addingCurrency, setAddingCurrency] = useState(false)
@@ -251,7 +253,7 @@ export default function ExchangeRatesWidget() {
 
   useEffect(() => {
     setPage(1)
-  }, [search])
+  }, [search, rowsPerPage])
 
   const sortByDisplayOrder = useCallback((list) => {
     return [...list].sort((a, b) => {
@@ -270,19 +272,28 @@ export default function ExchangeRatesWidget() {
     return sortedItems.filter((row) => String(row?.currency_code ?? '').toUpperCase().includes(q))
   }, [sortedItems, search])
 
+  const pageSize = useMemo(() => {
+    if (rowsPerPage === ROWS_PER_PAGE_ALL) {
+      return Math.max(filteredItems.length, 1)
+    }
+    return rowsPerPage
+  }, [rowsPerPage, filteredItems.length])
+
   const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE)),
-    [filteredItems.length],
+    () => Math.max(1, Math.ceil(filteredItems.length / pageSize)),
+    [filteredItems.length, pageSize],
   )
+
+  const showPageControls = rowsPerPage !== ROWS_PER_PAGE_ALL && totalPages > 1
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages)
   }, [page, totalPages])
 
   const paginatedItems = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE
-    return filteredItems.slice(start, start + PAGE_SIZE)
-  }, [filteredItems, page])
+    const start = (page - 1) * pageSize
+    return filteredItems.slice(start, start + pageSize)
+  }, [filteredItems, page, pageSize])
 
   const mergeRowUpdate = useCallback(
     (updated) => {
@@ -694,33 +705,56 @@ export default function ExchangeRatesWidget() {
 
         {!loading && filteredItems.length > 0 ? (
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
-            <p className="m-0 text-xs text-gray-500">
-              {filteredItems.length} moneda{filteredItems.length !== 1 ? 's' : ''}
-              {search.trim() ? ' encontrada(s)' : ''} · Página {page} de {totalPages}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1 || loading}
-                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-              >
-                <ChevronLeft size={14} />
-                Anterior
-              </button>
-              <span className="min-w-[4.5rem] text-center text-xs font-medium text-gray-500">
-                {page} / {totalPages}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages || loading}
-                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-              >
-                Siguiente
-                <ChevronRight size={14} />
-              </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="m-0 text-xs text-gray-500">
+                {filteredItems.length} moneda{filteredItems.length !== 1 ? 's' : ''}
+                {search.trim() ? ' encontrada(s)' : ''}
+                {rowsPerPage === ROWS_PER_PAGE_ALL
+                  ? ' · Todas visibles'
+                  : ` · Página ${page} de ${totalPages}`}
+              </p>
+              <label className="inline-flex items-center gap-1.5 text-xs text-gray-500">
+                <span className="font-medium">Filas:</span>
+                <select
+                  value={rowsPerPage === ROWS_PER_PAGE_ALL ? ROWS_PER_PAGE_ALL : String(rowsPerPage)}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setRowsPerPage(value === ROWS_PER_PAGE_ALL ? ROWS_PER_PAGE_ALL : Number(value))
+                  }}
+                  className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 outline-none ring-blue-500 focus:ring-2"
+                  aria-label="Filas por página"
+                >
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value={ROWS_PER_PAGE_ALL}>Todas</option>
+                </select>
+              </label>
             </div>
+            {showPageControls ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1 || loading}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  <ChevronLeft size={14} />
+                  Anterior
+                </button>
+                <span className="min-w-[4.5rem] text-center text-xs font-medium text-gray-500">
+                  {page} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages || loading}
+                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  Siguiente
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
