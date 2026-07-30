@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react'
+import { formatPortalWalletMoney } from './portalRechargeMoney'
 
 function formatDateTime(value) {
   if (!value) return '—'
@@ -18,31 +19,12 @@ function formatDateTime(value) {
   }
 }
 
-function formatMoney(value, currency = 'USD') {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return '—'
-  const cur = String(currency || 'USD').trim().toUpperCase().slice(0, 10) || 'USD'
-  try {
-    if (cur.length === 3) {
-      return new Intl.NumberFormat('es-EC', {
-        style: 'currency',
-        currency: cur,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(n)
-    }
-  } catch {
-    /* noop */
-  }
-  return `${n.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`
-}
-
-function SummaryCard({ label, amount, currency }) {
+function SummaryCard({ label, amount }) {
   return (
     <div className="rounded-xl border border-emerald-400/25 bg-emerald-950/25 px-3 py-3 text-center shadow-[inset_0_1px_0_rgba(52,211,153,0.08)]">
       <p className="m-0 text-[10px] font-semibold uppercase tracking-wide text-emerald-200/75">{label}</p>
       <p className="m-0 mt-1.5 text-base font-extrabold tabular-nums text-emerald-50">
-        {formatMoney(amount, currency)}
+        {formatPortalWalletMoney(amount)}
       </p>
     </div>
   )
@@ -94,8 +76,6 @@ export default function EarningsHistoryModal({ open, onClose, token, api }) {
 
   if (!open) return null
 
-  const currency = String(summaries?.currency || 'USD')
-
   return (
     <div
       className="fixed inset-0 z-[130] flex items-end justify-center p-0 sm:items-center sm:p-4"
@@ -115,7 +95,7 @@ export default function EarningsHistoryModal({ open, onClose, token, api }) {
             <h2 id="earnings-history-title" className="m-0 text-lg font-extrabold text-emerald-50">
               Historial de Ganancias
             </h2>
-            <p className="m-1 mb-0 text-xs text-slate-400">Comisiones generadas por tu red de distribuidores</p>
+            <p className="m-1 mb-0 text-xs text-slate-400">Ganancias directas y comisiones de red</p>
           </div>
           <button
             type="button"
@@ -128,9 +108,9 @@ export default function EarningsHistoryModal({ open, onClose, token, api }) {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
           <div className="mb-4 grid grid-cols-3 gap-2">
-            <SummaryCard label="Hoy" amount={summaries?.daily ?? 0} currency={currency} />
-            <SummaryCard label="7 días" amount={summaries?.weekly ?? 0} currency={currency} />
-            <SummaryCard label="30 días" amount={summaries?.monthly ?? 0} currency={currency} />
+            <SummaryCard label="Hoy" amount={summaries?.daily ?? 0} />
+            <SummaryCard label="7 días" amount={summaries?.weekly ?? 0} />
+            <SummaryCard label="30 días" amount={summaries?.monthly ?? 0} />
           </div>
 
           {loading ? (
@@ -144,7 +124,7 @@ export default function EarningsHistoryModal({ open, onClose, token, api }) {
             </p>
           ) : items.length === 0 ? (
             <p className="m-0 rounded-xl border border-white/10 bg-black/20 px-4 py-8 text-center text-sm text-slate-400">
-              Aún no tienes comisiones registradas por tu red.
+              Aún no tienes ganancias registradas.
             </p>
           ) : (
             <div className="-mx-1 overflow-x-auto px-1 sm:mx-0 sm:overflow-x-visible sm:px-0">
@@ -171,10 +151,10 @@ export default function EarningsHistoryModal({ open, onClose, token, api }) {
                             {formatDateTime(row?.date)}
                           </td>
                           <td className="break-words px-3 py-3 align-top text-sm leading-snug whitespace-normal text-slate-100">
-                            {String(row?.description || 'Comisión por red')}
+                            {String(row?.description || 'Ganancia BaaS')}
                           </td>
                           <td className="min-w-[100px] px-3 py-3 align-top text-right text-sm font-bold tabular-nums whitespace-nowrap text-green-400">
-                            +{formatMoney(row?.amount, row?.currency || currency)}
+                            +{formatPortalWalletMoney(row?.amount)}
                           </td>
                         </tr>
                       )
