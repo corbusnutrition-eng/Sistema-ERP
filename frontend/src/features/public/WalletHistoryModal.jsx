@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
-import { portalRechargeGross } from './portalRechargeMoney'
+import { formatPortalWalletMoney, portalRechargeWalletCreditUsd } from './portalRechargeMoney'
 
 function formatShortDate(value) {
   if (!value) return '—'
@@ -15,25 +15,6 @@ function formatShortDate(value) {
   } catch {
     return '—'
   }
-}
-
-function formatMoney(value, currency = 'USD') {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return '—'
-  const cur = String(currency || 'USD').trim().toUpperCase().slice(0, 10) || 'USD'
-  try {
-    if (cur.length === 3) {
-      return new Intl.NumberFormat('es-EC', {
-        style: 'currency',
-        currency: cur,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }).format(n)
-    }
-  } catch {
-    /* noop */
-  }
-  return `${n.toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`
 }
 
 export default function WalletHistoryModal({ open, onClose, token, api }) {
@@ -127,7 +108,7 @@ export default function WalletHistoryModal({ open, onClose, token, api }) {
                         </p>
                       </div>
                       <p className="m-0 shrink-0 text-right text-[14px] font-bold tabular-nums text-slate-100">
-                        {formatMoney(portalRechargeGross(row), row?.currency)}
+                        {formatPortalWalletMoney(portalRechargeWalletCreditUsd(row))}
                       </p>
                     </div>
                   </li>

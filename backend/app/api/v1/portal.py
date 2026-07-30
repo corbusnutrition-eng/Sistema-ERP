@@ -3710,6 +3710,8 @@ def _portal_wallet_recharge_history_item(
         discount=disc,
         gross_amount=gross,
         currency=cur,
+        wallet_credit_usd=round(_portal_wallet_recharge_usd_credit(req), 2),
+        recharge_exchange_rate=float(getattr(req, "recharge_exchange_rate", None) or 1.0),
         status=st,
         status_label=_wallet_recharge_status_label_es(st),
         payments=_portal_wallet_recharge_history_payments(db, req),

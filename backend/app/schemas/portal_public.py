@@ -798,6 +798,16 @@ class PortalWalletRechargeHistoryItem(BaseModel):
         description="Importe bruto de la solicitud (amount_requested + discount).",
     )
     currency: str = Field(default="USD", max_length=10)
+    wallet_credit_usd: float = Field(
+        default=0.0,
+        ge=0,
+        description="Saldo BaaS acreditado en USD (crédito efectivo en billetera).",
+    )
+    recharge_exchange_rate: float = Field(
+        default=1.0,
+        gt=0,
+        description="Tipo de cambio fiat→USD usado en la solicitud.",
+    )
     status: str
     status_label: str
     payments: list[PortalWalletRechargeHistoryPayment] = Field(default_factory=list)
