@@ -221,6 +221,31 @@ function portalAutoPurchaseUnitPriceUsd(product) {
   return NaN
 }
 
+/** Saldo BaaS disponible en USD (misma fuente que mini-dashboard / cobro autocompra). */
+function resolvePortalWalletBalanceUsd(data, walletRowsDisplay = []) {
+  const rows = Array.isArray(walletRowsDisplay) ? walletRowsDisplay : []
+  const usdRow = rows.find((r) => r.currency === PORTAL_WALLET_DISPLAY_CURRENCY)
+  if (usdRow && Number.isFinite(usdRow.amount) && usdRow.amount >= 0) {
+    return usdRow.amount
+  }
+
+  const walletCur = String(data?.client?.wallet_balance_currency ?? '')
+    .trim()
+    .toUpperCase()
+    .slice(0, 10)
+  const legacyBal = parseMoneyNum(data?.client?.wallet_balance)
+  if (walletCur === PORTAL_WALLET_DISPLAY_CURRENCY && Number.isFinite(legacyBal) && legacyBal >= 0) {
+    return legacyBal
+  }
+
+  const saldoBaas = parseMoneyNum(data?.dashboard_metrics?.saldo_baas)
+  if (Number.isFinite(saldoBaas) && saldoBaas >= 0) {
+    return saldoBaas
+  }
+
+  return 0
+}
+
 function parentPackageAcquisitionPrice(pkg, assignedPricesMap) {
   const pid = String(pkg?.package_catalog_id ?? '')
   const fromMap = parseMoneyNum(assignedPricesMap?.[pid])
@@ -4137,6 +4162,11 @@ function ClientPortalPageInner() {
     return parseMoneyNum(raw) || 0
   }, [walletRowsDisplay, portalWalletCurrencyLabel, data])
 
+  const clientWalletBalanceUsd = useMemo(
+    () => resolvePortalWalletBalanceUsd(data, walletRowsDisplay),
+    [data, walletRowsDisplay],
+  )
+
   const getClientWalletBalance = useCallback(
     (currency) => {
       const cur =
@@ -4421,14 +4451,10 @@ function ClientPortalPageInner() {
     return rows.map((r) => `${formatMoney(r.amount, String(r.currency ?? 'USD'))}`).join(' · ')
   }, [data, debtRowsDisplay, portalCreditCurrencyLabel])
 
-  const walletAccordionAside = useMemo(() => {
-    if (walletRowsDisplay.length > 1) {
-      return walletRowsDisplay
-        .map((r) => formatPortalWalletMoney(r.amount))
-        .join(' · ')
-    }
-    return formatPortalWalletMoney(clientWalletBalanceNum)
-  }, [walletRowsDisplay, clientWalletBalanceNum])
+  const walletAccordionAside = useMemo(
+    () => formatPortalWalletMoney(clientWalletBalanceUsd),
+    [clientWalletBalanceUsd],
+  )
 
   const ACTIVE_SCREENS_PAGE_SIZE = 5
   const itemsPerPage = 5
@@ -8398,7 +8424,7 @@ function ClientPortalPageInner() {
                   </span>
                 ) : (
                   <span className="block mt-1 text-lg font-bold tabular-nums text-violet-50">
-                    {formatPortalWalletMoney(clientWalletBalanceNum)}
+                    {formatPortalWalletMoney(clientWalletBalanceUsd)}
                   </span>
                 )}
               </p>
@@ -8511,11 +8537,11 @@ function ClientPortalPageInner() {
                         }))
                       }
                       const lineTotalUsd = hasAssignedPrice ? unitPriceUsd * qty : NaN
-                      const walletUsd = getClientWalletBalance(PORTAL_WALLET_DISPLAY_CURRENCY)
+                      const availableBalanceUsd = clientWalletBalanceUsd
                       const canAfford =
                         hasAssignedPrice &&
                         Number.isFinite(lineTotalUsd) &&
-                        walletUsd + 1e-9 >= lineTotalUsd
+                        lineTotalUsd <= availableBalanceUsd + 1e-9
                       const busy = autoPurchaseBusyId === pkgId
                       const purchaseLocked = busy || confirmingPurchase != null || autoPurchaseBusyId != null
                       return (
@@ -8631,24 +8657,13 @@ function ClientPortalPageInner() {
                 )}
 
                 {autoPurchaseProducts.some((p) => {
-                  const pkgId = Number(p?.package_catalog_id)
                   const unitPriceUsd = portalAutoPurchaseUnitPriceUsd(p)
                   if (!Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) return false
-                  const qty = Math.max(
-                    1,
-                    Math.min(
-                      Math.max(1, Math.min(200, Number(p?.free_stock ?? 0) || 1)),
-                      parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1,
-                    ),
-                  )
-                  const totalUsd = unitPriceUsd * qty
-                  return (
-                    Number.isFinite(totalUsd)
-                    && getClientWalletBalance(PORTAL_WALLET_DISPLAY_CURRENCY) + 1e-9 < totalUsd
-                  )
+                  return unitPriceUsd > clientWalletBalanceUsd + 1e-9
                 }) ? (
                   <p className="mt-4 mb-0 text-xs text-amber-200/90">
-                    Algunos paquetes requieren más saldo del disponible ({walletAccordionAside}).
+                    Algunos paquetes requieren más saldo del disponible (
+                    {formatPortalWalletMoney(clientWalletBalanceUsd)}).
                   </p>
                 ) : null}
 
