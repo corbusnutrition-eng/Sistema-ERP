@@ -206,6 +206,21 @@ function portalSaleUnitPrice(product, assignedPricesMap, clientCurrency) {
   return NaN
 }
 
+/** Precio unitario en USD para autocompra BaaS (descuenta saldo USD; no usar moneda local). */
+function portalAutoPurchaseUnitPriceUsd(product) {
+  const usd = parseMoneyNum(product?.custom_price)
+  if (Number.isFinite(usd) && usd > 0) return usd
+  const cur = String(product?.currency ?? '')
+    .trim()
+    .toUpperCase()
+    .slice(0, 10)
+  if (cur === 'USD') {
+    const localAsUsd = parseMoneyNum(product?.precio_venta_local)
+    if (Number.isFinite(localAsUsd) && localAsUsd > 0) return localAsUsd
+  }
+  return NaN
+}
+
 function parentPackageAcquisitionPrice(pkg, assignedPricesMap) {
   const pid = String(pkg?.package_catalog_id ?? '')
   const fromMap = parseMoneyNum(assignedPricesMap?.[pid])
@@ -8479,9 +8494,8 @@ function ClientPortalPageInner() {
                   <ul className="m-0 p-0 list-none space-y-3">
                     {autoPurchaseProducts.map((p) => {
                       const pkgId = Number(p?.package_catalog_id)
-                      const cur = portalProductCurrency(p, clientBaseCurrency)
-                      const unitPrice = portalSaleUnitPrice(p, assignedPricesMap, clientBaseCurrency)
-                      const hasAssignedPrice = Number.isFinite(unitPrice) && unitPrice > 0
+                      const unitPriceUsd = portalAutoPurchaseUnitPriceUsd(p)
+                      const hasAssignedPrice = Number.isFinite(unitPriceUsd) && unitPriceUsd > 0
                       const stock = Number(p?.free_stock ?? 0)
                       const isOutOfStock = stock <= 0
                       const maxQty = isOutOfStock ? 1 : Math.max(1, Math.min(200, stock))
@@ -8496,11 +8510,12 @@ function ClientPortalPageInner() {
                           [String(pkgId)]: String(clamped),
                         }))
                       }
-                      const lineTotal = hasAssignedPrice ? unitPrice * qty : NaN
+                      const lineTotalUsd = hasAssignedPrice ? unitPriceUsd * qty : NaN
+                      const walletUsd = getClientWalletBalance(PORTAL_WALLET_DISPLAY_CURRENCY)
                       const canAfford =
                         hasAssignedPrice &&
-                        Number.isFinite(lineTotal) &&
-                        getClientWalletBalance(cur) + 1e-9 >= lineTotal
+                        Number.isFinite(lineTotalUsd) &&
+                        walletUsd + 1e-9 >= lineTotalUsd
                       const busy = autoPurchaseBusyId === pkgId
                       const purchaseLocked = busy || confirmingPurchase != null || autoPurchaseBusyId != null
                       return (
@@ -8528,7 +8543,7 @@ function ClientPortalPageInner() {
                                 <p className="m-0 text-xs leading-snug text-slate-300/80">
                                   Precio:{' '}
                                   <span className="font-medium tabular-nums text-fuchsia-100">
-                                    {formatMoney(unitPrice, cur)}
+                                    {formatPortalWalletMoney(unitPriceUsd)}
                                   </span>
                                 </p>
                               </div>
@@ -8568,9 +8583,9 @@ function ClientPortalPageInner() {
                                       packageCatalogId: pkgId,
                                       packageName: String(p?.name ?? '—'),
                                       quantity: qty,
-                                      unitPrice,
-                                      totalPrice: lineTotal,
-                                      currency: cur,
+                                      unitPrice: unitPriceUsd,
+                                      totalPrice: lineTotalUsd,
+                                      currency: PORTAL_WALLET_DISPLAY_CURRENCY,
                                       step: 'choose',
                                       endCustomerName: '',
                                       endCustomerDialCode: '+593',
@@ -8617,9 +8632,8 @@ function ClientPortalPageInner() {
 
                 {autoPurchaseProducts.some((p) => {
                   const pkgId = Number(p?.package_catalog_id)
-                  const pCur = portalProductCurrency(p, clientBaseCurrency)
-                  const unitPrice = portalSaleUnitPrice(p, assignedPricesMap, clientBaseCurrency)
-                  if (!Number.isFinite(unitPrice) || unitPrice <= 0) return false
+                  const unitPriceUsd = portalAutoPurchaseUnitPriceUsd(p)
+                  if (!Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) return false
                   const qty = Math.max(
                     1,
                     Math.min(
@@ -8627,8 +8641,11 @@ function ClientPortalPageInner() {
                       parseInt(String(autoPurchaseQtyByPackageId[String(pkgId)] ?? '1'), 10) || 1,
                     ),
                   )
-                  const total = unitPrice * qty
-                  return Number.isFinite(total) && getClientWalletBalance(pCur) + 1e-9 < total
+                  const totalUsd = unitPriceUsd * qty
+                  return (
+                    Number.isFinite(totalUsd)
+                    && getClientWalletBalance(PORTAL_WALLET_DISPLAY_CURRENCY) + 1e-9 < totalUsd
+                  )
                 }) ? (
                   <p className="mt-4 mb-0 text-xs text-amber-200/90">
                     Algunos paquetes requieren más saldo del disponible ({walletAccordionAside}).
@@ -9557,7 +9574,7 @@ function ClientPortalPageInner() {
               por un total de{' '}
               <strong className="font-bold text-fuchsia-100 tabular-nums">
                 {Number.isFinite(confirmingPurchase.totalPrice)
-                  ? formatMoney(confirmingPurchase.totalPrice, confirmingPurchase.currency || clientBaseCurrency)
+                  ? formatPortalWalletMoney(confirmingPurchase.totalPrice)
                   : '—'}
               </strong>
               ?
