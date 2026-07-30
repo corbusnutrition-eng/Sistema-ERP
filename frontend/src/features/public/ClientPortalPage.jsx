@@ -51,6 +51,7 @@ import EarningsHistoryModal from './EarningsHistoryModal'
 import { portalRechargeDiscount, portalRechargeGross, portalRechargeNet, portalRechargeWalletCreditUsd } from './portalRechargeMoney'
 import TransferHistoryModal from './TransferHistoryModal'
 import { appendOcrFormFields, isIllegibleReceiptAi } from '../../components/OcrSecurityBadges'
+import { normalizeCurrencyWithAliases, portalCurrencyIsoLabel } from '../../lib/currencyAliases'
 
 function publicApi() {
   return axios.create({
@@ -181,14 +182,7 @@ function formatMoney(amount, currency) {
 }
 
 function currencyInputPrefix(currency) {
-  const cur = String(currency || 'USD').trim().toUpperCase() || 'USD'
-  try {
-    const parts = new Intl.NumberFormat('es-CO', { style: 'currency', currency: cur }).formatToParts(0)
-    const sym = parts.find((p) => p.type === 'currency')?.value
-    return sym ? sym.trim() : cur
-  } catch {
-    return cur
-  }
+  return portalCurrencyIsoLabel(currency, 'USD')
 }
 
 function portalSaleUnitPrice(product, assignedPricesMap, clientCurrency) {
@@ -1128,24 +1122,10 @@ function absolutizeMediaUrl(u) {
   return t.startsWith('/') ? `${base}${t}` : `${base}/${t}`
 }
 
-/** Alias de símbolos / etiquetas frecuentes en comprobantes → ISO 4217. */
-const PORTAL_CURRENCY_ALIASES = {
-  $: 'USD',
-  US$: 'USD',
-  U$S: 'USD',
-  USD$: 'USD',
-  '€': 'EUR',
-  '£': 'GBP',
-}
-
-/** Normalización para comparar moneda IA vs cuenta (mismo criterio que backend: hasta 10 chars). */
+/** Normalización para comparar moneda IA vs cuenta (alias OCR → ISO 4217). */
 function normalizePortalCurrency(c) {
   if (c == null || String(c).trim() === '') return ''
-  const raw = String(c).trim().toUpperCase().slice(0, 10).replace(/\s+/g, '')
-  if (PORTAL_CURRENCY_ALIASES[raw]) return PORTAL_CURRENCY_ALIASES[raw]
-  const withSpaces = String(c).trim().toUpperCase().slice(0, 10)
-  if (PORTAL_CURRENCY_ALIASES[withSpaces]) return PORTAL_CURRENCY_ALIASES[withSpaces]
-  return raw
+  return normalizeCurrencyWithAliases(c, '')
 }
 
 function filterPortalAccountsByCurrency(accounts, currency) {
@@ -6598,7 +6578,7 @@ function ClientPortalPageInner() {
       {!debtForm.analyzing && debtForm.aiResult && (
         debtForm.aiResult.is_readable
           ? <p style={{ margin: '0 0 10px', fontSize: 13, color: '#86efac', textAlign: 'center' }}>
-              ✅ Se detectaron {String(debtForm.aiResult.extracted_currency || debtCurrency)}{' '}
+              ✅ Se detectaron {portalCurrencyIsoLabel(debtForm.aiResult.extracted_currency || debtCurrency, debtCurrency)}{' '}
               {(() => {
                 const raw = debtForm.aiResult.extracted_amount
                 const n =
@@ -6954,10 +6934,7 @@ function ClientPortalPageInner() {
             const rechargeReceiptFiles = receiptFilesByRecharge[frId] || []
             const rechargeReceiptThumbUrls = receiptThumbUrlsByRecharge[frId] || []
             const refStr = walletRechargeLedgerRef(frId)
-            const cur =
-              fr?.recharge_currency && String(fr.recharge_currency).trim().length >= 3
-                ? String(fr.recharge_currency).trim().toUpperCase().slice(0, 10)
-                : 'USD'
+            const cur = portalCurrencyIsoLabel(fr?.recharge_currency, 'USD')
             const payTree = buildPortalPaymentTreeForRecharge(data, fr, cur)
             const rechargePaymentMethods = portalParentMethods(payTree)
             const selectedRechargePaymentMethodId = String(
@@ -7485,7 +7462,7 @@ function ClientPortalPageInner() {
 
                     <PortalManualAmountField
                       fieldId={`recharge-manual-amt-${frId}`}
-                      label={`¿Cuánto pagaste en tu depósito? (${cur})`}
+                      label={`¿Cuánto pagaste en tu depósito? (${portalCurrencyIsoLabel(cur, 'USD')})`}
                       hint="Este importe solo se completa con la IA al leer el comprobante."
                       amount={rechargeForm.amount}
                       onAmountChange={(val) =>
@@ -7538,7 +7515,10 @@ function ClientPortalPageInner() {
                       rechargeForm.aiResult.is_readable ?
                         (() => {
                           const detectedAmt = rechargeForm.aiResult.extracted_amount
-                          const detectedCur = rechargeForm.aiResult.extracted_currency || cur
+                          const detectedCur = portalCurrencyIsoLabel(
+                            rechargeForm.aiResult.extracted_currency || cur,
+                            cur,
+                          )
                           return (
                             <p
                               style={{
@@ -8134,8 +8114,8 @@ function ClientPortalPageInner() {
                           fieldId={`sale-manual-amt-${sid}`}
                           label={
                             creditAppliedToOrder > 1e-9
-                              ? `Importe depositado (${saleCurrency}), solo la diferencia`
-                              : `¿Cuánto pagaste en tu depósito? (${saleCurrency})`
+                              ? `Importe depositado (${portalCurrencyIsoLabel(saleCurrency, 'USD')}), solo la diferencia`
+                              : `¿Cuánto pagaste en tu depósito? (${portalCurrencyIsoLabel(saleCurrency, 'USD')})`
                           }
                           hint={
                             creditAppliedToOrder > 1e-9
@@ -8210,7 +8190,10 @@ function ClientPortalPageInner() {
                               )
                             }
                             const detectedAmt = aiResult.extracted_amount
-                            const detectedCur = aiResult.extracted_currency || saleCurrency
+                            const detectedCur = portalCurrencyIsoLabel(
+                              aiResult.extracted_currency || saleCurrency,
+                              saleCurrency,
+                            )
                             // Mensaje informativo unificado: monto detectado + ajuste automático.
                             // Sin importar si coincide o no con el esperado — el backend lo gestiona.
                             return (

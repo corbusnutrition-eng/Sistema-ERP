@@ -37,6 +37,18 @@ _CURRENCY_SYMBOL_ALIASES: dict[str, str] = {
     "USD$": "USD",
     "€": "EUR",
     "£": "GBP",
+    "BS": "BOB",
+    "BS.": "BOB",
+    "BSB": "BOB",
+    "BOLIVIANO": "BOB",
+    "BOLIVIANOS": "BOB",
+    "S/": "PEN",
+    "S/.": "PEN",
+    "SOLES": "PEN",
+    "SOL": "PEN",
+    "R$": "BRL",
+    "REAL": "BRL",
+    "REALES": "BRL",
 }
 
 
