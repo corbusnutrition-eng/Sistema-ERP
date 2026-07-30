@@ -1924,6 +1924,8 @@ def _portal_create_wallet_recharge_for_client(
     payment_method_id: Optional[int] = None,
     deposit_account_id: Optional[int] = None,
     currency: Optional[str] = None,
+    amount_usd: Optional[float] = None,
+    exchange_rate: Optional[float] = None,
 ) -> WalletRechargeRequest:
     from app.services.client_currency_service import get_client_currency, lock_client_base_currency_on_recharge_create
     from app.services.client_payment_method_service import (
@@ -1937,6 +1939,45 @@ def _portal_create_wallet_recharge_for_client(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Indica un monto mayor a cero.")
 
     cur = normalize_currency_code(currency or get_client_currency(client), "USD")
+
+    wallet_credit_usd_val: Optional[float] = None
+    xr = 1.0
+    if amount_usd is not None:
+        try:
+            usd_v = round(float(amount_usd), 2)
+            if usd_v > 0:
+                wallet_credit_usd_val = usd_v
+        except (TypeError, ValueError):
+            wallet_credit_usd_val = None
+        if exchange_rate is not None:
+            try:
+                xr_f = float(exchange_rate)
+                if xr_f > 0:
+                    xr = round(xr_f, 6)
+            except (TypeError, ValueError):
+                xr = 1.0
+    elif cur != "USD":
+        xr = 1.0
+
+    if wallet_credit_usd_val is not None:
+        recharge_lines = [
+            {
+                "product_name": "Saldo BaaS",
+                "tipo_moneda": cur,
+                "importe": aq,
+                "saldo_recargar": wallet_credit_usd_val,
+                "wallet_credit_usd": wallet_credit_usd_val,
+            }
+        ]
+    else:
+        recharge_lines = [
+            {
+                "product_name": "Saldo BaaS",
+                "tipo_moneda": cur,
+                "importe": aq,
+                "saldo_recargar": aq,
+            }
+        ]
 
     full_options = _portal_filter_recharge_payment_options_by_currency(
         _portal_recharge_payment_options_for_client(db, client),
@@ -2033,13 +2074,14 @@ def _portal_create_wallet_recharge_for_client(
     req = WalletRechargeRequest(
         client_id=int(client.id),
         amount_requested=aq,
+        wallet_credit_usd=wallet_credit_usd_val,
         receipt_url=None,
         status=REQ_STATUS_PENDING,
         allowed_payment_methods=all_pm_ids,
         allowed_deposit_account_ids=all_dep_ids or allowed_dep_norm,
         link_hash=None,
         recharge_currency=cur,
-        recharge_exchange_rate=1.0,
+        recharge_exchange_rate=xr,
         amount_paid=0.0,
         balance_pending=aq,
         surplus_credited=0.0,
@@ -2047,14 +2089,7 @@ def _portal_create_wallet_recharge_for_client(
         admin_note="Solicitud creada por el cliente desde el portal.",
         payment_method_id=resolved_payment_method_id,
         hotmart_links=hotmart_links,
-        recharge_detail_lines=[
-            {
-                "product_name": "Saldo BaaS",
-                "tipo_moneda": cur,
-                "importe": aq,
-                "saldo_recargar": aq,
-            }
-        ],
+        recharge_detail_lines=recharge_lines,
     )
     db.add(req)
     db.flush()
@@ -2070,6 +2105,32 @@ def portal_recharge_payment_options(portal_token: uuid_pkg.UUID, db: DbDep) -> l
     """Métodos de pago disponibles para auto-solicitud de recarga BaaS."""
     client = _portal_client_from_token(db, portal_token)
     return _portal_recharge_payment_options_for_client(db, client)
+
+
+@router.get("/{portal_token}/exchange-rates")
+def portal_exchange_rates_catalog(portal_token: uuid_pkg.UUID, db: DbDep):
+    """Tasas activas del ERP para calcular cobro local en solicitudes BaaS del portal."""
+    from app.schemas.exchange_rate import ExchangeRateListResponse, ExchangeRateRead
+    from app.services.exchange_rate_service import list_exchange_rates, resolve_active_rate
+
+    _portal_client_from_token(db, portal_token)
+    rows = [r for r in list_exchange_rates(db) if bool(getattr(r, "is_active", True))]
+    items = [
+        ExchangeRateRead(
+            currency_code=str(row.currency_code),
+            binance_rate=row.binance_rate,
+            manual_rate=row.manual_rate,
+            use_manual_override=bool(row.use_manual_override),
+            is_active=bool(row.is_active),
+            display_order=int(row.display_order or 0),
+            tolerance_type=row.tolerance_type,
+            tolerance_value=row.tolerance_value,
+            active_rate=resolve_active_rate(row),
+            updated_at=row.updated_at,
+        )
+        for row in rows
+    ]
+    return ExchangeRateListResponse(items=items, total=len(items))
 
 
 @router.post(
@@ -2098,6 +2159,8 @@ def portal_create_wallet_recharge(
         payment_method_id=payload.payment_method_id,
         deposit_account_id=payload.deposit_account_id,
         currency=payload.currency,
+        amount_usd=payload.amount_usd,
+        exchange_rate=payload.exchange_rate,
     )
     token_out = str(ptok)
     portal_path = f"/portal/{token_out}"

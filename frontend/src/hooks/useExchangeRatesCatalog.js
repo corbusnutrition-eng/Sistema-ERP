@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   fetchExchangeRatesCatalog,
+  fetchPortalExchangeRatesCatalog,
   getActiveRateForCode,
 } from '../lib/exchangeRatesActive'
 
 /**
- * Carga GET /api/v1/exchange-rates y expone helper de tasa activa.
- * Cada vez que `enabled` pasa a true (p. ej. al abrir el modal), refetch sin caché.
+ * Carga tasas activas del ERP.
+ * - Panel admin: GET /api/v1/exchange-rates (requiere JWT).
+ * - Portal cliente: GET /api/v1/portal/{token}/exchange-rates.
+ * Cada vez que `enabled` pasa a true, refetch sin caché del panel admin.
  */
-export default function useExchangeRatesCatalog(enabled = true) {
+export default function useExchangeRatesCatalog(enabled = true, options = null) {
+  const portalToken = options?.portalToken ?? null
+  const portalApi = options?.portalApi ?? null
   const [rates, setRates] = useState([])
   const [loading, setLoading] = useState(false)
 
@@ -20,7 +25,11 @@ export default function useExchangeRatesCatalog(enabled = true) {
     }
     let cancelled = false
     setLoading(true)
-    fetchExchangeRatesCatalog({ bypassCache: true })
+    const load =
+      portalToken && portalApi
+        ? fetchPortalExchangeRatesCatalog(portalToken, portalApi)
+        : fetchExchangeRatesCatalog({ bypassCache: true })
+    load
       .then((items) => {
         if (!cancelled) setRates(Array.isArray(items) ? items : [])
       })
@@ -30,7 +39,7 @@ export default function useExchangeRatesCatalog(enabled = true) {
     return () => {
       cancelled = true
     }
-  }, [enabled])
+  }, [enabled, portalToken, portalApi])
 
   const getActiveRate = useCallback(
     (currencyCode) => getActiveRateForCode(rates, currencyCode),

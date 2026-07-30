@@ -1,51 +1,113 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
+import useExchangeRatesCatalog from '../../hooks/useExchangeRatesCatalog'
+import { normalizeCurrencyCode } from '../../lib/currencyCode'
 
 function parseAmount(raw) {
   const n = parseFloat(String(raw ?? '').trim().replace(',', '.'))
   return Number.isFinite(n) ? n : NaN
 }
 
+function formatFiatAmount(amount, currency) {
+  const n = Number(amount)
+  if (!Number.isFinite(n)) return '—'
+  const cur = normalizeCurrencyCode(currency, 'USD')
+  try {
+    return new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: cur.length === 3 ? cur : 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n)
+  } catch {
+    return `${n.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`
+  }
+}
+
 /**
  * Modal para crear o editar una solicitud de recarga BaaS desde el portal.
- * En creación solo pide el monto; el método de pago se elige en la vista del pedido.
+ * Creación: monto en USD + moneda de pago + total fiat calculado con tasas ERP.
  */
 export default function ClientRechargeRequestModal({
   open,
   onClose,
   token,
   api,
-  currency = 'USD',
+  clientBaseCurrency = 'USD',
   onSuccess,
   mode = 'create',
   rechargeId = null,
   initialAmount = null,
+  currency: editCurrency = 'USD',
 }) {
   const isEditMode = mode === 'edit'
-  const [amount, setAmount] = useState('')
+  const [amountUsd, setAmountUsd] = useState('')
+  const [paymentCurrency, setPaymentCurrency] = useState('USD')
   const [submitting, setSubmitting] = useState(false)
   const [submitErr, setSubmitErr] = useState('')
 
+  const { rates, loading: ratesLoading, getActiveRate } = useExchangeRatesCatalog(open && !isEditMode, {
+    portalToken: token,
+    portalApi: api,
+  })
+
+  const paymentCurrencyOptions = useMemo(() => {
+    const codes = new Set(['USD'])
+    for (const row of rates) {
+      const code = normalizeCurrencyCode(row?.currency_code, '')
+      if (code) codes.add(code)
+    }
+    const base = normalizeCurrencyCode(clientBaseCurrency, 'USD')
+    if (base) codes.add(base)
+    return [...codes].sort((a, b) => a.localeCompare(b))
+  }, [rates, clientBaseCurrency])
+
+  const activeRate = useMemo(() => {
+    const rate = getActiveRate(paymentCurrency)
+    return Number.isFinite(rate) && rate > 0 ? rate : null
+  }, [getActiveRate, paymentCurrency])
+
+  const amountUsdNum = parseAmount(amountUsd)
+  const totalFiat = useMemo(() => {
+    if (!(amountUsdNum > 0) || activeRate == null) return null
+    return Math.round(amountUsdNum * activeRate * 100) / 100
+  }, [amountUsdNum, activeRate])
+
   useEffect(() => {
     if (!open) return
-    const seed =
-      initialAmount != null && Number.isFinite(Number(initialAmount)) && Number(initialAmount) > 0
-        ? String(initialAmount)
-        : ''
-    setAmount(seed)
     setSubmitErr('')
-  }, [open, initialAmount])
+    if (isEditMode) {
+      const seed =
+        initialAmount != null && Number.isFinite(Number(initialAmount)) && Number(initialAmount) > 0
+          ? String(initialAmount)
+          : ''
+      setAmountUsd(seed)
+      setPaymentCurrency(normalizeCurrencyCode(editCurrency, 'USD'))
+      return
+    }
+    setAmountUsd('')
+  }, [open, initialAmount, isEditMode, editCurrency])
+
+  useEffect(() => {
+    if (!open || isEditMode || ratesLoading) return
+    const base = normalizeCurrencyCode(clientBaseCurrency, 'USD')
+    setPaymentCurrency((prev) => {
+      if (prev && paymentCurrencyOptions.includes(prev)) return prev
+      if (paymentCurrencyOptions.includes(base)) return base
+      return paymentCurrencyOptions[0] || 'USD'
+    })
+  }, [open, isEditMode, ratesLoading, clientBaseCurrency, paymentCurrencyOptions])
 
   async function handleSubmit(e) {
     e.preventDefault()
     setSubmitErr('')
-    const amt = parseAmount(amount)
-    if (!Number.isFinite(amt) || !(amt > 0)) {
-      setSubmitErr('Indica un monto válido mayor a cero.')
-      return
-    }
 
     if (isEditMode) {
+      const amt = parseAmount(amountUsd)
+      if (!Number.isFinite(amt) || !(amt > 0)) {
+        setSubmitErr('Indica un monto válido mayor a cero.')
+        return
+      }
       const rid = Number(rechargeId)
       if (!Number.isFinite(rid) || rid < 1) {
         setSubmitErr('Solicitud de recarga inválida.')
@@ -73,11 +135,31 @@ export default function ClientRechargeRequestModal({
       return
     }
 
+    const usd = parseAmount(amountUsd)
+    if (!Number.isFinite(usd) || !(usd > 0)) {
+      setSubmitErr('Indica un monto USD válido mayor a cero.')
+      return
+    }
+    const payCur = normalizeCurrencyCode(paymentCurrency, 'USD')
+    if (!payCur) {
+      setSubmitErr('Selecciona la moneda de pago.')
+      return
+    }
+    const xr = getActiveRate(payCur)
+    if (xr == null || !(xr > 0)) {
+      setSubmitErr(`No hay tasa activa configurada para ${payCur}. Contacta a soporte.`)
+      return
+    }
+    const fiatTotal = Math.round(usd * xr * 100) / 100
+
     setSubmitting(true)
     try {
       const body = {
-        amount: amt,
-        currency: String(currency || 'USD').trim().toUpperCase().slice(0, 10),
+        amount_usd: usd,
+        currency: payCur,
+        exchange_rate: xr,
+        total_fiat_amount: fiatTotal,
+        amount: fiatTotal,
       }
 
       const { data } = await api.post(
@@ -101,7 +183,7 @@ export default function ClientRechargeRequestModal({
 
   if (!open) return null
 
-  const curLabel = String(currency || 'USD').trim().toUpperCase().slice(0, 10)
+  const editCurLabel = normalizeCurrencyCode(editCurrency, 'USD')
 
   return (
     <div className="fixed inset-0 z-[130] flex items-center justify-center p-4" role="dialog" aria-modal="true">
@@ -120,7 +202,7 @@ export default function ClientRechargeRequestModal({
             <p className="m-1 mb-0 text-xs text-slate-400">
               {isEditMode
                 ? 'Puedes cambiar el monto mientras no hayas enviado ningún pago.'
-                : 'Indica el monto y te llevaremos al formulario de pago para elegir cómo pagar.'}
+                : 'Indica cuánto saldo USD deseas y en qué moneda pagarás. Te llevaremos al formulario de pago.'}
             </p>
           </div>
           <button
@@ -134,24 +216,94 @@ export default function ClientRechargeRequestModal({
         </div>
 
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4 px-5 py-4">
-          <div>
-            <label htmlFor="client-recharge-amount" className="mb-1.5 block text-xs font-semibold text-slate-300">
-              Monto a recargar ({curLabel})
-            </label>
-            <input
-              id="client-recharge-amount"
-              type="number"
-              min="0.01"
-              step="0.01"
-              inputMode="decimal"
-              value={amount}
-              onChange={(ev) => setAmount(ev.target.value)}
-              placeholder="0.00"
-              className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white tabular-nums"
-              disabled={submitting}
-              autoFocus
-            />
-          </div>
+          {isEditMode ? (
+            <div>
+              <label htmlFor="client-recharge-amount" className="mb-1.5 block text-xs font-semibold text-slate-300">
+                Monto a recargar ({editCurLabel})
+              </label>
+              <input
+                id="client-recharge-amount"
+                type="number"
+                min="0.01"
+                step="0.01"
+                inputMode="decimal"
+                value={amountUsd}
+                onChange={(ev) => setAmountUsd(ev.target.value)}
+                placeholder="0.00"
+                className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white tabular-nums"
+                disabled={submitting}
+                autoFocus
+              />
+            </div>
+          ) : (
+            <>
+              <div>
+                <label htmlFor="client-recharge-usd" className="mb-1.5 block text-xs font-semibold text-slate-300">
+                  Monto a recargar (USD)
+                </label>
+                <input
+                  id="client-recharge-usd"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={amountUsd}
+                  onChange={(ev) => setAmountUsd(ev.target.value)}
+                  placeholder="100.00"
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white tabular-nums"
+                  disabled={submitting || ratesLoading}
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label htmlFor="client-recharge-pay-currency" className="mb-1.5 block text-xs font-semibold text-slate-300">
+                  Moneda de pago
+                </label>
+                <select
+                  id="client-recharge-pay-currency"
+                  required
+                  value={paymentCurrency}
+                  onChange={(ev) => setPaymentCurrency(ev.target.value)}
+                  disabled={submitting || ratesLoading}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-white"
+                >
+                  {paymentCurrencyOptions.map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </select>
+                {ratesLoading ? (
+                  <p className="mt-1.5 mb-0 flex items-center gap-1.5 text-[11px] text-slate-400">
+                    <Loader2 size={12} className="animate-spin" aria-hidden />
+                    Cargando tasas del ERP…
+                  </p>
+                ) : activeRate == null && paymentCurrency !== 'USD' ? (
+                  <p className="mt-1.5 mb-0 text-[11px] text-amber-300">
+                    No hay tasa activa para {paymentCurrency}. Elige otra moneda o contacta soporte.
+                  </p>
+                ) : null}
+              </div>
+
+              {totalFiat != null && totalFiat > 0 ? (
+                <div className="rounded-xl border border-cyan-400/30 bg-cyan-950/25 px-4 py-3">
+                  <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-cyan-200/80">
+                    Total a pagar
+                  </p>
+                  <p className="m-0 mt-1 text-lg font-bold tabular-nums text-cyan-50">
+                    {formatFiatAmount(totalFiat, paymentCurrency)}
+                  </p>
+                  {activeRate != null && paymentCurrency !== 'USD' ? (
+                    <p className="m-0 mt-1 text-[11px] text-slate-400 tabular-nums">
+                      {amountUsdNum.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                      × {activeRate.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          )}
 
           {submitErr ? <p className="m-0 text-sm text-red-300">{submitErr}</p> : null}
 
@@ -166,7 +318,7 @@ export default function ClientRechargeRequestModal({
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || (!isEditMode && ratesLoading)}
               className="inline-flex items-center gap-2 rounded-xl border-0 bg-gradient-to-r from-indigo-500 via-violet-500 to-cyan-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-[0_10px_28px_rgba(99,102,241,0.35)] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? (

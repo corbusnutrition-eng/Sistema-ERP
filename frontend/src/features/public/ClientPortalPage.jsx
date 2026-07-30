@@ -10571,7 +10571,7 @@ function ClientPortalPageInner() {
           onClose={() => setRechargeRequestModalOpen(false)}
           token={token}
           api={api}
-          currency={portalWalletCurrencyLabel}
+          clientBaseCurrency={clientBaseCurrency}
           onSuccess={(created) => void handleClientRechargeRequestSuccess(created)}
         />
       ) : null}

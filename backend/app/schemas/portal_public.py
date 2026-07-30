@@ -642,7 +642,26 @@ class PortalCxcBalanceResponse(BaseModel):
 class PortalCreateWalletRechargeRequest(BaseModel):
     """POST /portal/{token}/recharges — solicitud BaaS creada por el cliente."""
 
-    amount: float = Field(..., gt=0, description="Monto a recargar en la moneda indicada.")
+    amount: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Neto CxC en moneda de cobro (legacy o derivado de total_fiat_amount).",
+    )
+    amount_usd: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Saldo BaaS bruto a acreditar en USD.",
+    )
+    exchange_rate: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Unidades de moneda de cobro por 1 USD (tasa activa del ERP).",
+    )
+    total_fiat_amount: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Subtotal bruto a cobrar en moneda local (amount_usd × exchange_rate).",
+    )
     payment_method_id: Optional[int] = Field(
         default=None,
         ge=1,
@@ -658,6 +677,24 @@ class PortalCreateWalletRechargeRequest(BaseModel):
         max_length=10,
         description="Moneda de cobro; omisión ⇒ moneda principal del cliente.",
     )
+
+    @model_validator(mode="after")
+    def _coalesce_dual_currency_payload(self) -> "PortalCreateWalletRechargeRequest":
+        if self.amount_usd is not None:
+            cur = (self.currency or "").strip().upper()
+            if len(cur) < 3:
+                raise ValueError("Indica la moneda de pago.")
+            if self.exchange_rate is None or float(self.exchange_rate) <= 0:
+                raise ValueError("Indica una tasa de cambio válida.")
+            fiat = self.total_fiat_amount
+            if fiat is None:
+                fiat = round(float(self.amount_usd) * float(self.exchange_rate), 2)
+                object.__setattr__(self, "total_fiat_amount", fiat)
+            if self.amount is None:
+                object.__setattr__(self, "amount", fiat)
+        elif self.amount is None:
+            raise ValueError("Indica el monto a recargar.")
+        return self
 
 
 class PortalCreateWalletRechargeResponse(BaseModel):

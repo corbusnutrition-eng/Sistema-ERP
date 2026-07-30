@@ -97,6 +97,24 @@ export async function fetchExchangeRatesCatalog(options = {}) {
 }
 
 /**
+ * Catálogo de tasas para el portal público (autenticado por payment_token).
+ * @param {string} portalToken
+ * @param {import('axios').AxiosInstance} portalApi
+ * @returns {Promise<ExchangeRateRow[]>}
+ */
+export async function fetchPortalExchangeRatesCatalog(portalToken, portalApi) {
+  if (!portalToken || !portalApi) return []
+  try {
+    const { data } = await portalApi.get(
+      `/api/v1/portal/${encodeURIComponent(String(portalToken))}/exchange-rates`,
+    )
+    return Array.isArray(data?.items) ? data.items : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * Tasa activa como string para inputs de formulario (unidades locales por 1 USD).
  * @param {string} currencyCode
  * @param {ExchangeRateRow[]} [catalog]
