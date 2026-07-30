@@ -9056,10 +9056,6 @@ function ClientPortalPageInner() {
                           const label = String(sc?.name ?? sc?.username ?? '—').trim() || '—'
                           const user = String(sc?.username ?? '—').trim() || '—'
                           const bal = Number(sc?.wallet_balance) || 0
-                          const scCur = String(sc?.currency ?? clientBaseCurrency)
-                            .trim()
-                            .toUpperCase()
-                            .slice(0, 10)
                           const portalUrl = clientPortalPublicUrl(sc?.portal_token)
                           const isExpanded = expandedClientId === sid
                           const toggleExpanded = () =>
@@ -9097,7 +9093,7 @@ function ClientPortalPageInner() {
                                     <span
                                       className="inline-flex rounded-md border border-green-700 bg-green-900/30 px-2 py-1 text-[10px] font-bold tabular-nums text-green-400 md:border-0 md:bg-transparent md:p-0 md:text-sm md:font-semibold md:text-fuchsia-100"
                                     >
-                                      {formatMoney(bal, scCur)}
+                                      {formatPortalWalletMoney(bal)}
                                     </span>
                                     <ChevronDown
                                       aria-hidden
@@ -10308,7 +10304,7 @@ function ClientPortalPageInner() {
                 <p className="mt-4 text-sm leading-relaxed text-slate-200">
                   ⚠️ ¿Estás seguro de transferir{' '}
                   <strong className="text-white tabular-nums">
-                    {formatMoney(parseMoneyNum(transferAmount), clientBaseCurrency)}
+                    {formatPortalWalletMoney(parseMoneyNum(transferAmount))}
                   </strong>{' '}
                   a{' '}
                   <strong className="text-white">
@@ -10369,11 +10365,11 @@ function ClientPortalPageInner() {
                 <p className="mt-2 rounded-lg border border-emerald-400/25 bg-emerald-950/30 px-3 py-2 text-sm text-emerald-100">
                   Tu saldo BaaS disponible:{' '}
                   <strong className="tabular-nums text-emerald-50">
-                    {formatMoney(getClientWalletBalance(clientBaseCurrency), clientBaseCurrency)}
+                    {formatPortalWalletMoney(clientWalletBalanceUsd)}
                   </strong>
                 </p>
                 <label className="mt-4 block text-xs font-semibold text-slate-300">
-                  Monto a transferir ({clientBaseCurrency})
+                  Monto a transferir (USD)
                   <input
                     type="number"
                     min="0.01"
@@ -10402,9 +10398,9 @@ function ClientPortalPageInner() {
                         setTransferErr('Ingresa un monto válido mayor a cero.')
                         return
                       }
-                      if (getClientWalletBalance(clientBaseCurrency) + 1e-9 < amt) {
+                      if (clientWalletBalanceUsd + 1e-9 < amt) {
                         setTransferErr(
-                          `El monto no puede superar tu saldo BaaS (${formatMoney(getClientWalletBalance(clientBaseCurrency), clientBaseCurrency)}).`,
+                          `El monto no puede superar tu saldo BaaS (${formatPortalWalletMoney(clientWalletBalanceUsd)}).`,
                         )
                         return
                       }

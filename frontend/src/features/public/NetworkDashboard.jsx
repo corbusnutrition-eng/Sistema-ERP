@@ -71,9 +71,11 @@ function themeForLevel(nivel) {
   }
 }
 
-function formatDashboardMoney(amount, currency = 'USD') {
+const PORTAL_BAAS_CURRENCY = 'USD'
+
+function formatDashboardMoney(amount) {
   const n = Number(amount)
-  const cur = String(currency || 'USD').trim().slice(0, 10) || 'USD'
+  const cur = PORTAL_BAAS_CURRENCY
   if (!Number.isFinite(n)) return `${cur} 0.00`
   try {
     return new Intl.NumberFormat('es-CO', {
@@ -267,7 +269,7 @@ function NeonTreeNodeCard({ nodeDatum, toggleNode }) {
               N{nivel}
             </span>
             <span className="inline-flex rounded-full border border-green-600/50 bg-green-950/50 px-2.5 py-0.5 text-[11px] font-bold tabular-nums text-green-400">
-              {formatDashboardMoney(attrs.walletBalance, attrs.currency)}
+              {formatDashboardMoney(attrs.walletBalance)}
             </span>
           </div>
         </div>
@@ -307,7 +309,6 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
   const tree = dashboard?.tree ?? null
   const metrics = dashboard?.metrics ?? null
   const levelCounts = Array.isArray(dashboard?.level_counts) ? dashboard.level_counts : []
-  const currency = String(metrics?.currency ?? tree?.currency ?? 'USD').trim().slice(0, 10) || 'USD'
 
   const rd3Data = useMemo(() => apiNodeToRd3(tree), [tree])
 
@@ -469,14 +470,14 @@ export default function NetworkDashboard({ dashboard, loading = false, error = n
         <KpiCard
           icon={Wallet}
           label="Saldo total red"
-          value={formatDashboardMoney(totalBalance, currency)}
+          value={formatDashboardMoney(totalBalance)}
           hint="Disponible"
           accentClass="border-emerald-500/35 bg-emerald-500/10 text-emerald-300"
         />
         <KpiCard
           icon={TrendingUp}
           label="Comisiones generadas"
-          value={formatDashboardMoney(totalCommissions, currency)}
+          value={formatDashboardMoney(totalCommissions)}
           hint="Este mes"
           accentClass="border-amber-500/35 bg-amber-500/10 text-amber-300"
         />
