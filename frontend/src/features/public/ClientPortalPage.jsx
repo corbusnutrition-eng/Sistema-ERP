@@ -258,6 +258,19 @@ function parentPackageAcquisitionPrice(pkg, assignedPricesMap) {
   return Number.isFinite(legacyUsd) && legacyUsd > 0 ? legacyUsd : 0
 }
 
+/** Costo de adquisición del distribuidor en USD (BaaS / sub-clientes). */
+function parentPackageAcquisitionPriceUsd(pkg, assignedPricesMapUsd) {
+  const pid = String(pkg?.package_catalog_id ?? '')
+  const fromMap = parseMoneyNum(assignedPricesMapUsd?.[pid])
+  if (Number.isFinite(fromMap) && fromMap > 0) return fromMap
+
+  const usdFloor = parseMoneyNum(pkg?.parent_floor_price_usd)
+  if (Number.isFinite(usdFloor) && usdFloor > 0) return usdFloor
+
+  const refUsd = parseMoneyNum(pkg?.reference_cost_usd)
+  return Number.isFinite(refUsd) && refUsd > 0 ? refUsd : 0
+}
+
 function portalProductCurrency(product, clientCurrency) {
   const raw = product?.currency ?? clientCurrency
   if (raw != null && String(raw).trim().length >= 3) {
@@ -3307,6 +3320,33 @@ function ClientPortalPageInner() {
     }
   }, [api, token, editingTrackedPurchase])
 
+  const assignedPricesMapUsd = useMemo(() => {
+    const out = {}
+    for (const p of autoPurchaseProducts) {
+      const pid = String(p?.package_catalog_id ?? '')
+      const n = portalAutoPurchaseUnitPriceUsd(p)
+      if (pid && Number.isFinite(n) && n > 0) out[pid] = n
+    }
+    const rows = Array.isArray(data?.assigned_package_prices) ? data.assigned_package_prices : []
+    for (const row of rows) {
+      const pid = String(row?.package_catalog_id ?? '')
+      const customUsd = parseMoneyNum(row?.custom_price)
+      if (pid && Number.isFinite(customUsd) && customUsd > 0) {
+        out[pid] = customUsd
+        continue
+      }
+      const cur = String(row?.currency ?? 'USD')
+        .trim()
+        .toUpperCase()
+        .slice(0, 10)
+      if (cur === 'USD') {
+        const n = parseMoneyNum(row?.precio_venta_local)
+        if (pid && Number.isFinite(n) && n > 0) out[pid] = n
+      }
+    }
+    return out
+  }, [autoPurchaseProducts, data?.assigned_package_prices])
+
   const assignedPricesMap = useMemo(() => {
     const out = {}
     const fromHome = data?.precios_asignados
@@ -3337,52 +3377,58 @@ function ClientPortalPageInner() {
 
   const validateCreateSubClientPrice = useCallback(
     (pkg, rawValue) => {
-      const floor = parentPackageAcquisitionPrice(pkg, assignedPricesMap)
+      const floor = parentPackageAcquisitionPriceUsd(pkg, assignedPricesMapUsd)
       const raw = String(rawValue ?? '').trim()
       if (!raw) return 'Precio obligatorio.'
       const price = parseMoneyNum(raw)
       if (!Number.isFinite(price) || price <= 0) return 'Ingresa un precio válido.'
       if (price + 1e-9 < floor) {
-        return `El precio no puede ser menor a tu costo de adquisición de ${formatMoney(floor, clientBaseCurrency)}`
+        return `El precio no puede ser menor a tu costo de adquisición de ${formatPortalWalletMoney(floor)}`
       }
       return null
     },
-    [clientBaseCurrency, assignedPricesMap],
+    [assignedPricesMapUsd],
   )
 
-  const parentBaasBalanceForCreate = useMemo(() => {
-    const rows = data?.client?.wallet_balances_by_currency ?? data?.wallet_balances_by_currency ?? []
-    const row = rows.find(
-      (r) =>
-        String(r?.currency || '')
-          .trim()
-          .toUpperCase()
-          .slice(0, 10) === clientBaseCurrency,
-    )
-    if (row) return parseMoneyNum(row.amount) || 0
-    const apiCur = String(data?.client?.wallet_balance_currency || '')
-      .trim()
-      .toUpperCase()
-      .slice(0, 10)
-    if (apiCur === clientBaseCurrency) {
-      const n = parseMoneyNum(data?.client?.wallet_balance)
-      return Number.isFinite(n) ? n : 0
+  const parentBaasBalanceUsdForCreate = useMemo(() => {
+    const raw = data?.client?.wallet_balances_by_currency ?? data?.wallet_balances_by_currency ?? []
+    let walletRows = []
+    if (Array.isArray(raw) && raw.length > 0) {
+      walletRows = raw
+        .map((row) => ({
+          currency: String(row?.currency || 'USD')
+            .trim()
+            .toUpperCase()
+            .slice(0, 10),
+          amount: parseMoneyNum(row?.amount) || 0,
+        }))
+        .filter((row) => row.amount > 1e-9)
+    } else {
+      const legacy = parseMoneyNum(data?.client?.wallet_balance)
+      if (legacy > 1e-9) {
+        const cur =
+          String(data?.client?.wallet_balance_currency || PORTAL_WALLET_DISPLAY_CURRENCY)
+            .trim()
+            .toUpperCase()
+            .slice(0, 10) || PORTAL_WALLET_DISPLAY_CURRENCY
+        walletRows = [{ currency: cur, amount: legacy }]
+      }
     }
-    return 0
-  }, [data, clientBaseCurrency])
+    return resolvePortalWalletBalanceUsd(data, walletRows)
+  }, [data])
 
   const validateCreateSubClientInitialTransfer = useCallback(
-    (rawValue, parentBalance = parentBaasBalanceForCreate) => {
+    (rawValue, parentBalance = parentBaasBalanceUsdForCreate) => {
       const raw = String(rawValue ?? '').trim()
       if (!raw) return 'La transferencia inicial es obligatoria.'
       const amt = parseMoneyNum(raw)
       if (!Number.isFinite(amt) || amt <= 0) return 'Ingresa un monto mayor a cero.'
       if (amt > parentBalance + 1e-9) {
-        return `El monto no puede superar tu saldo BaaS (${formatMoney(parentBalance, clientBaseCurrency)}).`
+        return `El monto no puede superar tu saldo BaaS (${formatPortalWalletMoney(parentBalance)}).`
       }
       return null
     },
-    [parentBaasBalanceForCreate, clientBaseCurrency],
+    [parentBaasBalanceUsdForCreate],
   )
 
   const collectCreateSubClientFormErrors = useCallback(() => {
@@ -3403,7 +3449,7 @@ function ClientPortalPageInner() {
       const pid = String(pkg?.package_catalog_id)
       const raw = String(createSubClientPriceDraft[pid] ?? '').trim()
       const pkgName = String(pkg?.display_name || pkg?.package_label || 'Paquete').trim() || 'Paquete'
-      const floor = parentPackageAcquisitionPrice(pkg, assignedPricesMap)
+      const floor = parentPackageAcquisitionPriceUsd(pkg, assignedPricesMapUsd)
 
       if (!raw) {
         missingAnyPrice = true
@@ -3415,7 +3461,7 @@ function ClientPortalPageInner() {
         errors.push(`El precio de ${pkgName} no es válido.`)
       } else if (price + 1e-9 < floor) {
         errors.push(
-          `El precio de ${pkgName} no puede ser menor a tu costo (${formatMoney(floor, clientBaseCurrency)}).`,
+          `El precio de ${pkgName} no puede ser menor a tu costo (${formatPortalWalletMoney(floor)}).`,
         )
       }
     }
@@ -3430,9 +3476,9 @@ function ClientPortalPageInner() {
       const amt = parseMoneyNum(transferRaw)
       if (!Number.isFinite(amt) || amt <= 0) {
         errors.push('La transferencia inicial debe ser mayor a cero.')
-      } else if (amt > parentBaasBalanceForCreate + 1e-9) {
+      } else if (amt > parentBaasBalanceUsdForCreate + 1e-9) {
         errors.push(
-          `La transferencia no puede superar tu saldo BaaS (${formatMoney(parentBaasBalanceForCreate, clientBaseCurrency)}).`,
+          `La transferencia no puede superar tu saldo BaaS (${formatPortalWalletMoney(parentBaasBalanceUsdForCreate)}).`,
         )
       }
     }
@@ -3445,9 +3491,8 @@ function ClientPortalPageInner() {
     createSubClientPackagesLoading,
     createSubClientPriceDraft,
     createSubClientInitialTransfer,
-    parentBaasBalanceForCreate,
-    clientBaseCurrency,
-    assignedPricesMap,
+    parentBaasBalanceUsdForCreate,
+    assignedPricesMapUsd,
   ])
 
   const handleCreateSubClientSubmit = useCallback(
@@ -3526,16 +3571,16 @@ function ClientPortalPageInner() {
       setCreateSubClientPackages(
         list.map((pkg) => {
           const pid = String(pkg?.package_catalog_id ?? '')
-          const fromAssigned = parseMoneyNum(assignedPricesMap?.[pid])
-          const localFromApi = parseMoneyNum(pkg?.parent_floor_price_local)
-          const resolvedLocal =
+          const fromAssigned = parseMoneyNum(assignedPricesMapUsd?.[pid])
+          const usdFromApi = parseMoneyNum(pkg?.parent_floor_price_usd)
+          const resolvedUsd =
             Number.isFinite(fromAssigned) && fromAssigned > 0
               ? fromAssigned
-              : Number.isFinite(localFromApi) && localFromApi > 0
-                ? localFromApi
+              : Number.isFinite(usdFromApi) && usdFromApi > 0
+                ? usdFromApi
                 : null
-          return resolvedLocal != null
-            ? { ...pkg, parent_floor_price_local: resolvedLocal }
+          return resolvedUsd != null
+            ? { ...pkg, parent_floor_price_usd: resolvedUsd }
             : pkg
         }),
       )
@@ -3549,7 +3594,7 @@ function ClientPortalPageInner() {
     } finally {
       setCreateSubClientPackagesLoading(false)
     }
-  }, [api, token, assignedPricesMap])
+  }, [api, token, assignedPricesMapUsd])
 
   const createSubClientCanSubmit = useMemo(() => {
     if (createSubClientBusy || createSubClientPackagesLoading) return false
@@ -10018,11 +10063,11 @@ function ClientPortalPageInner() {
                 </label>
 
                 <label className="block text-xs font-semibold text-slate-300">
-                  Transferencia Inicial de Saldo BaaS ({clientBaseCurrency}) <span className="text-red-300">*</span>
+                  Transferencia Inicial de Saldo BaaS (USD) <span className="text-red-300">*</span>
                   <input
                     type="number"
                     step="0.01"
-                    max={parentBaasBalanceForCreate > 0 ? parentBaasBalanceForCreate : undefined}
+                    max={parentBaasBalanceUsdForCreate > 0 ? parentBaasBalanceUsdForCreate : undefined}
                     placeholder="0.00"
                     value={createSubClientInitialTransfer}
                     onChange={(ev) => {
@@ -10043,7 +10088,7 @@ function ClientPortalPageInner() {
                 <p className="m-0 text-xs text-slate-400 leading-relaxed">
                   Este monto se descontará de tu billetera actual (Saldo disponible:{' '}
                   <span className="font-semibold tabular-nums text-emerald-200">
-                    {formatMoney(parentBaasBalanceForCreate, clientBaseCurrency)}
+                    {formatPortalWalletMoney(parentBaasBalanceUsdForCreate)}
                   </span>
                   ).
                 </p>
@@ -10069,7 +10114,10 @@ function ClientPortalPageInner() {
                     <ul className="mt-3 list-none space-y-3 p-0">
                       {createSubClientPackages.map((pkg) => {
                         const pid = String(pkg?.package_catalog_id)
-                        const costoAdquisicionReal = parentPackageAcquisitionPrice(pkg, assignedPricesMap)
+                        const costoAdquisicionUsd = parentPackageAcquisitionPriceUsd(
+                          pkg,
+                          assignedPricesMapUsd,
+                        )
                         const fieldErr =
                           createSubClientPriceFieldErr[pid]
                           || validateCreateSubClientPrice(pkg, createSubClientPriceDraft[pid])
@@ -10082,14 +10130,14 @@ function ClientPortalPageInner() {
                             <p className="mt-1 mb-2 text-xs text-amber-200/90">
                               Tu costo de adquisición:{' '}
                               <span className="font-semibold tabular-nums">
-                                {formatMoney(costoAdquisicionReal, clientBaseCurrency)}
+                                {formatPortalWalletMoney(costoAdquisicionUsd)}
                               </span>
                             </p>
                             <label className="block text-xs text-slate-400">
-                              Precio de venta ({clientBaseCurrency}) <span className="text-red-300">*</span>
+                              Precio de venta (USD) <span className="text-red-300">*</span>
                               <input
                                 type="number"
-                                min={costoAdquisicionReal > 0 ? costoAdquisicionReal : 0}
+                                min={costoAdquisicionUsd > 0 ? costoAdquisicionUsd : 0}
                                 step="0.01"
                                 placeholder="0.00"
                                 value={createSubClientPriceDraft[pid] ?? ''}
