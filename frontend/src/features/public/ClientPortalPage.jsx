@@ -161,6 +161,12 @@ function portalDepositAccountOptions(accounts) {
   }))
 }
 
+const PORTAL_WALLET_DISPLAY_CURRENCY = 'USD'
+
+function formatPortalWalletMoney(amount) {
+  return formatMoney(amount, PORTAL_WALLET_DISPLAY_CURRENCY)
+}
+
 function formatMoney(amount, currency) {
   const n = typeof amount === 'number' ? amount : parseFloat(String(amount ?? 0).replace(',', '.'))
   if (Number.isNaN(n)) return '—'
@@ -4358,11 +4364,11 @@ function ClientPortalPageInner() {
   const walletAccordionAside = useMemo(() => {
     if (walletRowsDisplay.length > 1) {
       return walletRowsDisplay
-        .map((r) => formatMoney(r.amount, r.currency))
+        .map((r) => formatPortalWalletMoney(r.amount))
         .join(' · ')
     }
-    return formatMoney(clientWalletBalanceNum, portalWalletCurrencyLabel)
-  }, [walletRowsDisplay, clientWalletBalanceNum, portalWalletCurrencyLabel])
+    return formatPortalWalletMoney(clientWalletBalanceNum)
+  }, [walletRowsDisplay, clientWalletBalanceNum])
 
   const ACTIVE_SCREENS_PAGE_SIZE = 5
   const itemsPerPage = 5
@@ -8367,11 +8373,11 @@ function ClientPortalPageInner() {
                 Tu saldo actual
                 {walletRowsDisplay.length > 1 ? (
                   <span className="block mt-1 text-[12px] text-violet-100/90 tabular-nums">
-                    {walletRowsDisplay.map((r) => formatMoney(r.amount, r.currency)).join(' · ')}
+                    {walletRowsDisplay.map((r) => formatPortalWalletMoney(r.amount)).join(' · ')}
                   </span>
                 ) : (
                   <span className="block mt-1 text-lg font-bold tabular-nums text-violet-50">
-                    {formatMoney(clientWalletBalanceNum, portalWalletCurrencyLabel)}
+                    {formatPortalWalletMoney(clientWalletBalanceNum)}
                   </span>
                 )}
               </p>

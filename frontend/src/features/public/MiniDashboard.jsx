@@ -1,5 +1,8 @@
 import { AlertTriangle, Monitor, TrendingUp, Wallet } from 'lucide-react'
 
+/** Billetera BaaS y ganancias del distribuidor siempre se muestran en USD. */
+const PORTAL_BAAS_CURRENCY = 'USD'
+
 function formatMoney(amount, currency) {
   const n = typeof amount === 'number' ? amount : parseFloat(String(amount ?? 0).replace(',', '.'))
   if (Number.isNaN(n)) return '—'
@@ -60,22 +63,20 @@ export default function MiniDashboard({ metrics, onEarningsClick }) {
   if (!metrics) return null
 
   const ganancias = metrics.ganancias_totales ?? {}
-  const profitCur = String(ganancias.currency ?? metrics.saldo_baas_currency ?? 'USD')
   const profitMonthly = Number(ganancias.mensual ?? 0)
   const profitDaily = Number(ganancias.diario ?? 0)
   const profitWeekly = Number(ganancias.semanal ?? 0)
-  const saldoCur = String(metrics.saldo_baas_currency ?? profitCur)
   const saldo = Number(metrics.saldo_baas ?? 0)
   const activas = Number(metrics.pantallas_activas ?? 0)
   const vencen = Number(metrics.vencimientos_semana ?? 0)
 
-  const profitSub = `D: ${formatMoney(profitDaily, profitCur)} | S: ${formatMoney(profitWeekly, profitCur)}`
+  const profitSub = `D: ${formatMoney(profitDaily, PORTAL_BAAS_CURRENCY)} | S: ${formatMoney(profitWeekly, PORTAL_BAAS_CURRENCY)}`
 
   return (
     <div className="mb-4 grid grid-cols-2 gap-3">
       <DashboardCard
         title="Ganancias"
-        value={formatMoney(profitMonthly, profitCur)}
+        value={formatMoney(profitMonthly, PORTAL_BAAS_CURRENCY)}
         sub={profitSub}
         icon={TrendingUp}
         iconClassName="text-emerald-400"
@@ -85,7 +86,7 @@ export default function MiniDashboard({ metrics, onEarningsClick }) {
       />
       <DashboardCard
         title="Saldo Billetera"
-        value={formatMoney(saldo, saldoCur)}
+        value={formatMoney(saldo, PORTAL_BAAS_CURRENCY)}
         icon={Wallet}
         iconClassName="text-sky-400"
         valueClassName="text-sky-50"
