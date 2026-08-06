@@ -13,8 +13,15 @@ from __future__ import annotations
 import uuid
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy.orm import Session
+
+_backend_dir = Path(__file__).resolve().parent
+_repo_root = _backend_dir.parent
+load_dotenv(_repo_root / ".env")
+load_dotenv(_backend_dir / ".env")
 
 from app.account_structure import ACCOUNT_STRUCTURE
 from app.currency_utils import normalize_currency_code
@@ -113,6 +120,11 @@ def main() -> None:
     try:
         ins, sk = seed_accounts(db)
         print(f"Listo: {ins} cuenta(s) insertadas, {sk} omitida(s) por duplicado.")
+        if ins > 0:
+            print(
+                "\nOpcional (verificador de cuentas / compatibilidad):\n"
+                "  PYTHONPATH=. python scripts/vincular_cuentas.py"
+            )
     except Exception:
         db.rollback()
         raise

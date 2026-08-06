@@ -175,9 +175,11 @@ def _notify_market_sync_and_evaluate_alerts(db: Session) -> None:
         .order_by(ExchangeRate.display_order.asc(), ExchangeRate.currency_code.asc())
         .all()
     )
-    summary = _build_market_update_message(rows)
-    if summary:
-        send_telegram_alert(summary)
+    # Alerta horaria "🔄 Actualización de mercado" desactivada (spam en Telegram).
+    # La sync a BD sigue activa vía sync_exchange_rates_from_binance().
+    # summary = _build_market_update_message(rows)
+    # if summary:
+    #     send_telegram_alert(summary)
 
     for row in rows:
         if is_tolerance_breached(row):
