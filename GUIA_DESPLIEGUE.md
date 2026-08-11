@@ -249,7 +249,66 @@ VITE_CODIGOS_RETIRO_ES_PRUEBA=false
 
 ---
 
-## 6. Checklist post-despliegue
+## 6. Reporte matutino por Telegram (Cron Job)
+
+Script independiente que envía al grupo principal de Telegram un resumen financiero diario:
+
+- **Cuentas por cobrar (deuda firme):** misma lógica que `/contabilidad/cuentas-por-cobrar` (`list_client_ar_firm_obligations_for_report`), agrupada por moneda. Excluye solicitudes en Pendiente o En revisión.
+- **Verificación bancaria:** depósitos pendientes por cada **Verificador de Cuentas** activo, según las cuentas asignadas (`accounts.verifier_id`).
+
+Archivo: `backend/scripts/daily_telegram_report.py`
+
+### Variables requeridas
+
+| Variable | Obligatoria | Descripción |
+|----------|-------------|-------------|
+| `DATABASE_URL` | **Sí** | Conexión PostgreSQL (misma que el backend) |
+| `TELEGRAM_BOT_TOKEN` | **Sí** | Token del bot |
+| `TELEGRAM_CHAT_ID` | **Sí** | ID del grupo principal destino |
+
+### Prueba manual
+
+Desde el directorio `backend/` (con el entorno virtual activado):
+
+```bash
+# Ver el mensaje en consola sin enviar
+PYTHONPATH=. python3 scripts/daily_telegram_report.py --dry-run
+
+# Enviar al grupo de Telegram
+PYTHONPATH=. python3 scripts/daily_telegram_report.py
+```
+
+### Programación Cron (9:00 AM Ecuador)
+
+Ecuador (`America/Guayaquil`, UTC−5 sin DST) corresponde a **14:00 UTC**. Expresión cron:
+
+```cron
+0 14 * * *
+```
+
+Ejemplo en crontab del servidor (ajusta rutas):
+
+```cron
+0 14 * * * cd /ruta/sistema_facturacion/backend && PYTHONPATH=. /ruta/venv/bin/python3 scripts/daily_telegram_report.py >> /var/log/erp-daily-report.log 2>&1
+```
+
+### Render Cron Job (opcional)
+
+Si usas un **Cron Job** en Render vinculado al mismo repositorio:
+
+| Campo | Valor típico |
+|-------|--------------|
+| **Root Directory** | `backend` |
+| **Schedule** | `0 14 * * *` |
+| **Command** | `PYTHONPATH=. python scripts/daily_telegram_report.py` |
+
+Variables de entorno: las mismas del Web Service (`DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`).
+
+> El script es **solo lectura** (consultas + envío Telegram). No modifica asientos contables ni journal entries.
+
+---
+
+## 7. Checklist post-despliegue
 
 - [ ] `GET /health` responde OK en backend
 - [ ] Login ERP funciona (`/login`)
@@ -257,11 +316,12 @@ VITE_CODIGOS_RETIRO_ES_PRUEBA=false
 - [ ] Subida de comprobante funciona (Cloudinary configurado)
 - [ ] Portal accesible con token UUID
 - [ ] Telegram recibe alertas de prueba (si configurado)
+- [ ] Reporte matutino probado con `--dry-run` y cron `0 14 * * *` configurado (opcional)
 - [ ] Migraciones aplicadas (`alembic current`)
 
 ---
 
-## 7. Seguridad — buenas prácticas
+## 8. Seguridad — buenas prácticas
 
 1. **Nunca commitear** `.env` con secretos reales — usar `.gitignore`.
 2. Rotar `TELEGRAM_BOT_TOKEN`, `CLOUDINARY_API_SECRET`, `EXTERNAL_API_KEY` periódicamente.
@@ -271,7 +331,7 @@ VITE_CODIGOS_RETIRO_ES_PRUEBA=false
 
 ---
 
-## 8. Comandos útiles
+## 9. Comandos útiles
 
 ```bash
 # Tests backend
@@ -283,13 +343,16 @@ cd frontend && npm run build && npm run preview
 # Estado migraciones
 cd backend && alembic current && alembic history --verbose
 
+# Reporte matutino Telegram (dry-run)
+cd backend && PYTHONPATH=. python3 scripts/daily_telegram_report.py --dry-run
+
 # Logs Render (CLI)
 render logs -s <nombre-servicio-backend>
 ```
 
 ---
 
-## 9. Documentación relacionada
+## 10. Documentación relacionada
 
 | Archivo | Contenido |
 |---------|-----------|
