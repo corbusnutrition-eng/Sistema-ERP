@@ -93,20 +93,20 @@ def schedule_telegram_markdown_notification(
     background_tasks.add_task(send_telegram_markdown_notification, message)
 
 
-async def send_telegram_notification(message: str) -> bool:
+async def send_telegram_notification(message: str, chat_id: str | None = None) -> bool:
     """POST asíncrono a Telegram. Devuelve False si falla o no hay credenciales."""
     token = settings.TELEGRAM_BOT_TOKEN
-    chat_id = settings.TELEGRAM_CHAT_ID
+    target_chat_id = str(chat_id or settings.TELEGRAM_CHAT_ID or "").strip()
     text = str(message or "").strip()
-    if not token or not chat_id:
-        logger.debug("Telegram omitido: TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID no configurados.")
+    if not token or not target_chat_id:
+        logger.debug("Telegram omitido: TELEGRAM_BOT_TOKEN o chat_id destino no configurados.")
         return False
     if not text:
         return False
 
     url = f"{TELEGRAM_API_BASE}/bot{token}/sendMessage"
     payload = {
-        "chat_id": chat_id,
+        "chat_id": target_chat_id,
         "text": text,
         "parse_mode": "HTML",
     }
@@ -162,10 +162,13 @@ def send_telegram_alert(message: str) -> bool:
 def schedule_telegram_notification(
     background_tasks: Optional["BackgroundTasks"],
     message: str,
+    *,
+    chat_id: str | None = None,
 ) -> None:
-    if background_tasks is None or not settings.telegram_enabled:
+    target_chat_id = str(chat_id or settings.TELEGRAM_CHAT_ID or "").strip()
+    if background_tasks is None or not settings.TELEGRAM_BOT_TOKEN or not target_chat_id:
         return
-    background_tasks.add_task(send_telegram_notification, message)
+    background_tasks.add_task(send_telegram_notification, message, target_chat_id)
 
 
 def build_baas_new_request_message(
@@ -193,14 +196,132 @@ def build_receipt_received_message(
     client_email: str,
     amount: float,
     currency: str = "USD",
+    account_name: str | None = None,
 ) -> str:
     user = _escape_html(format_client_display_name(client_name=client_name, client_email=client_email))
     amt = _escape_html(format_money_amount(amount, currency))
+    account_line = ""
+    if account_name:
+        account_line = f"\nCuenta destino: {_escape_html(account_name)}."
     return (
         "💰 <b>COMPROBANTE RECIBIDO</b> 💰\n"
-        f"El usuario {user} ha subido un pago por {amt}.\n"
+        f"El usuario {user} ha subido un pago por {amt}.{account_line}\n"
         "Por favor, revisa la pestaña 'En revisión'."
     )
+
+
+def resolve_verifier_telegram_chat_id(db: "Session", deposit_account_id: int | None) -> str | None:
+    """Chat ID Telegram del verificador de la cuenta de depósito (solo DM en fase de activación)."""
+    if deposit_account_id is None:
+        return None
+
+    from app.models.account import Account
+    from app.models.user import User
+
+    try:
+        account = db.get(Account, int(deposit_account_id))
+    except (TypeError, ValueError):
+        return None
+    if account is None:
+        return None
+
+    verifier_id = getattr(account, "verifier_id", None)
+    if verifier_id is None:
+        return None
+
+    verifier = db.get(User, int(verifier_id))
+    if verifier is None or not bool(getattr(verifier, "is_active", True)):
+        return None
+
+    chat_id = str(getattr(verifier, "telegram_chat_id", "") or "").strip()
+    return chat_id or None
+
+
+def resolve_deposit_account_label(db: "Session", deposit_account_id: int | None) -> str | None:
+    if deposit_account_id is None:
+        return None
+    from app.models.account import Account
+
+    try:
+        account = db.get(Account, int(deposit_account_id))
+    except (TypeError, ValueError):
+        return None
+    if account is None:
+        return None
+    name = str(getattr(account, "name", "") or "").strip()
+    return name or None
+
+
+def schedule_receipt_received_notification(
+    background_tasks: Optional["BackgroundTasks"],
+    *,
+    db: "Session",
+    client: "Client",
+    amount: float,
+    currency: str = "USD",
+    deposit_account_id: int | None = None,
+) -> None:
+    """Fase 1 — comprobante en revisión: siempre al grupo global TELEGRAM_CHAT_ID."""
+    account_name = resolve_deposit_account_label(db, deposit_account_id)
+    message = build_receipt_received_message(
+        client_name=str(getattr(client, "name", "") or ""),
+        client_email=str(getattr(client, "email", "") or ""),
+        amount=float(amount),
+        currency=str(currency or "USD"),
+        account_name=account_name,
+    )
+    schedule_telegram_notification(background_tasks, message)
+
+
+def build_payment_activated_message(
+    *,
+    amount: float,
+    currency: str,
+    account_name: str,
+    reference: str,
+) -> str:
+    amt = _escape_html(format_money_amount(amount, currency))
+    acct = _escape_html(account_name or "—")
+    ref = _escape_html(reference or "—")
+    return (
+        "✅ <b>PAGO ACTIVADO</b>\n"
+        f"Se ha confirmado y activado un depósito de {amt} en tu cuenta {acct}.\n"
+        f"N° Ref: {ref}"
+    )
+
+
+def schedule_payment_activated_notification(
+    background_tasks: Optional["BackgroundTasks"],
+    *,
+    db: "Session",
+    payment: object,
+) -> None:
+    """
+    Fase 2 — pago activado: DM privado al verificador de la cuenta de depósito.
+    Solo envía si el verificador tiene telegram_chat_id configurado.
+    """
+    from app.services.client_payment_service import resolve_client_payment_deposit_account_id
+
+    dep_id = resolve_client_payment_deposit_account_id(db, payment)  # type: ignore[arg-type]
+    chat_id = resolve_verifier_telegram_chat_id(db, dep_id)
+    if not chat_id:
+        return
+
+    account_name = resolve_deposit_account_label(db, dep_id) or "—"
+    ref = str(getattr(payment, "reference_number", None) or getattr(payment, "payment_number", None) or "—").strip()
+    try:
+        amount = float(getattr(payment, "amount", 0) or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    currency = str(getattr(payment, "currency", None) or "USD")
+
+    message = build_payment_activated_message(
+        amount=amount,
+        currency=currency,
+        account_name=account_name,
+        reference=ref,
+    )
+    schedule_telegram_notification(background_tasks, message, chat_id=chat_id)
 
 
 def resolve_wallet_recharge_payment_method_label(db: "Session", req: "WalletRechargeRequest") -> str:
@@ -242,18 +363,3 @@ def schedule_baas_new_request_notification(
     )
     schedule_telegram_notification(background_tasks, message)
 
-
-def schedule_receipt_received_notification(
-    background_tasks: Optional["BackgroundTasks"],
-    *,
-    client: "Client",
-    amount: float,
-    currency: str = "USD",
-) -> None:
-    message = build_receipt_received_message(
-        client_name=str(getattr(client, "name", "") or ""),
-        client_email=str(getattr(client, "email", "") or ""),
-        amount=float(amount),
-        currency=str(currency or "USD"),
-    )
-    schedule_telegram_notification(background_tasks, message)

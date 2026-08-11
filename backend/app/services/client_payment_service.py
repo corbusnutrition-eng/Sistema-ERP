@@ -2586,6 +2586,14 @@ def finalize_client_payment_approval(
         db, payment, created, background_tasks=background_tasks
     )
 
+    from app.services.telegram_service import schedule_payment_activated_notification
+
+    schedule_payment_activated_notification(
+        background_tasks,
+        db=db,
+        payment=payment,
+    )
+
     _assert_payment_allocation_in_bounds(db, payment)
     return created, remainder
 
@@ -2631,6 +2639,137 @@ def _credit_amount_to_restore_on_void(
     if total > _FP_EPS:
         return total
     return Decimal(str(payment.amount or 0)).quantize(Decimal("0.01"))
+
+
+def correct_approved_client_payment(
+    db: Session,
+    payment: ClientPayment,
+    *,
+    new_amount: Decimal,
+    manual_rows: list[dict],
+    reference_number: Optional[str] = None,
+    reason: Optional[str] = None,
+    strict_accounting: bool = True,
+) -> ClientPayment:
+    """
+    Corrige un cobro ya aprobado: recalcula allocations, CxC y asientos contables.
+
+    No hace ``commit``; el llamador confirma la transacción.
+    """
+    from app.services.accounting_engine import is_baas_wallet_settlement_payment, is_credit_only_client_payment
+    from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
+
+    if payment.status != ClientPaymentStatus.approved:
+        raise ValueError(
+            f"El pago {payment.payment_number} no está aprobado; "
+            "solo se pueden corregir cobros activados."
+        )
+
+    if is_credit_only_client_payment(payment):
+        raise ValueError("Los cobros exclusivos con saldo a favor no se corrigen desde este flujo.")
+
+    if is_baas_wallet_settlement_payment(payment):
+        raise ValueError("Este cobro es liquidación BaaS interna y no admite corrección manual.")
+
+    if not manual_rows:
+        raise ValueError("Indica al menos una asignación en la distribución del pago.")
+
+    old_amount = _q_amt(payment.amount)
+    old_applied = _payment_applied_total(db, payment)
+    old_excess = max(Decimal("0"), (old_amount - old_applied).quantize(Decimal("0.01")))
+    new_amt = _q_amt(new_amount)
+    if new_amt <= _FP_EPS:
+        raise ValueError("El importe corregido debe ser mayor que cero.")
+
+    requested_applied = Decimal("0")
+    for row in manual_rows:
+        try:
+            requested_applied += _q_amt(row.get("applied_amount", row.get("amount_applied")))
+        except (TypeError, ValueError):
+            continue
+    if requested_applied > new_amt + _FP_EPS:
+        raise ValueError("La suma aplicada a obligaciones no puede superar el importe recibido.")
+
+    pid = int(payment.id)
+    existing_allocs = db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == pid).all()
+    touched_sale_ids: set[int] = set()
+    touched_wr_ids: set[int] = set()
+    for alloc in existing_allocs:
+        if alloc.sale_id is not None:
+            touched_sale_ids.add(int(alloc.sale_id))
+        if alloc.wallet_recharge_id is not None:
+            touched_wr_ids.add(int(alloc.wallet_recharge_id))
+
+    db.query(PaymentAllocation).filter(PaymentAllocation.payment_id == pid).delete()
+    db.flush()
+
+    for sid in touched_sale_ids:
+        sale = db.get(Sale, int(sid))
+        if sale is not None:
+            sync_sale_amount_paid_from_allocations(db, sale)
+            refresh_sale_status_after_payment(db, sale)
+
+    for wr_id in touched_wr_ids:
+        wr = db.get(WalletRechargeRequest, int(wr_id))
+        if wr is not None:
+            sync_wallet_recharge_amount_paid_from_allocations(db, wr)
+
+    payment.amount = new_amt
+    if reference_number is not None:
+        payment.reference_number = str(reference_number or "").strip()[:120] or None
+
+    created, _remainder = apply_payment_allocations(
+        db,
+        payment,
+        manual_rows,
+        fifo_fallback=False,
+    )
+
+    for alloc in created:
+        if alloc.sale_id is not None:
+            touched_sale_ids.add(int(alloc.sale_id))
+        if alloc.wallet_recharge_id is not None:
+            touched_wr_ids.add(int(alloc.wallet_recharge_id))
+
+    db.flush()
+
+    for sid in touched_sale_ids:
+        sale = db.get(Sale, int(sid))
+        if sale is not None:
+            sync_sale_amount_paid_from_allocations(db, sale)
+            refresh_sale_status_after_payment(db, sale)
+
+    for wr_id in touched_wr_ids:
+        wr = db.get(WalletRechargeRequest, int(wr_id))
+        if wr is not None:
+            refresh_wallet_recharge_after_payment(db, wr)
+
+    sync_client_payment_accounting_ledgers(db, payment, strict=strict_accounting)
+
+    client = db.get(Client, int(payment.client_id))
+    if client is not None:
+        new_applied = _payment_applied_total(db, payment)
+        new_excess = max(Decimal("0"), (new_amt - new_applied).quantize(Decimal("0.01")))
+        delta_excess = (new_excess - old_excess).quantize(Decimal("0.01"))
+        cur = normalize_currency_code(str(payment.currency or "USD"))
+        if delta_excess > _FP_EPS:
+            _increment_client_credit_balance(db, client, cur, delta_excess)
+        elif delta_excess < -_FP_EPS:
+            subtract_client_credit_balance(db, client, cur, abs(delta_excess))
+        sync_client_credit_from_overpay(db, client)
+
+    stamp = now_ecuador().strftime("%Y-%m-%d %H:%M")
+    cur_label = normalize_currency_code(str(payment.currency or "USD"))
+    audit = (
+        f"[CORRECCIÓN ADMIN {stamp}] Monto {float(old_amount):.2f} → {float(new_amt):.2f} {cur_label}."
+    )
+    if reason and str(reason).strip():
+        audit += f" Motivo: {str(reason).strip()[:400]}"
+    payment.notes = append_client_payment_notes_unique(payment.notes, audit)
+
+    _assert_payment_allocation_in_bounds(db, payment)
+    db.flush()
+    return payment
 
 
 def void_client_payment(
@@ -4675,6 +4814,7 @@ def finalize_wallet_recharge_payment_approval(
     *,
     wallet_tx_type: str = _TX_RECHARGE,
     strict_accounting: bool = True,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> tuple["WalletTransaction", Optional[ClientPayment], float, float, float]:
     """
     Aprueba un comprobante BaaS en revisión (admin):
@@ -4712,6 +4852,7 @@ def finalize_wallet_recharge_payment_approval(
         client=client,
         received_amount=recv,
         strict_accounting=strict_accounting,
+        background_tasks=background_tasks,
     )
     if cp is None:
         cp = ensure_pending_client_payment_for_wallet_recharge(
@@ -4727,6 +4868,7 @@ def finalize_wallet_recharge_payment_approval(
                 client=client,
                 received_amount=recv,
                 strict_accounting=strict_accounting,
+                background_tasks=background_tasks,
             )
 
     db.refresh(req)

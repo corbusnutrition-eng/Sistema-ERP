@@ -142,6 +142,16 @@ class PaymentApproveBody(BaseModel):
     notes: Optional[str] = None
 
 
+class PaymentCorrectBody(BaseModel):
+    """Corrección de un pago ya aprobado (requiere PIN maestro)."""
+
+    pin: str = Field(..., min_length=1, max_length=32)
+    amount: Decimal = Field(..., gt=0, description="Nuevo importe total cobrado.")
+    allocations: list[PaymentAllocationIn] = Field(default_factory=list)
+    reference_number: Optional[str] = None
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
 class LedgerRelatedDoc(BaseModel):
     type: str
     ref_number: str

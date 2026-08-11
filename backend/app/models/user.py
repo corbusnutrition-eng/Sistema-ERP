@@ -35,6 +35,8 @@ class User(Base):
     )
     role_template: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     assigned_account_ids: Mapped[Optional[list[Any]]] = mapped_column(JSON, nullable=True)
+    #: Chat ID personal de Telegram para notificaciones DM (comprobantes, etc.).
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Multinivel / BaaS — jerarquía de distribuidores y saldo virtual
     parent_id: Mapped[Optional[int]] = mapped_column(

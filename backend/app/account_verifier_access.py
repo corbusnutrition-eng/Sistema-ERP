@@ -87,6 +87,27 @@ def resolve_assigned_account_ids_for_user(
     return validate_assigned_accounts_for_verifier(db, normalize_assigned_account_ids(raw))
 
 
+def sync_account_verifiers_for_user(db: Session, *, user_id: int, account_ids: list[int]) -> None:
+    """Sincroniza ``accounts.verifier_id`` con las cuentas asignadas al verificador."""
+    ids = set(normalize_assigned_account_ids(account_ids))
+    uid = int(user_id)
+    stale_rows = db.query(Account).filter(Account.verifier_id == uid).all()
+    for acc in stale_rows:
+        if int(acc.id) not in ids:
+            acc.verifier_id = None
+    for aid in ids:
+        acc = db.get(Account, aid)
+        if acc is not None:
+            acc.verifier_id = uid
+
+
+def clear_account_verifiers_for_user(db: Session, *, user_id: int) -> None:
+    """Quita al usuario como verificador de todas las cuentas vinculadas."""
+    uid = int(user_id)
+    for acc in db.query(Account).filter(Account.verifier_id == uid).all():
+        acc.verifier_id = None
+
+
 def user_may_access_account(user: Optional[User], account_id: int) -> bool:
     if user is None:
         return True

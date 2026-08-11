@@ -18,8 +18,10 @@ from app.permissions import (
 from app.database import get_db
 from app.account_verifier_access import (
     ROLE_TEMPLATE_ACCOUNT_VERIFIER,
+    clear_account_verifiers_for_user,
     normalize_assigned_account_ids,
     resolve_assigned_account_ids_for_user,
+    sync_account_verifiers_for_user,
 )
 from app.models.user import User, UserRole
 from app.permissions import (
@@ -94,6 +96,19 @@ class UserCreate(BaseModel):
         default=None,
         description="Cuentas asignadas (requerido para Verificador de Cuentas).",
     )
+    telegram_chat_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Chat ID personal de Telegram para notificaciones DM.",
+    )
+
+    @field_validator("telegram_chat_id", mode="before")
+    @classmethod
+    def normalize_telegram_chat_id(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
     @field_validator("assigned_account_ids", mode="before")
     @classmethod
@@ -147,6 +162,19 @@ class UserUpdate(BaseModel):
         default=None,
         description="Cuentas asignadas (Verificador de Cuentas).",
     )
+    telegram_chat_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Chat ID personal de Telegram para notificaciones DM.",
+    )
+
+    @field_validator("telegram_chat_id", mode="before")
+    @classmethod
+    def normalize_telegram_chat_id(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
     @field_validator("assigned_account_ids", mode="before")
     @classmethod
@@ -200,6 +228,7 @@ class UserResponse(BaseModel):
     role_template: Optional[str] = None
     role_template_label: Optional[str] = None
     assigned_account_ids: list[int] = Field(default_factory=list)
+    telegram_chat_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -229,6 +258,7 @@ def _user_to_response(user: User) -> UserResponse:
         role_template=tpl,
         role_template_label=role_template_label(tpl if user.role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN),
         assigned_account_ids=normalize_assigned_account_ids(user.assigned_account_ids),
+        telegram_chat_id=str(user.telegram_chat_id or "").strip() or None,
     )
 
 
@@ -305,6 +335,7 @@ def create_user(payload: UserCreate, db: DbDep, _: TeamUsersCreateDep) -> UserRe
         permissions=perms if db_role == UserRole.worker else [],
         role_template=tpl if db_role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN,
         assigned_account_ids=assigned_ids if tpl == ROLE_TEMPLATE_ACCOUNT_VERIFIER else [],
+        telegram_chat_id=str(payload.telegram_chat_id or "").strip() or None,
     )
     db.add(user)
     try:
@@ -315,6 +346,9 @@ def create_user(payload: UserCreate, db: DbDep, _: TeamUsersCreateDep) -> UserRe
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Ya existe un usuario con el email '{payload.email}'.",
         )
+    if tpl == ROLE_TEMPLATE_ACCOUNT_VERIFIER and assigned_ids:
+        sync_account_verifiers_for_user(db, user_id=int(user.id), account_ids=assigned_ids)
+        db.commit()
     db.refresh(user)
     return _user_to_response(user)
 
@@ -456,8 +490,14 @@ def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: TeamUsersEditDe
         user.hashed_password = _hash_password(payload.password)
     if payload.is_active is not None:
         user.is_active = payload.is_active
+    if payload.telegram_chat_id is not None:
+        user.telegram_chat_id = str(payload.telegram_chat_id or "").strip() or None
 
-    if payload.role_template is not None or payload.permissions is not None:
+    role_template_changed = payload.role_template is not None
+    permissions_changed = payload.permissions is not None
+    assigned_accounts_changed = payload.assigned_account_ids is not None
+
+    if role_template_changed or permissions_changed:
         tpl = payload.role_template or user.role_template or ROLE_TEMPLATE_CUSTOM
         perms = (
             payload.permissions
@@ -481,16 +521,30 @@ def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: TeamUsersEditDe
                     else normalize_assigned_account_ids(user.assigned_account_ids)
                 ),
             )
+            sync_account_verifiers_for_user(
+                db,
+                user_id=int(user.id),
+                account_ids=normalize_assigned_account_ids(user.assigned_account_ids),
+            )
         else:
+            clear_account_verifiers_for_user(db, user_id=int(user.id))
             user.assigned_account_ids = []
 
-    elif payload.assigned_account_ids is not None:
+    elif assigned_accounts_changed:
         tpl = user.role_template or ROLE_TEMPLATE_CUSTOM
         user.assigned_account_ids = resolve_assigned_account_ids_for_user(
             db,
             role_template=tpl,
             assigned_account_ids=payload.assigned_account_ids,
         )
+        if tpl == ROLE_TEMPLATE_ACCOUNT_VERIFIER:
+            sync_account_verifiers_for_user(
+                db,
+                user_id=int(user.id),
+                account_ids=normalize_assigned_account_ids(user.assigned_account_ids),
+            )
+        else:
+            clear_account_verifiers_for_user(db, user_id=int(user.id))
 
     try:
         db.commit()

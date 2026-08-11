@@ -3128,9 +3128,15 @@ async def portal_pay_wallet_recharge(
     wr_cur = normalize_currency_code(getattr(req_out, "recharge_currency", None), "USD")
     schedule_receipt_received_notification(
         background_tasks,
+        db=db,
         client=client,
         amount=paid_notify,
         currency=wr_cur,
+        deposit_account_id=(
+            int(getattr(req_out, "portal_submitted_deposit_account_id"))
+            if getattr(req_out, "portal_submitted_deposit_account_id", None) is not None
+            else None
+        ),
     )
     return req_out
 
@@ -4532,9 +4538,15 @@ async def portal_submit_payment(
             receipt_out = str(req_done.receipt_url or "").strip() or None
             schedule_receipt_received_notification(
                 background_tasks,
+                db=db,
                 client=client,
                 amount=amt,
                 currency=normalize_currency_code(getattr(req_done, "recharge_currency", None), abono_cur),
+                deposit_account_id=(
+                    int(getattr(req_done, "portal_submitted_deposit_account_id"))
+                    if getattr(req_done, "portal_submitted_deposit_account_id", None) is not None
+                    else int(dep_raw_ab)
+                ),
             )
             return PortalPaymentSubmitResponse(
                 message="Recibimos tu comprobante para la recarga solicitada. Un operador lo validará pronto.",
@@ -4662,9 +4674,11 @@ async def portal_submit_payment(
         db.refresh(payment)
         schedule_receipt_received_notification(
             background_tasks,
+            db=db,
             client=client,
             amount=amt,
             currency=abono_cur,
+            deposit_account_id=int(payment.deposit_account_id) if payment.deposit_account_id is not None else None,
         )
         return PortalPaymentSubmitResponse(
             message="Recibimos tu abono. Un operador lo aplicará a tu saldo pendiente.",
@@ -4982,9 +4996,15 @@ async def portal_submit_payment(
 
     schedule_receipt_received_notification(
         background_tasks,
+        db=db,
         client=client,
         amount=float(total_pay),
         currency=cur_norm,
+        deposit_account_id=(
+            int(deposit_acc_resolved)
+            if deposit_acc_resolved is not None
+            else (int(sale.deposit_account_id) if sale.deposit_account_id is not None else None)
+        ),
     )
 
     return PortalPaymentSubmitResponse(

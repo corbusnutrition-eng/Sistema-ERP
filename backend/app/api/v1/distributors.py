@@ -1678,6 +1678,7 @@ def approve_wallet_recharge(
             recv,
             wallet_tx_type=TX_RECHARGE,
             strict_accounting=True,
+            background_tasks=background_tasks,
         )
         db.commit()
     except HTTPException:

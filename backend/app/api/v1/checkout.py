@@ -535,9 +535,11 @@ async def checkout_pay(
         if amt_opt is not None and amt_opt > Decimal("0.0001"):
             schedule_receipt_received_notification(
                 background_tasks,
+                db=db,
                 client=client,
                 amount=float(amt_opt),
                 currency=normalize_currency_code(str(sale.currency or "USD")),
+                deposit_account_id=int(sale.deposit_account_id) if sale.deposit_account_id is not None else None,
             )
 
     return CheckoutPayResponse(

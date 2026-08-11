@@ -5,7 +5,7 @@ import enum
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, Date, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -59,6 +59,12 @@ class Account(Base):
     current_balance: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
     balance: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: Usuario verificador responsable de esta cuenta bancaria (notificaciones Telegram DM).
+    verifier_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     parent: Mapped[Optional["Account"]] = relationship(
         "Account",

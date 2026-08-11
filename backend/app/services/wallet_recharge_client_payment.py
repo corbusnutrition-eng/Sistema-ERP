@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    from fastapi import BackgroundTasks
 
 from app.currency_utils import normalize_currency_code
 from app.models.client import Client
@@ -391,6 +394,7 @@ def approve_wallet_recharge_client_payment_ledger(
     applied_to_recharge: float,
     surplus: float,
     strict_accounting: bool = True,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> None:
     """
     Aprueba cobro BaaS vía motor CxC unificado (``finalize_client_payment_approval``).
@@ -410,6 +414,7 @@ def approve_wallet_recharge_client_payment_ledger(
             manual_rows=[{"wallet_recharge_id": int(req.id)}],
             fifo_fallback=True,
             strict_accounting=strict_accounting,
+            background_tasks=background_tasks,
         )
         return
 
@@ -442,6 +447,7 @@ def finalize_wallet_recharge_client_payment_on_approval(
     applied_to_cxc: float = 0.0,
     surplus: float = 0.0,
     strict_accounting: bool = True,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> Optional[ClientPayment]:
     """
     Localiza el ``ClientPayment`` en revisión y lo aprueba con FIFO cruzado CxC.
@@ -475,6 +481,7 @@ def finalize_wallet_recharge_client_payment_on_approval(
             applied_to_recharge=applied_to_cxc,
             surplus=surplus,
             strict_accounting=strict_accounting,
+            background_tasks=background_tasks,
         )
         return cp
 
@@ -486,5 +493,6 @@ def finalize_wallet_recharge_client_payment_on_approval(
         applied_to_recharge=applied_to_cxc,
         surplus=surplus,
         strict_accounting=strict_accounting,
+        background_tasks=background_tasks,
     )
     return cp

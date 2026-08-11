@@ -31,6 +31,7 @@ from app.schemas.client_payments import (
     ClientPaymentOut,
     PaymentAllocationOut,
     PaymentApproveBody,
+    PaymentCorrectBody,
     PaymentCreateBody,
     PortalAbonoResponse,
     VoidTransactionBody,
@@ -42,6 +43,7 @@ from app.services.client_payment_service import (
     apply_payment_allocations,
     approve_pending_linked_client_payments_for_sale,
     compute_payment_credit_excess,
+    correct_approved_client_payment,
     finalize_client_payment_approval,
     is_client_payment_credit_only,
     next_payment_number,
@@ -229,9 +231,11 @@ async def portal_abono(
 
     schedule_receipt_received_notification(
         background_tasks,
+        db=db,
         client=client,
         amount=float(paid_dec),
         currency=cur,
+        deposit_account_id=int(payment.deposit_account_id) if payment.deposit_account_id is not None else None,
     )
 
     return PortalAbonoResponse(
@@ -577,6 +581,62 @@ def approve_payment(
     db.commit()
     db.refresh(p)
 
+    name = p.client.display_name() if p.client else ""
+    return _payment_to_out(p, name, db=db)
+
+
+@router.patch("/{payment_id}/correct", response_model=ClientPaymentOut)
+def correct_payment(
+    payment_id: int,
+    db: DbDep,
+    _: ReceivablesEditDep,
+    body: PaymentCorrectBody,
+) -> ClientPaymentOut:
+    """Corrige monto y distribución de un pago aprobado (requiere PIN maestro)."""
+    require_master_pin(body.pin)
+
+    p = (
+        db.query(ClientPayment)
+        .options(joinedload(ClientPayment.client), joinedload(ClientPayment.allocations))
+        .filter(ClientPayment.id == payment_id)
+        .first()
+    )
+    if p is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado.")
+
+    alloc_rows = _allocations_to_dicts(body.allocations)
+    if not alloc_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Indica al menos un monto en la distribución del pago.",
+        )
+
+    try:
+        correct_approved_client_payment(
+            db,
+            p,
+            new_amount=Decimal(str(body.amount)).quantize(Decimal("0.0001")),
+            manual_rows=alloc_rows,
+            reference_number=body.reference_number,
+            reason=body.reason,
+            strict_accounting=True,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        logger.exception("Error corrigiendo pago payment_id=%s", payment_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al corregir el pago y actualizar la contabilidad.",
+        ) from None
+
+    db.commit()
+    db.refresh(p)
     name = p.client.display_name() if p.client else ""
     return _payment_to_out(p, name, db=db)
 
