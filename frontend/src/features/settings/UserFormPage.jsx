@@ -73,6 +73,7 @@ export default function UserFormPage() {
   const [rawUserPermissions, setRawUserPermissions] = useState(null)
   const [assignableAccounts, setAssignableAccounts] = useState([])
   const [assignedAccountIds, setAssignedAccountIds] = useState([])
+  const [telegramChatId, setTelegramChatId] = useState('')
   const [accountsLoading, setAccountsLoading] = useState(false)
 
   const [matrixData, setMatrixData] = useState({ modules: [], actions: [], predefined_roles: [] })
@@ -160,6 +161,7 @@ export default function UserFormPage() {
         setRoleTemplate(user.role_template ?? (user.role === 'admin' ? ROLE_TEMPLATE_FULL_ADMIN : ROLE_TEMPLATE_CUSTOM))
         setRawUserPermissions(user.permissions ?? [])
         setAssignedAccountIds(Array.isArray(user.assigned_account_ids) ? user.assigned_account_ids : [])
+        setTelegramChatId(user.telegram_chat_id ?? '')
         setShowPermissions(true)
       } catch {
         if (!cancelled) setError('No se pudo cargar el usuario.')
@@ -219,6 +221,7 @@ export default function UserFormPage() {
         granted,
         modules: matrixData.modules,
         assignedAccountIds,
+        telegramChatId,
       })
     } catch (buildErr) {
       setError(buildErr.message)
@@ -353,6 +356,21 @@ export default function UserFormPage() {
                   Flujo «Enviar invitación»: puedes dejarla vacía; el backend asignará una clave temporal.
                 </p>
               )}
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                Telegram Chat ID
+              </label>
+              <input
+                type="text"
+                value={telegramChatId}
+                onChange={(e) => setTelegramChatId(e.target.value)}
+                className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600 bg-white font-mono"
+                placeholder="Ej. 123456789"
+              />
+              <p className="text-[11px] text-gray-500 mt-1">
+                ID personal de Telegram para recibir comprobantes por DM. Si está vacío, las alertas van al grupo global.
+              </p>
             </div>
           </div>
         </section>

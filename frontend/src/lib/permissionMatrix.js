@@ -169,6 +169,7 @@ export function buildUserApiPayload({
   granted,
   modules,
   assignedAccountIds,
+  telegramChatId,
 }) {
   const name = joinFullName(firstName, lastName)
   const payload = {
@@ -211,6 +212,13 @@ export function buildUserApiPayload({
       throw new Error('Selecciona al menos una cuenta asignada para el Verificador de Cuentas.')
     }
     payload.assigned_account_ids = ids
+  }
+
+  const tgChat = String(telegramChatId || '').trim()
+  if (tgChat) {
+    payload.telegram_chat_id = tgChat
+  } else if (telegramChatId !== undefined) {
+    payload.telegram_chat_id = null
   }
 
   return payload

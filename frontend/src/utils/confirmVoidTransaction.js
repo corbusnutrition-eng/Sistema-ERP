@@ -80,3 +80,47 @@ export async function confirmVoidTransaction({ entityLabel = 'transacción' } = 
 
   return promptMasterPinStep({ title: 'Confirmación de seguridad' })
 }
+
+/**
+ * Solicita PIN maestro para corregir un pago aprobado.
+ * @returns {Promise<string|null>} PIN maestro o null si canceló.
+ */
+export async function confirmPaymentCorrectionWithMasterPin() {
+  const first = await Swal.fire({
+    title: '¿Aplicar corrección de pago?',
+    html: '<p class="text-sm text-slate-700 text-left">Se recalcularán los saldos CxC, la contabilidad y las asignaciones del pago. Esta acción requiere PIN maestro.</p>',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#15803d',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Sí, continuar',
+    cancelButtonText: 'Cancelar',
+  })
+  if (!first.isConfirmed) return null
+
+  const second = await Swal.fire({
+    title: 'PIN maestro requerido',
+    html:
+      '<p class="text-sm text-slate-700 text-left mb-2">Ingresa el PIN maestro para confirmar la corrección:</p>',
+    input: 'password',
+    inputPlaceholder: 'PIN maestro',
+    inputAttributes: { autocapitalize: 'off', autocorrect: 'off', autocomplete: 'off' },
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonColor: '#15803d',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Aplicar corrección',
+    cancelButtonText: 'Cancelar',
+    preConfirm: (value) => {
+      const pin = String(value || '').trim()
+      if (!pin) {
+        Swal.showValidationMessage('Debes ingresar el PIN maestro.')
+        return false
+      }
+      return pin
+    },
+  })
+
+  if (!second.isConfirmed) return null
+  return String(second.value || '').trim() || null
+}

@@ -8,6 +8,7 @@ import SearchableSelect from '../../../components/ui/SearchableSelect'
 import { normalizeCurrencyCode } from '../../../lib/currencyCode'
 import { isPortalSaldoCrossSinComprobante, parsePortalCreditAppliedAmount } from '../portalCreditMeta'
 import { formatDateEcuador } from '../../../utils/datetime'
+import { confirmPaymentCorrectionWithMasterPin } from '../../../utils/confirmVoidTransaction'
 
 const field =
   'h-10 w-full rounded-md border border-gray-300 px-3 text-sm text-gray-800 bg-white shadow-sm ' +
@@ -289,8 +290,12 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
   const isHistoricalView =
     viewMode
     || (isExistingPayment && Boolean(paymentStatus) && paymentStatus !== 'pending_review')
-  const formReadOnly = isHistoricalView
-  const allocationsReadOnly = isHistoricalView
+  const isApprovedPayment = isExistingPayment && paymentStatus === 'approved'
+  const isCorrectionMode = Boolean(isHistoricalView && isApprovedPayment)
+  const amountReadOnly = isHistoricalView && !isCorrectionMode
+  const allocationsReadOnly = isHistoricalView && !isCorrectionMode
+  const metadataReadOnly = isHistoricalView
+  const formReadOnly = metadataReadOnly && !isCorrectionMode
   const showSaveActions =
     !isHistoricalView && (!isExistingPayment || (existingPaymentLoaded && isPendingReviewPayment))
 
@@ -513,7 +518,9 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
           reference: a.sale_ref,
           date: a.sale_date,
           total_amount: a.invoice_total ?? a.amount_applied,
-          open_balance: isHistorical ? 0 : (a.open_balance ?? a.amount_applied),
+          open_balance: isHistorical
+            ? Number(a.invoice_total ?? a.amount_applied ?? 0)
+            : (a.open_balance ?? a.amount_applied),
           currency: a.currency || data.currency,
           historical_applied: Number(a.amount_applied),
         }))
@@ -781,6 +788,38 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
     }
   }
 
+  async function handleApplyCorrection() {
+    if (!validateForm()) return
+    if (!prefill?.paymentId) return
+
+    const pin = await confirmPaymentCorrectionWithMasterPin()
+    if (!pin) return
+
+    const allocations = buildAllocationsPayload()
+    setSaving(true)
+    try {
+      const { data } = await api.patch(`/api/v1/payments/${prefill.paymentId}/correct`, {
+        pin,
+        amount: headerAmount,
+        reference_number: referenceNo.trim() || undefined,
+        allocations,
+      })
+      setViewPaymentMeta(data)
+      setAmountStr(String(Number(data.amount)))
+      onToast?.(
+        `Pago ${data.payment_number || prefill.paymentNumber || ''} corregido correctamente.`,
+        'success',
+      )
+      onAfterSave?.()
+      onClose?.()
+    } catch (err) {
+      const d = err?.response?.data?.detail
+      onToast?.(typeof d === 'string' ? d : 'No se pudo aplicar la corrección.', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 p-2 sm:p-4 font-sans text-gray-800"
@@ -925,8 +964,8 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 value={paymentDate}
                 onChange={(e) => setPaymentDate(e.target.value)}
                 className={field}
-                readOnly={formReadOnly}
-                disabled={formReadOnly}
+                readOnly={metadataReadOnly}
+                disabled={metadataReadOnly}
               />
             </div>
 
@@ -937,9 +976,9 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 inputMode="decimal"
                 value={amountStr}
                 onChange={(e) => setAmountStr(e.target.value)}
-                readOnly={formReadOnly}
-                disabled={formReadOnly}
-                className={`${field} mt-1 max-w-[220px] text-right text-xl font-bold tabular-nums ${formReadOnly ? 'bg-gray-50' : ''}`}
+                readOnly={amountReadOnly}
+                disabled={amountReadOnly}
+                className={`${field} mt-1 max-w-[220px] text-right text-xl font-bold tabular-nums ${amountReadOnly ? 'bg-gray-50' : ''}`}
                 placeholder="0.00"
               />
               <p className="mt-2 text-xs text-gray-500">
@@ -964,7 +1003,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 options={receiveDepositSelectOptions}
                 placeholder="Seleccionar cuenta"
                 clearLabel="Seleccionar cuenta"
-                disabled={formReadOnly}
+                disabled={metadataReadOnly}
               />
             </div>
             ) : null}
@@ -975,8 +1014,8 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                 value={referenceNo}
                 onChange={(e) => setReferenceNo(e.target.value)}
                 className={field}
-                readOnly={formReadOnly}
-                disabled={formReadOnly}
+                readOnly={metadataReadOnly}
+                disabled={metadataReadOnly}
               />
             </div>
             {displayCurrency !== 'USD' ? (
@@ -993,7 +1032,7 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
                   onChange={(e) => setExchangeRateStr(e.target.value)}
                   className={field}
                   readOnly={formReadOnly}
-                  disabled={formReadOnly}
+                  disabled={metadataReadOnly}
                 />
               </div>
             ) : null}
@@ -1294,6 +1333,16 @@ export default function ReceivePaymentModal({ onClose, onToast, onAfterSave, pre
             <button type="button" onClick={onClose} className="text-sm font-semibold text-[#1b5e20] hover:underline">
               {isHistoricalView ? 'Cerrar' : 'Cancelar'}
             </button>
+            {isCorrectionMode ? (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void handleApplyCorrection()}
+                className="h-10 rounded-md bg-[#2ca01c] px-5 text-sm font-semibold text-white hover:bg-[#238016] disabled:opacity-50"
+              >
+                {saving ? 'Aplicando…' : 'Aplicar Corrección'}
+              </button>
+            ) : null}
             {showSaveActions && (
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button
