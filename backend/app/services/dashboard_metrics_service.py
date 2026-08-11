@@ -15,7 +15,7 @@ from app.models.sale import Sale, SaleStatus
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.services.client_payment_service import (
     is_wallet_recharge_client_payment,
-    list_client_ar_open_obligations,
+    list_client_ar_firm_obligations_for_report,
     payment_encapsulated_in_open_sale_review,
 )
 from app.timezone_utils import now_ecuador
@@ -80,11 +80,21 @@ def compute_monthly_revenue_usd(db: Session) -> Decimal:
 
 
 def compute_accounts_receivable_usd(db: Session) -> Decimal:
-    """Suma global de saldos CxC abiertos (ventas + recargas BaaS) en USD."""
+    """
+    Suma global de saldos CxC firmes (Activado / parcial) en USD.
+
+    Usa la misma cartera y filtros que ``GET /reports/accounts-receivable``:
+    solo clientes directos del admin (``parent_id`` nulo) y obligaciones con deuda
+    firme (excluye Pendiente y En revisión). Montos en otras monedas se convierten
+    con la misma lógica de ``_obligation_open_balance_usd``.
+    """
     total = Decimal("0")
-    client_ids = [int(row[0]) for row in db.query(Client.id).all()]
+    client_ids = [
+        int(row[0])
+        for row in db.query(Client.id).filter(Client.parent_id.is_(None)).all()
+    ]
     for cid in client_ids:
-        for inv in list_client_ar_open_obligations(db, cid):
+        for inv in list_client_ar_firm_obligations_for_report(db, cid):
             total += _obligation_open_balance_usd(db, inv)
     return total.quantize(Decimal("0.01"))
 

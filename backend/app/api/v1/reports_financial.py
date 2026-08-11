@@ -45,7 +45,7 @@ from app.models.client import Client
 from app.services.client_payment_service import (
     linked_payments_financial_for_wallet_recharge,
     linked_payments_for_sale,
-    list_client_ar_open_obligations,
+    list_client_ar_firm_obligations_for_report,
     list_client_credit_balance_rows,
 )
 from app.services.list_classification_report import (
@@ -365,6 +365,9 @@ def get_accounts_receivable_summary(
     Solo incluye clientes directos del administrador (``parent_id`` nulo); los sub-clientes
     de distribuidores no forman parte de la cartera admin.
 
+    La cartera pendiente refleja deuda firme (Activado / parcial); excluye solicitudes
+    en Pendiente o En revisión.
+
     Pensado para reemplazar la lectura manual del libro mayor de la cuenta CxC.
     """
     cur_filter = normalize_currency_code(currency) if (currency or "").strip() else None
@@ -391,7 +394,7 @@ def get_accounts_receivable_summary(
 
         by_currency: dict[str, Decimal] = {}
         invoices_by_currency: dict[str, list] = {}
-        for inv in list_client_ar_open_obligations(db, cid, currency=cur_filter):
+        for inv in list_client_ar_firm_obligations_for_report(db, cid, currency=cur_filter):
             cur = normalize_currency_code(str(inv.get("currency") or "USD"))
             open_b = Decimal(str(inv.get("open_balance") or 0)).quantize(Decimal("0.01"))
             if open_b <= eps:

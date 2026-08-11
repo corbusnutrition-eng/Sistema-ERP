@@ -799,6 +799,12 @@ _UNPAID_INVOICE_STATUSES = (
     SaleStatus.payment_submitted,
 )
 
+# Solo obligaciones con deuda firme (Activado / parcial) para el reporte CxC admin.
+_FIRM_AR_SALE_STATUSES = (
+    SaleStatus.approved,
+    SaleStatus.partially_paid,
+)
+
 _OPEN_SALE_STATUSES = (
     SaleStatus.partially_paid,
     SaleStatus.pending,
@@ -824,15 +830,17 @@ def list_unpaid_invoices(
     *,
     currency: Optional[str] = None,
     payment: Optional[ClientPayment] = None,
+    firm_debt_only: bool = False,
 ) -> list[dict]:
     """Facturas con saldo CxC > 0, orden FIFO (``created_at`` asc)."""
     cur_filter = normalize_currency_code(currency) if currency else None
+    statuses = _FIRM_AR_SALE_STATUSES if firm_debt_only else _UNPAID_INVOICE_STATUSES
     sales = (
         db.query(Sale)
         .options(joinedload(Sale.product), joinedload(Sale.screen_stock_row))
         .filter(
             Sale.client_id == int(client_id),
-            Sale.status.in_(_UNPAID_INVOICE_STATUSES),
+            Sale.status.in_(statuses),
         )
         .order_by(Sale.created_at.asc(), Sale.id.asc())
         .all()
@@ -881,20 +889,25 @@ def list_unpaid_wallet_recharges(
     client_id: int,
     *,
     currency: Optional[str] = None,
+    firm_debt_only: bool = False,
 ) -> list[dict]:
     """Recargas BaaS con saldo CxC vivo (``balance_pending`` tras abonos aprobados)."""
-    from app.wallet_recharge_helpers import wallet_recharge_contributes_to_client_debt
+    from app.wallet_recharge_helpers import (
+        REQ_STATUS_APPROVED,
+        REQ_STATUS_PARTIALLY_PAID,
+        wallet_recharge_contributes_to_client_debt,
+    )
 
     cur_filter = normalize_currency_code(currency) if currency else None
     rows: list[dict] = []
-    wrs = (
-        db.query(WalletRechargeRequest)
-        .filter(WalletRechargeRequest.client_id == int(client_id))
-        .order_by(WalletRechargeRequest.created_at.asc(), WalletRechargeRequest.id.asc())
-        .all()
-    )
+    q = db.query(WalletRechargeRequest).filter(WalletRechargeRequest.client_id == int(client_id))
+    if firm_debt_only:
+        q = q.filter(
+            WalletRechargeRequest.status.in_((REQ_STATUS_PARTIALLY_PAID, REQ_STATUS_APPROVED))
+        )
+    wrs = q.order_by(WalletRechargeRequest.created_at.asc(), WalletRechargeRequest.id.asc()).all()
     for r in wrs:
-        if not wallet_recharge_contributes_to_client_debt(r):
+        if not firm_debt_only and not wallet_recharge_contributes_to_client_debt(r):
             continue
         bp = float(getattr(r, "balance_pending", 0) or 0)
         if bp <= 1e-6:
@@ -928,6 +941,30 @@ def list_client_ar_open_obligations(
     merged = list_unpaid_invoices(db, client_id, currency=currency) + list_unpaid_wallet_recharges(
         db, client_id, currency=currency
     )
+    merged.sort(
+        key=lambda row: (
+            row.get("date") or datetime.min.replace(tzinfo=UTC),
+            int(row.get("wallet_recharge_id") or row.get("sale_id") or 0),
+        )
+    )
+    return merged
+
+
+def list_client_ar_firm_obligations_for_report(
+    db: Session,
+    client_id: int,
+    *,
+    currency: Optional[str] = None,
+) -> list[dict]:
+    """
+    Deuda CxC firme para el reporte admin (solo lectura).
+
+    Excluye solicitudes en ``pending`` / ``in_review`` y facturas en
+    ``pending`` / ``payment_submitted``; incluye solo Activado y parcial.
+    """
+    merged = list_unpaid_invoices(
+        db, client_id, currency=currency, firm_debt_only=True
+    ) + list_unpaid_wallet_recharges(db, client_id, currency=currency, firm_debt_only=True)
     merged.sort(
         key=lambda row: (
             row.get("date") or datetime.min.replace(tzinfo=UTC),
