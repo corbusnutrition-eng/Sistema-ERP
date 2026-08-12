@@ -57,6 +57,10 @@ export async function toggleTeamUserActive(userId) {
   return data
 }
 
+export async function deleteTeamUser(userId) {
+  await api.delete(`/api/v1/users/${userId}`)
+}
+
 export async function fetchPermissionsMatrix() {
   const { data } = await api.get('/api/v1/permissions/matrix')
   return data

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.dependencies import require_permission
 from app.permissions import (
     TEAM_USERS_CREATE,
+    TEAM_USERS_DELETE,
     TEAM_USERS_EDIT,
     TEAM_USERS_VIEW,
 )
@@ -39,6 +40,10 @@ from app.services.render_sync import (
     fetch_listar_clientes_raw_rows,
     stable_catalog_email_row_id,
 )
+from app.services.user_delete_service import (
+    USER_DELETE_BLOCKED_MESSAGE,
+    user_has_registered_operations,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -46,6 +51,7 @@ DbDep = Annotated[Session, Depends(get_db)]
 TeamUsersViewDep = Annotated[dict, Depends(require_permission(TEAM_USERS_VIEW))]
 TeamUsersCreateDep = Annotated[dict, Depends(require_permission(TEAM_USERS_CREATE))]
 TeamUsersEditDep = Annotated[dict, Depends(require_permission(TEAM_USERS_EDIT))]
+TeamUsersDeleteDep = Annotated[dict, Depends(require_permission(TEAM_USERS_DELETE))]
 
 
 # bcrypt hard-limits passwords to 72 bytes. We encode to UTF-8 and truncate
@@ -568,3 +574,35 @@ def toggle_active(user_id: int, db: DbDep, _: TeamUsersEditDep) -> UserResponse:
     db.commit()
     db.refresh(user)
     return _user_to_response(user)
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, db: DbDep, current_user: TeamUsersDeleteDep) -> None:
+    """Elimina permanentemente un usuario del equipo si no tiene operaciones registradas."""
+    user: Optional[User] = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
+
+    caller_id = current_user.get("user_id")
+    if caller_id is not None and int(caller_id) == int(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No puedes eliminar tu propia cuenta.",
+        )
+
+    if user_has_registered_operations(db, int(user_id)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=USER_DELETE_BLOCKED_MESSAGE,
+        )
+
+    clear_account_verifiers_for_user(db, user_id=int(user_id))
+    db.delete(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=USER_DELETE_BLOCKED_MESSAGE,
+        )

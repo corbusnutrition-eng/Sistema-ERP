@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   ChevronDown,
+  Loader2,
   RefreshCw,
   Search,
   UserPlus,
   Users as UsersIcon,
 } from 'lucide-react'
-import { fetchTeamUsers, toggleTeamUserActive } from '../../api/users'
+import { deleteTeamUser, fetchTeamUsers, toggleTeamUserActive } from '../../api/users'
+import usePermissions from '../../hooks/usePermissions'
+import { getApiErrorMessage } from '../../lib/apiErrors'
+import { PERMS } from '../../lib/permissions'
 
 function StatusBadge({ isActive }) {
   return (
@@ -29,7 +34,48 @@ function RoleLabel({ user }) {
   return <span className="text-sm text-gray-800">{label}</span>
 }
 
-function EditUserMenu({ user, onToggle, toggling }) {
+function DeleteUserConfirmModal({ user, onConfirm, onCancel, loading }) {
+  const name = String(user?.name || 'este usuario').trim() || 'este usuario'
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-5">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-red-50 ring-1 ring-red-200 flex items-center justify-center shrink-0">
+            <AlertTriangle size={18} className="text-red-500" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-gray-900">Eliminar usuario</h3>
+            <p className="text-sm text-gray-500 mt-1 leading-relaxed">
+              ¿Estás seguro de que deseas eliminar al usuario{' '}
+              <span className="font-medium text-gray-700">{name}</span>? Esta acción es irreversible.
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors disabled:opacity-60"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="px-4 py-2 text-sm font-semibold text-white bg-red-500 hover:bg-red-600 disabled:opacity-60 rounded-xl transition-colors flex items-center gap-2"
+          >
+            {loading && <Loader2 size={13} className="animate-spin" />}
+            Sí, eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EditUserMenu({ user, onToggle, onDelete, toggling, canDelete }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -73,6 +119,18 @@ function EditUserMenu({ user, onToggle, toggling }) {
           >
             {toggling === user.id ? '…' : user.is_active ? 'Desactivar' : 'Activar'}
           </button>
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                onDelete(user)
+              }}
+              className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+            >
+              Eliminar
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -80,11 +138,16 @@ function EditUserMenu({ user, onToggle, toggling }) {
 }
 
 export default function UsersPage() {
+  const { hasPermission } = usePermissions()
+  const canDeleteUsers = hasPermission(PERMS.TEAM_USERS_DELETE)
+
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [toast, setToast] = useState('')
   const [toggling, setToggling] = useState(null)
+  const [userToDelete, setUserToDelete] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
@@ -120,6 +183,25 @@ export default function UsersPage() {
     }
   }
 
+  function handleDeleteRequest(user) {
+    setUserToDelete(user)
+  }
+
+  async function handleDeleteConfirm() {
+    if (!userToDelete) return
+    setDeleting(true)
+    try {
+      await deleteTeamUser(userToDelete.id)
+      setUsers((prev) => prev.filter((u) => u.id !== userToDelete.id))
+      showToast(`Usuario «${userToDelete.name}» eliminado correctamente.`)
+      setUserToDelete(null)
+    } catch (error) {
+      showToast(getApiErrorMessage(error, { fallback: 'No se pudo eliminar el usuario.' }))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return users
@@ -138,6 +220,17 @@ export default function UsersPage() {
           <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
           {toast}
         </div>
+      )}
+
+      {userToDelete && (
+        <DeleteUserConfirmModal
+          user={userToDelete}
+          loading={deleting}
+          onCancel={() => {
+            if (!deleting) setUserToDelete(null)
+          }}
+          onConfirm={handleDeleteConfirm}
+        />
       )}
 
       <div>
@@ -221,7 +314,13 @@ export default function UsersPage() {
                       <RoleLabel user={user} />
                     </td>
                     <td className="px-5 py-3.5 text-right">
-                      <EditUserMenu user={user} onToggle={handleToggle} toggling={toggling} />
+                      <EditUserMenu
+                        user={user}
+                        onToggle={handleToggle}
+                        onDelete={handleDeleteRequest}
+                        toggling={toggling}
+                        canDelete={canDeleteUsers}
+                      />
                     </td>
                   </tr>
                 ))}
