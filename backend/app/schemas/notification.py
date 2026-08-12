@@ -57,3 +57,19 @@ class PendingPaymentNotification(BaseModel):
 class PendingPaymentsNotificationResponse(BaseModel):
     count: int
     items: list[PendingPaymentNotification]
+
+
+class PendingVerifierPaymentNotification(BaseModel):
+    """Depósito bancario pendiente de verificación (campanita verificadores)."""
+
+    payment_id: int
+    amount: float
+    reference: str
+    bank_account_id: int
+    bank_account_name: str
+    created_at: datetime
+
+
+class PendingVerifierPaymentsNotificationResponse(BaseModel):
+    count: int
+    items: list[PendingVerifierPaymentNotification]

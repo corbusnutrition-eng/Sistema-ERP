@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from app.api.v1.dependencies import require_permission
+from app.api.v1.dependencies import UserDep, _resolve_db_user, require_permission
 from app.permissions import (
     ACCOUNTING_RECEIVABLES_CREATE,
     ACCOUNTING_RECEIVABLES_EDIT,
@@ -37,6 +37,7 @@ from app.schemas.client_payments import (
     VoidTransactionBody,
     VoidTransactionResponse,
 )
+from app.schemas.notification import PendingVerifierPaymentsNotificationResponse
 from app.services.client_payment_service import (
     add_payment_remainder_to_client_credit_balance,
     append_client_payment_notes_unique,
@@ -56,6 +57,7 @@ from app.services.client_payment_service import (
 from app.security.master_pin import require_master_pin
 from app.security.money_validation import validate_form_money
 from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
+from app.services.notification_service import list_pending_verifier_payment_notifications
 
 logger = logging.getLogger(__name__)
 from app.services.currency_consolidation import get_last_exchange_rate, normalize_exchange_rate
@@ -443,6 +445,27 @@ def list_payments(
         name = p.client.display_name() if p.client else ""
         out.append(_payment_to_out(p, name, db=db))
     return out
+
+
+@router.get(
+    "/notifications/pending",
+    response_model=PendingVerifierPaymentsNotificationResponse,
+)
+def get_pending_verifier_payment_notifications(
+    db: DbDep,
+    current_user: UserDep,
+) -> PendingVerifierPaymentsNotificationResponse:
+    """
+    Depósitos bancarios pendientes de verificación para la campanita del header.
+
+    Verificadores: solo cuentas asignadas. Administradores: todas las cuentas de depósito.
+    """
+    db_user = _resolve_db_user(db, current_user)
+    return list_pending_verifier_payment_notifications(
+        db,
+        current_user=current_user,
+        db_user=db_user,
+    )
 
 
 @router.get("/{payment_id}", response_model=ClientPaymentOut)

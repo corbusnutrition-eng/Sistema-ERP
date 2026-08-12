@@ -5,17 +5,25 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.account_constants import is_liquid_deposit_account
+from app.account_verifier_access import is_account_verifier
 from app.currency_utils import normalize_currency_code
+from app.models.account import Account
 from app.models.client_payment import ClientPayment, ClientPaymentStatus
+from app.models.journal_entry import JournalEntry, JournalEntryLine, JournalReferenceType
 from app.models.sale import Sale, SaleStatus
 from app.models.system_notification import SystemNotification
+from app.models.user import User
 from app.models.wallet_recharge_request import WalletRechargeRequest
 from app.schemas.notification import (
     PendingPaymentNotification,
     PendingPaymentNotificationKind,
     PendingPaymentsNotificationResponse,
+    PendingVerifierPaymentNotification,
+    PendingVerifierPaymentsNotificationResponse,
 )
 from app.services.inventory_alert_service import SYSTEM_NOTIFICATION_KIND_INVENTORY_LOW
 from app.services.client_payment_service import (
@@ -178,3 +186,121 @@ def list_pending_payment_notifications(db: Session) -> PendingPaymentsNotificati
 
     items.sort(key=lambda x: _sort_ts(x.created_at), reverse=True)
     return PendingPaymentsNotificationResponse(count=len(items), items=items)
+
+
+_RESOLVED_VERIFICATION = frozenset({"confirmed", "not_found", "wrong_account"})
+
+
+def _line_is_pending_bank_verification(line: JournalEntryLine) -> bool:
+    raw = getattr(line, "verification_status", None)
+    if raw is None:
+        return True
+    status = str(raw).strip().lower()
+    if not status:
+        return True
+    if status in _RESOLVED_VERIFICATION:
+        return False
+    return status == "interbank"
+
+
+def _payment_id_and_reference(db: Session, entry: JournalEntry, line_id: int) -> tuple[int, str]:
+    ref_type = (entry.reference_type or "").strip()
+    ref_id = entry.reference_id
+    if ref_type == JournalReferenceType.client_payment.value and ref_id is not None:
+        cp = db.get(ClientPayment, int(ref_id))
+        if cp is not None and str(cp.payment_number or "").strip():
+            return int(cp.id), str(cp.payment_number).strip()
+        return int(ref_id), f"PAG-{int(ref_id)}"
+    if ref_type == JournalReferenceType.recarga.value and ref_id is not None:
+        return int(line_id), f"REC-{int(ref_id):05d}"
+    if ref_type == JournalReferenceType.venta.value and ref_id is not None:
+        return int(line_id), f"FAC-{int(ref_id):04d}"
+    if ref_type and ref_id is not None:
+        return int(line_id), f"{ref_type}#{ref_id}"
+    return int(line_id), f"JE-{int(entry.id):06d}"
+
+
+def _verifier_bank_account_ids(db: Session, user: User) -> list[int]:
+    rows = (
+        db.query(Account)
+        .filter(
+            Account.verifier_id == int(user.id),
+            Account.is_active.is_(True),
+        )
+        .order_by(Account.id.asc())
+        .all()
+    )
+    return [int(acc.id) for acc in rows if is_liquid_deposit_account(acc)]
+
+
+def list_pending_verifier_payment_notifications(
+    db: Session,
+    *,
+    current_user: dict,
+    db_user: Optional[User],
+) -> PendingVerifierPaymentsNotificationResponse:
+    """
+    Depósitos bancarios sin verificar para la campanita del header.
+
+    - Admin: todas las cuentas de depósito con movimientos pendientes.
+    - Verificador de Cuentas: solo cuentas asignadas (``accounts.verifier_id``).
+    """
+    is_admin = str(current_user.get("role") or "") == "admin"
+    account_ids: Optional[list[int]] = None
+
+    if is_admin:
+        admin_accounts = (
+            db.query(Account)
+            .filter(Account.is_active.is_(True))
+            .order_by(Account.id.asc())
+            .all()
+        )
+        account_ids = [int(acc.id) for acc in admin_accounts if is_liquid_deposit_account(acc)]
+    else:
+        if db_user is None or not is_account_verifier(db_user):
+            return PendingVerifierPaymentsNotificationResponse(count=0, items=[])
+        account_ids = _verifier_bank_account_ids(db, db_user)
+        if not account_ids:
+            return PendingVerifierPaymentsNotificationResponse(count=0, items=[])
+
+    rows = (
+        db.query(JournalEntryLine, Account, JournalEntry)
+        .join(Account, JournalEntryLine.account_id == Account.id)
+        .join(JournalEntry, JournalEntryLine.journal_entry_id == JournalEntry.id)
+        .filter(
+            Account.id.in_(account_ids),
+            JournalEntryLine.debit > 0,
+            or_(
+                JournalEntryLine.verification_status.is_(None),
+                JournalEntryLine.verification_status == "",
+                JournalEntryLine.verification_status == "interbank",
+            ),
+        )
+        .order_by(JournalEntry.created_at.desc(), JournalEntryLine.id.desc())
+        .limit(200)
+        .all()
+    )
+
+    fallback_ts = now_ecuador()
+    items: list[PendingVerifierPaymentNotification] = []
+    for line, account, entry in rows:
+        if not _line_is_pending_bank_verification(line):
+            continue
+        dep = Decimal(str(line.debit or 0)).quantize(Decimal("0.01"))
+        if dep <= Decimal("0.005"):
+            continue
+        payment_id, reference = _payment_id_and_reference(db, entry, int(line.id))
+        created = getattr(entry, "created_at", None) or fallback_ts
+        items.append(
+            PendingVerifierPaymentNotification(
+                payment_id=payment_id,
+                amount=float(dep),
+                reference=reference,
+                bank_account_id=int(account.id),
+                bank_account_name=str(account.name or "").strip() or f"Cuenta #{account.id}",
+                created_at=created,
+            )
+        )
+
+    items.sort(key=lambda x: _sort_ts(x.created_at), reverse=True)
+    return PendingVerifierPaymentsNotificationResponse(count=len(items), items=items)
