@@ -51,8 +51,12 @@ FX_GAIN_DETAIL = "Otros ingresos principales"
 FINANCIAL_EXPENSE_DETAILS = frozenset({FX_LOSS_DETAIL, "Otros gastos", "Liquidaciones"})
 
 
+_JOURNAL_QUANTUM = Decimal("0.0001")
+_ROUNDING_ABSORB_MAX = Decimal("0.01")
+
+
 def _q4(v: Decimal | float | str | int) -> Decimal:
-    return Decimal(str(v)).quantize(Decimal("0.0001"))
+    return Decimal(str(v)).quantize(_JOURNAL_QUANTUM)
 
 
 def _q6(v: Decimal | float | str | int) -> Decimal:
@@ -65,6 +69,89 @@ class JournalLineDraft:
     debit: Decimal
     credit: Decimal
     exchange_rate: Decimal = Decimal("1")
+
+
+def _quantize_journal_draft(draft: JournalLineDraft) -> JournalLineDraft:
+    return JournalLineDraft(
+        account_id=int(draft.account_id),
+        debit=_q4(draft.debit),
+        credit=_q4(draft.credit),
+        exchange_rate=_q6(draft.exchange_rate),
+    )
+
+
+def _journal_totals(
+    lines: Sequence[JournalLineDraft],
+    *,
+    fx_weighted: bool,
+) -> tuple[Decimal, Decimal]:
+    """Suma débitos/créditos en Decimal. Con FX, redondea el total (no cada producto)."""
+    if fx_weighted:
+        total_dr = _q4(
+            sum((_q4(l.debit) * _q6(l.exchange_rate) for l in lines), Decimal("0"))
+        )
+        total_cr = _q4(
+            sum((_q4(l.credit) * _q6(l.exchange_rate) for l in lines), Decimal("0"))
+        )
+        return total_dr, total_cr
+    total_dr = sum((_q4(l.debit) for l in lines), Decimal("0"))
+    total_cr = sum((_q4(l.credit) for l in lines), Decimal("0"))
+    return total_dr, total_cr
+
+
+def _absorb_journal_rounding(
+    lines: Sequence[JournalLineDraft],
+    *,
+    fx_weighted: bool,
+) -> list[JournalLineDraft]:
+    """
+    Cuantiza líneas y, si queda un residuo de redondeo (< 0.01), lo absorbe
+    en la última línea para que débitos y créditos coincidan al último decimal.
+    """
+    prepared = [_quantize_journal_draft(l) for l in lines]
+    if not prepared:
+        return prepared
+
+    total_dr, total_cr = _journal_totals(prepared, fx_weighted=fx_weighted)
+    diff = (total_dr - total_cr).quantize(_JOURNAL_QUANTUM)
+    if diff == 0:
+        return prepared
+    if abs(diff) >= _ROUNDING_ABSORB_MAX:
+        return prepared
+
+    last = prepared[-1]
+    xr = _q6(last.exchange_rate)
+    if xr <= 0:
+        xr = Decimal("1")
+
+    if last.credit > 0 or (last.debit == 0 and last.credit == 0 and diff > 0):
+        native_adj = _q4(diff / xr) if fx_weighted else diff
+        if fx_weighted and native_adj == 0:
+            native_adj = _JOURNAL_QUANTUM if diff > 0 else -_JOURNAL_QUANTUM
+        new_credit = _q4(last.credit + native_adj)
+        if new_credit < 0:
+            return prepared
+        prepared[-1] = JournalLineDraft(
+            account_id=last.account_id,
+            debit=Decimal("0") if new_credit > 0 else last.debit,
+            credit=new_credit,
+            exchange_rate=last.exchange_rate,
+        )
+    elif last.debit > 0:
+        native_adj = _q4((-diff) / xr) if fx_weighted else (-diff)
+        if fx_weighted and native_adj == 0:
+            native_adj = _JOURNAL_QUANTUM if diff < 0 else -_JOURNAL_QUANTUM
+        new_debit = _q4(last.debit + native_adj)
+        if new_debit < 0:
+            return prepared
+        prepared[-1] = JournalLineDraft(
+            account_id=last.account_id,
+            debit=new_debit,
+            credit=Decimal("0") if new_debit > 0 else last.credit,
+            exchange_rate=last.exchange_rate,
+        )
+
+    return prepared
 
 
 def find_asset_by_gateway(db: Session, pasarela_id: int, currency: Optional[str] = None) -> Account:
@@ -249,12 +336,7 @@ def find_account_by_detail(
 def _validate_balanced(lines: Sequence[JournalLineDraft], *, fx_weighted: bool = False) -> None:
     if not lines:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El asiento no tiene líneas.")
-    if fx_weighted:
-        total_dr = sum((_q4(l.debit * l.exchange_rate) for l in lines), Decimal("0"))
-        total_cr = sum((_q4(l.credit * l.exchange_rate) for l in lines), Decimal("0"))
-    else:
-        total_dr = sum((_q4(l.debit) for l in lines), Decimal("0"))
-        total_cr = sum((_q4(l.credit) for l in lines), Decimal("0"))
+    total_dr, total_cr = _journal_totals(lines, fx_weighted=fx_weighted)
     if total_dr != total_cr:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -283,6 +365,7 @@ def _post_journal_atomic(
     """
     if fx_weighted is None:
         fx_weighted = any(_q6(l.exchange_rate) != Decimal("1") for l in lines)
+    lines = _absorb_journal_rounding(lines, fx_weighted=fx_weighted)
     _validate_balanced(lines, fx_weighted=fx_weighted)
 
     entry = JournalEntry(
@@ -2290,20 +2373,23 @@ def post_account_transfer(
     xr = _q6(exchange_rate)
     desc = (description or "").strip()[:255] or "Transferencia entre cuentas"
 
-    lines = [
-        JournalLineDraft(
-            account_id=source_account_id,
-            debit=Decimal("0"),
-            credit=_q4(amount_src),
-            exchange_rate=xr,
-        ),
-        JournalLineDraft(
-            account_id=destination_account_id,
-            debit=_q4(amount_dst),
-            credit=Decimal("0"),
-            exchange_rate=Decimal("1"),
-        ),
-    ]
+    lines = _absorb_journal_rounding(
+        [
+            JournalLineDraft(
+                account_id=source_account_id,
+                debit=Decimal("0"),
+                credit=_q4(amount_src),
+                exchange_rate=xr,
+            ),
+            JournalLineDraft(
+                account_id=destination_account_id,
+                debit=_q4(amount_dst),
+                credit=Decimal("0"),
+                exchange_rate=Decimal("1"),
+            ),
+        ],
+        fx_weighted=True,
+    )
     _validate_balanced(lines, fx_weighted=True)
 
     entry = JournalEntry(
