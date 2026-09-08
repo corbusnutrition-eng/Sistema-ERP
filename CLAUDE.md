@@ -1,0 +1,68 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project overview
+
+ERP de facturación para un negocio de IPTV/BaaS (Billing-as-a-Service): ventas, cuentas por cobrar, inventario de pantallas/cuentas IPTV, contabilidad de doble partida, y una red de distribuidores multinivel (MLM) con billeteras virtuales y comisiones en cascada. Dos partes independientes:
+
+- **`backend/`** — API FastAPI + SQLAlchemy + PostgreSQL (real ERP; ver `backend/DOCUMENTACION_BACKEND.md`)
+- **`frontend/`** — SPA React 19 + Vite (ver `frontend/DOCUMENTACION_FRONTEND.md`)
+
+El directorio `app/` en la raíz **no** es el backend real: es un stub legacy que delega a `backend/app/main.py` para que `uvicorn app.main:app` funcione si se arranca desde la raíz por error. Trabaja siempre desde `backend/`.
+
+Para variables de entorno y despliegue en Render, ver `GUIA_DESPLIEGUE.md`.
+
+## Commands
+
+### Backend (desde `backend/`)
+
+```bash
+pip install -r requirements.txt
+alembic upgrade head                              # migraciones
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+pytest                                             # toda la suite (SQLite in-memory por defecto)
+pytest tests/test_baas_commission_cascade.py       # un archivo
+pytest tests/test_baas_commission_cascade.py::test_name -v   # un test
+pytest -m concurrency                              # solo pruebas de estrés/concurrencia BaaS
+alembic current && alembic history --verbose       # estado de migraciones
+PYTHONPATH=. python3 scripts/daily_telegram_report.py --dry-run   # reporte matutino Telegram, sin enviar
+```
+
+Los tests corren contra SQLite en memoria salvo que `TEST_DATABASE_URL` o `DATABASE_URL` apunten a PostgreSQL (`backend/tests/conftest.py`).
+
+### Frontend (desde `frontend/`)
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+npm run build
+npm run lint
+npm run preview
+```
+
+## Architecture
+
+### Backend — capas (`backend/app/`)
+
+`api/v1/*.py` (routers, ~34 módulos) → `schemas/*.py` (Pydantic) → `services/*.py` (~45 módulos, lógica de negocio y transacciones) → `models/*.py` (SQLAlchemy, ~31 entidades). `security/*.py` cruza capas para validaciones de dinero, PIN maestro y anti-fraude OCR del portal.
+
+Los servicios críticos (`portal_auto_purchase_service`, `baas_commission_cascade_service`) **no hacen commit propio**: el router orquesta un único `db.commit()`/`rollback()` por request, así la venta y la cascada de comisiones quedan en una sola transacción ACID.
+
+### Núcleo de dominio (BaaS)
+
+- `clients` es un árbol vía `parent_id` (red de subdistribuidores) y tiene `payment_token` (UUID) que autentica todas las rutas `/portal/{token}/...` sin JWT — es la frontera de seguridad entre staff (JWT) y clientes (token en URL).
+- `baas_commission_cascade_service.py` recorre el árbol hacia arriba desde el comprador (`SELECT FOR UPDATE` en cada nivel), acredita el spread de precio a la billetera virtual de cada upline (nunca genera facturas), y corta a los 256 saltos (`_MAX_CASCADE_HOPS`).
+- Pagos (`ClientPayment`) se aplican a ventas o recargas BaaS vía `PaymentAllocation` con lógica FIFO (`client_payment_service.py`).
+- Multi-moneda: saldos por moneda en `custom_fields` (JSONB) con `SELECT FOR UPDATE`; conversión vía `currency_consolidation.get_last_exchange_rate`.
+
+Ver `backend/DOCUMENTACION_BACKEND.md` para el diagrama de tablas completo, el flujo de recarga con comprobante (Cloudinary + OCR opcional vía OpenAI + Telegram) y el listado de endpoints.
+
+### Frontend — estado y rutas
+
+Sin Redux/Zustand/React Query: estado global vía tres React Context (`AuthContext`, `ModalContext`, `InventoryDataContext`) + `useState` local por componente, fetch manual en `useEffect`. Dos clientes HTTP distintos: `src/api/axios.js` (JWT Bearer, para `/dashboard`, `/ventas`, `/contabilidad`, etc. bajo `MainLayout`) y llamadas axios ad-hoc sin header Authorization para las rutas públicas del portal (`/portal/:token`, `/pay/:paymentId`, `/checkout/:token`), donde el token va en la URL.
+
+`ClientPortalPage.jsx` (~10.700 líneas) concentra casi toda la lógica del portal de autogestión del distribuidor (billetera, comisiones, red, notificaciones) en un único componente monolítico — el resto del código está más modularizado por dominio en `src/features/`.
+
+Ver `frontend/DOCUMENTACION_FRONTEND.md` para rutas, guards de permisos y los flujos de UI del portal.

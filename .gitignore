@@ -1,0 +1,27 @@
+# Dependencias
+node_modules/
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Bases de datos locales
+*.db
+*.sqlite3
+
+# Entornos / secretos
+.env
+.env.*
+!.env.example
+
+# Build
+dist/
+build/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
