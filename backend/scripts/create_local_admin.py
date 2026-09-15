@@ -13,6 +13,7 @@ Uso (desde ``backend/``):
 
 from __future__ import annotations
 
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -43,6 +44,26 @@ def _require_postgresql() -> None:
     if not url.startswith("postgresql"):
         scheme = url.split(":", 1)[0] if url else "(vacío)"
         print(f"ERROR: Esquema de base de datos no soportado: {scheme}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _refuse_if_looks_like_production(url: str) -> None:
+    """
+    Este script usa credenciales fijas (``admin123``) por conveniencia de
+    desarrollo local. Para producción usar ``scripts/create_admin.py``, que
+    exige una contraseña fuerte explícita.
+    """
+    lowered = url.lower()
+    is_local = "localhost" in lowered or "127.0.0.1" in lowered or "0.0.0.0" in lowered
+    if not is_local and os.getenv("ALLOW_WEAK_LOCAL_ADMIN") != "1":
+        print(
+            "ERROR: DATABASE_URL no parece una base local (localhost/127.0.0.1).\n"
+            "Este script crea un admin con la contraseña fija 'admin123' — solo para "
+            "desarrollo. Para producción usa 'python scripts/create_admin.py' "
+            "(contraseña fuerte obligatoria).\n"
+            "Si de verdad quieres forzarlo aquí, define ALLOW_WEAK_LOCAL_ADMIN=1.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
@@ -98,6 +119,7 @@ def upsert_master_admin(
 
 def main() -> int:
     _require_postgresql()
+    _refuse_if_looks_like_production(DATABASE_URL)
 
     db_label = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL
     print(f"Base de datos: {db_label}")

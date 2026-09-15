@@ -7,6 +7,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.v1.dependencies import UserDep
 from app.database import get_db
 from app.models.sale_transaction_tag import SaleTransactionTag, TagGroup
 from app.schemas.sale_tag_catalog import SaleTagCatalogCreate, SaleTagCatalogResponse, SaleTagCatalogUpdate
@@ -14,11 +15,15 @@ from app.schemas.sale_tag_catalog import SaleTagCatalogCreate, SaleTagCatalogRes
 router = APIRouter(prefix="/sale-tags", tags=["sale-tags"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+# Igual que /tag-groups: catálogo compartido leído/creado inline al facturar
+# (cualquier usuario autenticado, sin permiso granular propio).
 
 
 @router.get("", response_model=list[SaleTagCatalogResponse])
 @router.get("/", response_model=list[SaleTagCatalogResponse])
-def list_sale_tags(db: DbDep, group_id: Optional[int] = Query(default=None, ge=1)) -> list[SaleTagCatalogResponse]:
+def list_sale_tags(
+    db: DbDep, _: UserDep, group_id: Optional[int] = Query(default=None, ge=1)
+) -> list[SaleTagCatalogResponse]:
     q = db.query(SaleTransactionTag).order_by(SaleTransactionTag.name)
     if group_id is not None:
         q = q.filter(SaleTransactionTag.group_id == group_id)
@@ -28,7 +33,7 @@ def list_sale_tags(db: DbDep, group_id: Optional[int] = Query(default=None, ge=1
 
 @router.post("", response_model=SaleTagCatalogResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=SaleTagCatalogResponse, status_code=status.HTTP_201_CREATED)
-def create_sale_tag(payload: SaleTagCatalogCreate, db: DbDep) -> SaleTransactionTag:
+def create_sale_tag(payload: SaleTagCatalogCreate, db: DbDep, _: UserDep) -> SaleTransactionTag:
     grp = db.get(TagGroup, payload.group_id)
     if not grp:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Grupo de etiquetas no válido.")
@@ -41,7 +46,7 @@ def create_sale_tag(payload: SaleTagCatalogCreate, db: DbDep) -> SaleTransaction
 
 
 @router.patch("/{tag_id}", response_model=SaleTagCatalogResponse)
-def update_sale_tag(tag_id: int, payload: SaleTagCatalogUpdate, db: DbDep) -> SaleTransactionTag:
+def update_sale_tag(tag_id: int, payload: SaleTagCatalogUpdate, db: DbDep, _: UserDep) -> SaleTransactionTag:
     row = db.get(SaleTransactionTag, tag_id)
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Etiqueta no encontrada.")
@@ -59,7 +64,7 @@ def update_sale_tag(tag_id: int, payload: SaleTagCatalogUpdate, db: DbDep) -> Sa
 
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_sale_tag(tag_id: int, db: DbDep) -> None:
+def delete_sale_tag(tag_id: int, db: DbDep, _: UserDep) -> None:
     row = db.get(SaleTransactionTag, tag_id)
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Etiqueta no encontrada.")

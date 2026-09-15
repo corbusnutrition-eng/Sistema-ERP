@@ -3,22 +3,25 @@ from __future__ import annotations
 from typing import Annotated, Optional
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.api.v1.dependencies import UserDep
 from app.database import get_db
 from app.jwt_utils import create_access_token
+from app.rate_limit import LOGIN_LIMIT, limiter
 from app.account_verifier_access import normalize_assigned_account_ids
 from app.models.user import User, UserRole
 from app.permissions import ROLE_TEMPLATE_CUSTOM, ROLE_TEMPLATE_FULL_ADMIN, effective_permissions
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# ── Mock admin fallback (when no admin user exists in the DB yet) ─────────────
-MOCK_EMAIL = "admin@erp.com"
-MOCK_PASSWORD = "admin123"
+# Hash señuelo (bcrypt) contra el que se compara cuando el email no existe en
+# la BD, para que un login con email inexistente tome un tiempo comparable a
+# uno con contraseña incorrecta — sin esto, medir el tiempo de respuesta
+# permite enumerar qué correos están registrados.
+_DECOY_PASSWORD_HASH = bcrypt.hashpw(b"decoy-password-timing-safety", bcrypt.gensalt()).decode("utf-8")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -59,63 +62,54 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(credentials: LoginRequest, db: DbDep) -> LoginResponse:
+@limiter.limit(LOGIN_LIMIT)
+def login(request: Request, credentials: LoginRequest, db: DbDep) -> LoginResponse:
     """
-    Autentica al usuario contra la BD (bcrypt). Si el email no existe en la BD,
-    recurre al admin mock para compatibilidad durante el desarrollo.
-    Devuelve un JWT firmado con el nombre y rol del usuario.
+    Autentica al usuario contra la BD (bcrypt) y devuelve un JWT.
+
+    Sin backdoor: el único camino de acceso es un ``User`` real en la BD con
+    ``is_active=True``. El caso "email no existe" ejecuta igualmente un
+    ``bcrypt.checkpw`` contra un hash señuelo (``_DECOY_PASSWORD_HASH``) para
+    no filtrar por temporización qué correos están registrados.
     """
     db_user: Optional[User] = db.query(User).filter(User.email == credentials.email).first()
 
-    if db_user:
-        password_bytes = credentials.password.encode("utf-8")[:72]
-        if not bcrypt.checkpw(password_bytes, db_user.hashed_password.encode("utf-8")):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Credenciales incorrectas.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        if not db_user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Usuario desactivado. Contacta al administrador.",
-            )
-        perms = effective_permissions(role=db_user.role.value, permissions=db_user.permissions)
-        tpl = db_user.role_template or ROLE_TEMPLATE_CUSTOM
-        user_info = UserInfo(
-            name=db_user.name,
-            role=db_user.role.value,
-            user_id=db_user.id,
-            permissions=perms,
-            role_template=tpl if db_user.role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN,
-            assigned_account_ids=normalize_assigned_account_ids(db_user.assigned_account_ids),
-        )
+    password_bytes = credentials.password.encode("utf-8")[:72]
+    stored_hash = (db_user.hashed_password if db_user else _DECOY_PASSWORD_HASH).encode("utf-8")
+    password_ok = bcrypt.checkpw(password_bytes, stored_hash)
 
-    elif credentials.email == MOCK_EMAIL and credentials.password == MOCK_PASSWORD:
-        user_info = UserInfo(
-            name="Admin",
-            role="admin",
-            user_id=None,
-            permissions=effective_permissions(role="admin", permissions=None),
-        )
-
-    else:
+    if db_user is None or not password_ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales incorrectas.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if not db_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario desactivado. Contacta al administrador.",
+        )
 
-    token_payload: dict = {
+    perms = effective_permissions(role=db_user.role.value, permissions=db_user.permissions)
+    tpl = db_user.role_template or ROLE_TEMPLATE_CUSTOM
+    user_info = UserInfo(
+        name=db_user.name,
+        role=db_user.role.value,
+        user_id=db_user.id,
+        permissions=perms,
+        role_template=tpl if db_user.role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN,
+        assigned_account_ids=normalize_assigned_account_ids(db_user.assigned_account_ids),
+    )
+
+    # El payload del JWT NO lleva `permissions`: las rutas protegidas las
+    # resuelven contra la BD en cada request (`require_permission`), así un
+    # cambio de rol/permiso aplica de inmediato y no hasta que expire el token.
+    token_payload = {
         "sub": credentials.email,
         "name": user_info.name,
         "role": user_info.role,
+        "user_id": db_user.id,
     }
-    if db_user is not None:
-        token_payload["user_id"] = db_user.id
-        token_payload["permissions"] = user_info.permissions
-    elif user_info.role == "admin":
-        token_payload["permissions"] = user_info.permissions
     token = create_access_token(token_payload)
     return LoginResponse(access_token=token, token_type="bearer", user=user_info)
 

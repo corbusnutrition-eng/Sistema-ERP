@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 
 from fastapi import HTTPException, status
 
@@ -18,8 +19,17 @@ def configured_master_pin() -> str:
 
 
 def require_master_pin(pin: str | None) -> None:
+    """
+    Valida el PIN maestro en tiempo constante (``secrets.compare_digest``) para
+    no filtrar por temporización cuántos caracteres iniciales coinciden.
+
+    El PIN es de solo 6 dígitos: esto por sí solo NO evita la fuerza bruta —
+    los endpoints que lo exigen deben además llevar rate limiting propio
+    (ver ``app.rate_limit``) y quedar registrados en la auditoría forense.
+    """
     expected = configured_master_pin()
-    if str(pin or "").strip() != expected:
+    provided = str(pin or "").strip()
+    if not secrets.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="PIN maestro incorrecto.",

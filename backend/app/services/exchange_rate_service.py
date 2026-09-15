@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.currency_utils import normalize_currency_code
 from app.models.exchange_rate import ExchangeRate
+from app.security.master_pin import require_master_pin
 from app.services.binance_p2p_service import fetch_market_rates_for_currencies
 from app.services.telegram_service import send_telegram_alert
 from app.timezone_utils import now_ecuador
@@ -442,13 +443,7 @@ def deactivate_exchange_rate(
     master_pin: str,
 ) -> ExchangeRate:
     """Borrado lógico de una moneda tras validar PIN maestro."""
-    expected_pin = (os.getenv("MASTER_ADMIN_PIN") or "0000").strip()
-    received_pin = str(master_pin or "").strip()
-    if received_pin != expected_pin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="PIN Maestro incorrecto.",
-        )
+    require_master_pin(master_pin)
 
     code = normalize_currency_code(currency_code)
     row = db.get(ExchangeRate, code)

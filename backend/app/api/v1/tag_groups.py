@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.v1.dependencies import UserDep
 from app.database import get_db
 from app.models.sale_transaction_tag import SaleTransactionTag, TagGroup
 from app.schemas.sale_tag_catalog import (
@@ -19,6 +20,10 @@ from app.schemas.sale_tag_catalog import (
 router = APIRouter(prefix="/tag-groups", tags=["sale-tag-groups"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+# Catálogo compartido: se lee/crea inline durante la creación de una venta
+# (NuevaVentaModal → SaleQBTagsCreatable) y desde la pantalla de Listas
+# maestras. Igual que `/classes`: cualquier usuario autenticado, sin permiso
+# granular propio — antes NO exigía ni siquiera estar logueado.
 
 
 def _serialize_group(g: TagGroup) -> TagGroupResponse:
@@ -33,14 +38,14 @@ def _serialize_group(g: TagGroup) -> TagGroupResponse:
 
 @router.get("", response_model=list[TagGroupResponse])
 @router.get("/", response_model=list[TagGroupResponse])
-def list_tag_groups(db: DbDep) -> list[TagGroupResponse]:
+def list_tag_groups(db: DbDep, _: UserDep) -> list[TagGroupResponse]:
     rows = db.query(TagGroup).order_by(TagGroup.name).all()
     return [_serialize_group(g) for g in rows]
 
 
 @router.post("", response_model=TagGroupResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=TagGroupResponse, status_code=status.HTTP_201_CREATED)
-def create_tag_group(payload: TagGroupCreate, db: DbDep) -> TagGroupResponse:
+def create_tag_group(payload: TagGroupCreate, db: DbDep, _: UserDep) -> TagGroupResponse:
     name = payload.name.strip()
     color = (payload.color or "#2563EB").strip() or "#2563EB"
     g = TagGroup(name=name, color=color[:32])
@@ -54,7 +59,7 @@ def create_tag_group(payload: TagGroupCreate, db: DbDep) -> TagGroupResponse:
 
 
 @router.patch("/{group_id}", response_model=TagGroupResponse)
-def update_tag_group(group_id: int, payload: TagGroupUpdate, db: DbDep) -> TagGroupResponse:
+def update_tag_group(group_id: int, payload: TagGroupUpdate, db: DbDep, _: UserDep) -> TagGroupResponse:
     g = db.get(TagGroup, group_id)
     if not g:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grupo no encontrado.")
@@ -69,7 +74,7 @@ def update_tag_group(group_id: int, payload: TagGroupUpdate, db: DbDep) -> TagGr
 
 
 @router.delete("/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_tag_group(group_id: int, db: DbDep) -> None:
+def delete_tag_group(group_id: int, db: DbDep, _: UserDep) -> None:
     g = db.get(TagGroup, group_id)
     if not g:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grupo no encontrado.")

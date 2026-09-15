@@ -50,6 +50,7 @@ from app.schemas.client import ClientSalePickerRow
 from app.schemas.hotmart_links import hotmart_links_from_model
 from app.schemas.portal_public import PortalInstantActivationResponse
 from app.schemas.client_payments import VoidTransactionBody
+from app.rate_limit import MASTER_PIN_LIMIT, limiter
 from app.security.master_pin import require_master_pin
 from app.schemas.sales import (
     LinkedPaymentOut,
@@ -3726,7 +3727,9 @@ def approve_sale(
     response_model=SaleResponse,
     summary="Anular factura activa (reverso contable + devolución de inventario)",
 )
+@limiter.limit(MASTER_PIN_LIMIT)
 def void_sale(
+    request: Request,
     sale_id: int,
     db: DbDep,
     _: SalesInvoicesEditDep,

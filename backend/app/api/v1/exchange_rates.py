@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.v1.dependencies import AdminDep, UserDep
 from app.database import get_db
+from app.rate_limit import MASTER_PIN_LIMIT, limiter
 from app.schemas.exchange_rate import (
     ExchangeRateCreateRequest,
     ExchangeRateDeleteRequest,
@@ -109,7 +110,9 @@ def put_exchange_rate(
 
 
 @router.delete("/{currency_code}", response_model=ExchangeRateDeleteResult)
+@limiter.limit(MASTER_PIN_LIMIT)
 def delete_exchange_rate(
+    request: Request,
     currency_code: str,
     payload: ExchangeRateDeleteRequest,
     db: DbDep,

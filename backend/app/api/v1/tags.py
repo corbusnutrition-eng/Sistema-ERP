@@ -6,22 +6,28 @@ from typing import Annotated, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.v1.dependencies import require_permission
 from app.database import get_db
 from app.models.tag import MAX_TAGS, Tag
+from app.permissions import CLIENTS_EDIT, CLIENTS_VIEW
 from app.schemas.tag import TagCreate, TagResponse, TagUpdate
 
 router = APIRouter(prefix="/tags", tags=["tags"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+# Catálogo de etiquetas de clientes (Clientes.jsx): mismo permiso que la propia
+# ficha de cliente, ya que estas etiquetas son parte de esa pantalla.
+ClientsViewDep = Annotated[dict, Depends(require_permission(CLIENTS_VIEW))]
+ClientsEditDep = Annotated[dict, Depends(require_permission(CLIENTS_EDIT))]
 
 
 @router.get("", response_model=List[TagResponse])
-def list_tags(db: DbDep):
+def list_tags(db: DbDep, _: ClientsViewDep):
     return db.query(Tag).order_by(Tag.created_at).all()
 
 
 @router.post("", response_model=TagResponse, status_code=status.HTTP_201_CREATED)
-def create_tag(payload: TagCreate, db: DbDep):
+def create_tag(payload: TagCreate, db: DbDep, _: ClientsEditDep):
     count = db.query(Tag).count()
     if count >= MAX_TAGS:
         raise HTTPException(
@@ -42,7 +48,7 @@ def create_tag(payload: TagCreate, db: DbDep):
 
 
 @router.patch("/{tag_id}", response_model=TagResponse)
-def update_tag(tag_id: uuid.UUID, payload: TagUpdate, db: DbDep):
+def update_tag(tag_id: uuid.UUID, payload: TagUpdate, db: DbDep, _: ClientsEditDep):
     tag = db.get(Tag, tag_id)
     if not tag:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Etiqueta no encontrada.")
@@ -62,7 +68,7 @@ def update_tag(tag_id: uuid.UUID, payload: TagUpdate, db: DbDep):
 
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_tag(tag_id: uuid.UUID, db: DbDep):
+def delete_tag(tag_id: uuid.UUID, db: DbDep, _: ClientsEditDep):
     tag = db.get(Tag, tag_id)
     if not tag:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Etiqueta no encontrada.")
