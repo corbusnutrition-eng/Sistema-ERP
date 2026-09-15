@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.api.v1.dependencies import UserDep
+from app.audit.forensic import record_forensic_event
 from app.database import get_db
 from app.jwt_utils import TokenError, create_access_token, decode_token
 from app.rate_limit import LOGIN_LIMIT, get_client_ip, limiter
@@ -119,12 +120,23 @@ def login(request: Request, response: Response, credentials: LoginRequest, db: D
     password_ok = bcrypt.checkpw(password_bytes, stored_hash)
 
     if db_user is None or not password_ok:
+        record_forensic_event(
+            "auth.login_failed",
+            entity_table="users",
+            detail={"email": credentials.email, "reason": "bad_credentials"},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales incorrectas.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not db_user.is_active:
+        record_forensic_event(
+            "auth.login_failed",
+            entity_table="users",
+            entity_id=str(db_user.id),
+            detail={"email": credentials.email, "reason": "inactive"},
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuario desactivado. Contacta al administrador.",

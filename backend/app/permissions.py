@@ -141,6 +141,16 @@ PERMISSION_MATRIX: list[dict[str, Any]] = [
             _row("team", "users", "Administración de usuarios"),
         ],
     },
+    {
+        "id": "audit",
+        "label": "Auditoría",
+        "features_summary": ["Bitácora de cambios", "Trazabilidad before/after"],
+        "rows": [
+            # Solo 'view': la bitácora es inmutable por diseño — nadie crea,
+            # edita ni borra un registro de auditoría desde la API.
+            _row("audit", "logs", "Bitácora de auditoría", actions=["view"]),
+        ],
+    },
 ]
 
 
@@ -161,6 +171,8 @@ ALL_PERMISSIONS: frozenset[str] = MATRIX_PERMISSIONS | _BAAS_LEGACY
 # ── Atajos de permisos (matriz) para require_permission y UI ───────────────────
 
 DASHBOARD_OVERVIEW_VIEW = "dashboard:overview:view"
+
+AUDIT_LOGS_VIEW = "audit:logs:view"
 
 CLIENTS_VIEW = "clients_inventory:clients:view"
 CLIENTS_CREATE = "clients_inventory:clients:create"

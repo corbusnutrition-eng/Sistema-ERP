@@ -11,6 +11,7 @@ from typing import Final
 # Módulos con tablas mapeadas (importar cada uno registra modelos en Base.metadata).
 _MODEL_MODULES: Final[tuple[str, ...]] = (
     "app.models.account",
+    "app.models.audit_log",
     "app.models.client",
     "app.models.client_payment_method",
     "app.models.client_payment_method_account",

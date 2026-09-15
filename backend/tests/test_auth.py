@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 from jose import jwt as jose_jwt
 
 from app.jwt_utils import ALGORITHM, ISSUER, SECRET_KEY
-from app.main import app
 from app.models.user import User, UserRole
 from app.permissions import ROLE_TEMPLATE_FULL_ADMIN
 from app.security.cookies import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME
@@ -40,12 +39,6 @@ def _make_user(db, *, email: str, role: UserRole = UserRole.worker, is_active: b
     db.commit()
     db.refresh(user)
     return user
-
-
-@pytest.fixture
-def client(patched_database) -> TestClient:
-    with TestClient(app) as c:
-        yield c
 
 
 def _unique_ip() -> dict:

@@ -5,6 +5,8 @@ from typing import Annotated, Callable, Optional
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.audit.context import ACTOR_STAFF, set_actor
+from app.audit.forensic import record_forensic_event
 from app.jwt_utils import DecodedToken, TokenError, decode_token
 from app.database import get_db
 from app.models.user import User
@@ -101,6 +103,11 @@ def get_current_user(payload: PayloadDep, db: DbDep) -> dict:
     merged = dict(payload)
     merged["role"] = db_user.role.value
     merged["user_id"] = db_user.id
+
+    # Anclaje del actor para la bitácora: única línea que cubre TODAS las
+    # rutas protegidas con JWT de staff (UserDep/AdminDep/require_permission).
+    set_actor(actor_type=ACTOR_STAFF, actor_id=db_user.id, actor_label=db_user.email, role=db_user.role.value)
+
     return merged
 
 
@@ -160,6 +167,12 @@ def require_permission(permission: str) -> Callable[..., dict]:
             permissions=db_user.permissions,
             permission=permission,
         ):
+            record_forensic_event(
+                "rbac.denied",
+                entity_table="users",
+                entity_id=str(db_user.id),
+                detail={"permission_required": permission},
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permiso requerido: {permission}",
@@ -192,6 +205,12 @@ def require_any_permission(*permissions: str) -> Callable[..., dict]:
             ):
                 return current_user
 
+        record_forensic_event(
+            "rbac.denied",
+            entity_table="users",
+            entity_id=str(db_user.id),
+            detail={"permission_required_any": list(permissions)},
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tienes permisos para realizar esta acción.",

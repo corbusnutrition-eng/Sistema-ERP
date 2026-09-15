@@ -14,6 +14,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.audit.context import ACTOR_WEBHOOK, set_actor
 from app.currency_utils import normalize_currency_code
 from app.models.client import Client
 from app.models.client_debt_payment import ClientDebtPayment, DebtPaymentStatus
@@ -118,6 +119,7 @@ def verify_codigos_retiro_webhook_api_key(raw: Optional[str]) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Cabecera X-API-Key inválida.",
         )
+    set_actor(actor_type=ACTOR_WEBHOOK, actor_label="codigos_retiro")
 
 
 def _amount_matches(expected: Decimal, candidate: object) -> bool:

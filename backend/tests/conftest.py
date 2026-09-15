@@ -77,6 +77,16 @@ def _resolve_test_database_url() -> tuple[str, bool]:
 def test_engine():
     """Motor aislado para pruebas (SQLite en memoria por defecto)."""
     import_all_models()
+
+    # Los listeners de auditoría se registran en app.database al importarse
+    # (ver install_audit_listeners()) — normalmente eso ocurre de forma
+    # transitiva vía app.main, pero un test que solo usa el fixture `db`
+    # (sin `client`/`patched_database`) nunca importa app.database, dejando
+    # los listeners sin instalar. Se fuerza aquí, explícito y determinista,
+    # antes de que cualquier test que dependa de `test_engine` pueda correr.
+    from app.audit.listeners import install_audit_listeners
+
+    install_audit_listeners()
     url, is_pg = _resolve_test_database_url()
     if not is_pg:
         _sqlite_compat_metadata()
@@ -130,6 +140,17 @@ def patched_database(test_engine, test_session_factory, monkeypatch):
     monkeypatch.setattr(database_module, "engine", test_engine)
     monkeypatch.setattr(database_module, "SessionLocal", test_session_factory)
     return test_session_factory
+
+
+@pytest.fixture
+def client(patched_database):
+    """``TestClient`` con la app real, apuntando a la BD de prueba parcheada."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as c:
+        yield c
 
 
 @pytest.fixture

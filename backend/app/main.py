@@ -26,6 +26,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from app.audit.middleware import AuditContextMiddleware
 from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.upload_paths import UPLOAD_ROOT
 
@@ -58,6 +59,11 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+# Starlette hace user_middleware.insert(0, ...): el ÚLTIMO añadido queda MÁS
+# INTERNO en ejecución. AuditContextMiddleware va primero para quedar así —
+# scope["client"] ya viene corregido por ProxyHeadersMiddleware (IP real de
+# Render) y un 429 de slowapi no consume un request_id.
+app.add_middleware(AuditContextMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 # Render actúa como proxy inverso: confiar en X-Forwarded-* para IP/host reales.
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
@@ -128,6 +134,7 @@ from app.api.v1 import accounting as accounting_router
 from app.api.v1 import admin_clients as admin_clients_router
 from app.api.v1 import admin_transactions as admin_transactions_router
 from app.api.v1 import accounts as chart_accounts_router
+from app.api.v1 import audit as audit_router
 from app.api.v1 import checkout as checkout_router
 from app.api.v1 import portal as portal_router
 from app.api.v1 import auth as auth_router
@@ -165,6 +172,7 @@ API_V1_PREFIX = "/api/v1"
 app.include_router(admin_transactions_router.router, prefix=API_V1_PREFIX)
 app.include_router(admin_clients_router.router, prefix=API_V1_PREFIX)
 app.include_router(admin_notifications_router.router, prefix=API_V1_PREFIX)
+app.include_router(audit_router.router, prefix=API_V1_PREFIX)
 app.include_router(accounting_router.router, prefix=API_V1_PREFIX)
 app.include_router(chart_accounts_router.router, prefix=API_V1_PREFIX)
 app.include_router(classes_router.router, prefix=API_V1_PREFIX)

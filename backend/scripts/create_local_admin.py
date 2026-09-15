@@ -27,6 +27,7 @@ load_dotenv(_repo_root / ".env")
 load_dotenv(_backend_dir / ".env")
 
 from app.api.v1.users import _hash_password  # noqa: E402
+from app.audit.context import ACTOR_SCRIPT, audit_actor_scope  # noqa: E402
 from app.database import DATABASE_URL, SessionLocal  # noqa: E402
 from app.models.user import User, UserRole  # noqa: E402
 from app.permissions import ROLE_TEMPLATE_FULL_ADMIN  # noqa: E402
@@ -126,7 +127,8 @@ def main() -> int:
 
     db = SessionLocal()
     try:
-        user, created = upsert_master_admin(db)
+        with audit_actor_scope(actor_type=ACTOR_SCRIPT, actor_label="create_local_admin.py"):
+            user, created = upsert_master_admin(db)
     except Exception as exc:
         db.rollback()
         print(f"ERROR: {exc}", file=sys.stderr)

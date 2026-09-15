@@ -35,3 +35,13 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+# Bitácora de auditoría (before/after): listeners a nivel de `Session`, no de
+# este `engine` concreto — cubren cualquier Session creada con `SessionLocal`
+# en toda la app (routers, scripts, scheduler). Ver app/audit/listeners.py.
+# Import local para evitar cualquier ciclo con módulos que a su vez importen
+# `app.database` en tiempo de import de `app.audit.*`.
+from app.audit.listeners import install_audit_listeners  # noqa: E402
+
+install_audit_listeners()
