@@ -9,14 +9,21 @@ DATABASE_URL: str = os.getenv(
     "postgresql://admin:adminpassword@localhost:5432/iptv_erp",
 )
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=15,
-    max_overflow=5,
-    pool_timeout=30,
-    pool_pre_ping=True,
-    pool_recycle=1800,
-)
+if DATABASE_URL.startswith("sqlite"):
+    # SQLite usa SingletonThreadPool/NullPool según el caso: no acepta
+    # pool_size/max_overflow/pool_timeout (exclusivos de pools tipo QueuePool
+    # como el que usa PostgreSQL). Solo relevante para dev/tests locales —
+    # producción siempre corre contra PostgreSQL (ver DOCUMENTACION_BACKEND.md).
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=15,
+        max_overflow=5,
+        pool_timeout=30,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

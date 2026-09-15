@@ -7,6 +7,15 @@ import tempfile
 import uuid
 from typing import Generator
 
+# Default a SQLite en memoria ANTES de que cualquier test importe `app.main`
+# (necesario para usar TestClient). `app.main` carga `backend/.env` con
+# `override=False` en el import: si `DATABASE_URL` no está ya en el entorno,
+# adoptaría silenciosamente la Postgres de desarrollo local ahí definida y
+# rompería el aislamiento de la suite. `setdefault` respeta una
+# TEST_DATABASE_URL/DATABASE_URL que el propio entorno ya haya exportado
+# (así sigue funcionando correr la suite contra Postgres a propósito).
+os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+
 import pytest
 from sqlalchemy import JSON, String, create_engine, event
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID

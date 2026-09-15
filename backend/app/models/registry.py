@@ -30,6 +30,7 @@ _MODEL_MODULES: Final[tuple[str, ...]] = (
     "app.models.payment_method",
     "app.models.payment_link_template",
     "app.models.product",
+    "app.models.refresh_token",
     "app.models.sale",
     "app.models.sale_transaction_tag",
     "app.models.screen_stock",
