@@ -9,9 +9,8 @@ import {
   Calendar,
   Tv2,
 } from 'lucide-react'
+import api from '../../api/axios'
 import { formatDateEcuador } from '../../utils/datetime'
-
-const API_BASE = 'http://localhost:8000/api/v1'
 
 const STATUS_CONFIG = {
   Activo: {
@@ -78,12 +77,7 @@ export default function Subscriptions() {
     setLoading(true)
     setError(null)
     try {
-      const token = localStorage.getItem('access_token')
-      const res = await fetch(`${API_BASE}/subscriptions/status/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!res.ok) throw new Error(`Error ${res.status}`)
-      const json = await res.json()
+      const { data: json } = await api.get('/api/v1/subscriptions/status/')
       setData(json)
     } catch (e) {
       setError(e.message)

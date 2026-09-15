@@ -1,9 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import api from '../api/axios'
 import { fetchAuthMe } from '../api/auth'
 import { effectivePermissions, hasPermission as checkPermission, hasAnyBaasPermission } from '../lib/permissions'
 
 const AuthContext = createContext(null)
 
+// El JWT vive en una cookie HttpOnly (invisible para JS, inmune a robo por
+// XSS): este `user` cacheado en localStorage es solo una copia no sensible
+// (nombre, rol, permisos) para pintar la UI sin parpadeo antes de que
+// resuelva `refreshSession()`. La fuente de verdad es siempre GET /auth/me.
 function readStoredUser() {
   try {
     return JSON.parse(localStorage.getItem('user') || 'null')
@@ -13,27 +18,28 @@ function readStoredUser() {
 }
 
 function persistUser(user) {
-  if (user) {
-    localStorage.setItem('user', JSON.stringify(user))
-  } else {
-    localStorage.removeItem('user')
+  try {
+    if (user) {
+      localStorage.setItem('user', JSON.stringify(user))
+    } else {
+      localStorage.removeItem('user')
+    }
+  } catch {
+    // localStorage puede fallar (modo privado, cuota); no es crítico, es solo caché.
   }
 }
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => readStoredUser())
-  const [loading, setLoading] = useState(() => Boolean(localStorage.getItem('access_token')))
+  const [loading, setLoading] = useState(true)
 
   const permissions = useMemo(
     () => effectivePermissions(user?.role, user?.permissions),
     [user?.role, user?.permissions],
   )
 
-  const setSession = useCallback((accessToken, nextUser) => {
-    if (accessToken) {
-      localStorage.setItem('access_token', accessToken)
-    }
-      const normalized = nextUser
+  const setSession = useCallback((nextUser) => {
+    const normalized = nextUser
       ? {
           ...nextUser,
           permissions: effectivePermissions(nextUser.role, nextUser.permissions),
@@ -48,19 +54,19 @@ export function AuthProvider({ children }) {
     setLoading(false)
   }, [])
 
-  const clearSession = useCallback(() => {
-    localStorage.removeItem('access_token')
+  const clearSession = useCallback(async () => {
+    try {
+      await api.post('/api/v1/auth/logout')
+    } catch {
+      // Si el logout en el servidor falla (red caída, sesión ya inválida) igual
+      // limpiamos el estado local: no queremos dejar al usuario "atascado".
+    }
     persistUser(null)
     setUser(null)
     setLoading(false)
   }, [])
 
   const refreshSession = useCallback(async () => {
-    const token = localStorage.getItem('access_token')
-    if (!token) {
-      setLoading(false)
-      return null
-    }
     setLoading(true)
     try {
       const me = await fetchAuthMe()
@@ -77,19 +83,19 @@ export function AuthProvider({ children }) {
       setUser(nextUser)
       return nextUser
     } catch {
-      clearSession()
+      persistUser(null)
+      setUser(null)
       return null
     } finally {
       setLoading(false)
     }
-  }, [clearSession])
+  }, [])
 
   useEffect(() => {
-    if (localStorage.getItem('access_token')) {
-      refreshSession()
-    } else {
-      setLoading(false)
-    }
+    // Sin cookie no hay forma de saber desde JS si hay sesión: se pregunta
+    // siempre al backend al montar (antes esto se saltaba si no había
+    // `access_token` en localStorage, porque el token SÍ era legible ahí).
+    refreshSession()
   }, [refreshSession])
 
   const hasPermission = useCallback(
@@ -102,7 +108,7 @@ export function AuthProvider({ children }) {
       user,
       permissions,
       loading,
-      isAuthenticated: Boolean(localStorage.getItem('access_token') && user),
+      isAuthenticated: Boolean(user),
       isAdmin: user?.role === 'admin',
       hasAnyBaasAccess: hasAnyBaasPermission(user?.role, permissions),
       hasPermission,

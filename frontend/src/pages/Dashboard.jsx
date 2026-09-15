@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Users, Banknote, Clock, Bell, ShoppingBag, RefreshCw, AlertCircle, Package } from 'lucide-react'
+import api from '../api/axios'
 import InventorySummaryCards from '../features/inventory/components/InventorySummaryCards'
 import ExchangeRatesWidget from '../components/dashboard/ExchangeRatesWidget'
 import { formatDateEcuador } from '../utils/datetime'
-
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
 function currency(value) {
   return new Intl.NumberFormat('en-US', {
@@ -72,20 +71,12 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
-  const authHeaders = () => {
-    const token = localStorage.getItem('access_token')
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  }
-
   const fetchSummary = useCallback(async () => {
     setLoading(true)
     setError(false)
     try {
-      const res = await fetch(`${API_BASE}/api/v1/dashboard/summary/`, {
-        headers: authHeaders(),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setData(await res.json())
+      const { data: summary } = await api.get('/api/v1/dashboard/summary/')
+      setData(summary)
     } catch {
       setError(true)
       setData(null)

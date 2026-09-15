@@ -1,7 +1,6 @@
 /** Integración portal ↔ widget externo «Códigos de Retiro». */
 
 import axios from 'axios'
-import erpApi from '../../api/axios'
 
 const DEFAULT_CODIGOS_RETIRO_BASE = 'https://codigos-retiro.onrender.com'
 const CODIGOS_RETIRO_WIDGET_PATH = '/widget_retiro'
@@ -53,17 +52,23 @@ export function resolveErpApiBaseUrl() {
   return (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 }
 
-/** Instancia Axios con la misma base URL que el resto del ERP. */
+/**
+ * Instancia Axios con la misma base URL que el resto del ERP.
+ *
+ * Estas llamadas se disparan desde el portal público (sin sesión de staff):
+ * NUNCA deben usar el cliente autenticado compartido (`erpApi`, que envía la
+ * cookie de sesión con `withCredentials: true`) como fallback implícito —
+ * si no llega una instancia explícita, se crea una nueva sin credenciales.
+ */
 function resolveErpApiClient(passedApi) {
   if (passedApi?.post) {
     const base = String(passedApi.defaults?.baseURL || '').trim().replace(/\/$/, '')
     if (base) return passedApi
   }
-  const baseURL = resolveErpApiBaseUrl()
-  if (String(erpApi.defaults?.baseURL || '').trim()) return erpApi
   return axios.create({
-    baseURL,
+    baseURL: resolveErpApiBaseUrl(),
     headers: { 'Content-Type': 'application/json' },
+    withCredentials: false,
   })
 }
 

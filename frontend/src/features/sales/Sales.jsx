@@ -15,6 +15,7 @@ import {
 import { useCopyLinkFeedback } from '../../hooks/useCopyLinkFeedback'
 import api from '../../api/axios'
 import Swal from 'sweetalert2'
+import { useAuth } from '../../context/AuthContext'
 import { useInventoryData } from '../../context/InventoryDataContext'
 import { useModal } from '../../context/ModalContext'
 import NuevaVentaModal from './components/NuevaVentaModal'
@@ -71,14 +72,6 @@ import OcrSecurityBadges, { pickOcrFlagsFromSale, pickOcrSecurityFlags } from '.
 const ITEMS_PER_PAGE = 10
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
-
-function getStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem('user') || 'null')
-  } catch {
-    return null
-  }
-}
 
 /** Detalle legible de errores FastAPI (string, lista de validación, etc.) + trazas en consola. */
 function formatApiError(err, fallback) {
@@ -419,7 +412,8 @@ export default function Sales() {
   const [fetchError, setFetchError] = useState(null)
   const salesFetchGenRef = useRef(0)
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
-  const isAdmin = getStoredUser()?.role === 'admin'
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const { openNewSale, openReceivePayment } = useModal()
   const [toast, setToast] = useState(null)
   const [filter, setFilter] = useState('approved')

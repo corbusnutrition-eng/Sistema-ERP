@@ -43,7 +43,7 @@ export default function Login() {
 
     try {
       const data = await loginWithEmailPassword(email, password)
-      setSession(data.access_token, data.user)
+      setSession(data.user)
       const destination = resolvePostLoginPath(data.user, {
         hasPermission: (perm) => checkPermission(data.user.role, data.user.permissions, perm),
         hasAnyBaasPermission,

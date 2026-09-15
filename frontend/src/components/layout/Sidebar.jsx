@@ -336,9 +336,9 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }) {
 
   const visibleBottomItems = BOTTOM_ITEMS.filter((item) => isNavItemVisible(item, navCtx))
 
-  function handleLogout() {
+  async function handleLogout() {
     onMobileClose?.()
-    clearSession()
+    await clearSession()
     navigate('/login', { replace: true })
   }
 

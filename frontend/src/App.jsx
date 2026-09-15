@@ -50,13 +50,16 @@ function AuthLoadingScreen() {
 }
 
 function ProtectedRoute({ children }) {
+  // La sesión vive en cookies HttpOnly (no legibles desde JS): la única forma
+  // de saber si hay sesión es preguntarle al backend (GET /auth/me), que
+  // AuthProvider ya dispara al montar. Mientras esa respuesta no llega,
+  // `loading` se mantiene en true — no hay nada que inspeccionar en el cliente.
   const { loading, user } = useAuth()
-  const hasToken = Boolean(localStorage.getItem('access_token'))
 
-  if (hasToken && loading) {
+  if (loading) {
     return <AuthLoadingScreen />
   }
-  if (!hasToken || !user) {
+  if (!user) {
     return <Navigate to="/login" replace />
   }
   return children
