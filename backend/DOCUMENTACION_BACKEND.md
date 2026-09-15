@@ -19,10 +19,12 @@ backend/
 ├── app/
 │   ├── main.py                   # App FastAPI, CORS, registro de routers, /uploads estáticos
 │   ├── config.py                 # Settings (Telegram)
-│   ├── database.py               # Engine PostgreSQL + SessionLocal
-│   ├── jwt_utils.py              # JWT staff (login ERP)
+│   ├── database.py               # Engine PostgreSQL + SessionLocal + install_audit_listeners()
+│   ├── jwt_utils.py              # JWT staff (access + refresh, login ERP)
 │   ├── permissions.py            # Catálogo RBAC
 │   ├── rate_limit.py             # slowapi (rate limiting)
+│   ├── audit/                    # Bitácora before/after: context, serialization, scope,
+│   │                             # listeners (event listeners de Session), middleware, forensic
 │   ├── currency_utils.py
 │   ├── timezone_utils.py         # Zona horaria Ecuador
 │   ├── upload_paths.py
@@ -33,7 +35,8 @@ backend/
 │   │
 │   ├── api/v1/                   # Capa HTTP (routers)
 │   │   ├── dependencies.py       # DbDep, get_current_user, permisos
-│   │   ├── auth.py
+│   │   ├── auth.py               # login/refresh/logout (cookies HttpOnly)
+│   │   ├── audit.py              # Consulta de la bitácora (solo lectura)
 │   │   ├── portal.py             # Portal público del cliente (token UUID)
 │   │   ├── sales.py
 │   │   ├── client_payments.py
@@ -337,8 +340,14 @@ Base URL: `/api/v1`
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| POST | `/auth/login` | Login staff → JWT |
+| POST | `/auth/login` | Login staff → fija cookies `HttpOnly` (access + refresh) |
+| POST | `/auth/refresh` | Rota el par access/refresh a partir de la cookie de refresh |
+| POST | `/auth/logout` | Revoca el refresh y limpia las cookies |
+| POST | `/auth/logout-all` | Revoca todas las sesiones del usuario (todos los dispositivos) |
 | GET | `/auth/me` | Usuario actual + permisos |
+| GET | `/audit` | Bitácora de auditoría, filtrable (permiso `audit:logs:view`) |
+| GET | `/audit/entity/{table}/{id}` | Línea de tiempo de una entidad |
+| GET | `/audit/request/{request_id}` | Todos los cambios de una misma petición |
 | GET/POST | `/users/` | CRUD usuarios ERP |
 
 ### Portal del cliente (sin JWT, token UUID)
@@ -407,16 +416,22 @@ Base URL: `/api/v1`
 
 ### Transacciones ACID
 
-Los servicios críticos (`portal_auto_purchase_service`, `baas_commission_cascade_service`) **no hacen commit interno**. El router orquesta un único `db.commit()` o `rollback()` ante error.
+`baas_commission_cascade_service` **no hace commit interno** (solo `db.add`/`flush`); el router orquesta un único `db.commit()` o `rollback()` ante error. `portal_auto_purchase_service` sí ejecuta su propio `db.commit()` al final — es él quien cierra esa transacción.
 
-### Autenticación dual
+### Autenticación
 
 | Actor | Mecanismo |
 |-------|-----------|
-| Staff ERP | JWT Bearer (`Authorization` header) |
-| Cliente portal | UUID en URL (`Client.payment_token`) |
+| Staff ERP | JWT en cookie `HttpOnly`/`Secure`/`SameSite=Lax` (`erp_access_token`, 15 min) + refresh rotativo (`erp_refresh_token`, 7 días, tabla `refresh_tokens` con detección de reutilización). Header `Authorization: Bearer` aceptado como respaldo transicional. |
+| Cliente portal | UUID en URL (`Client.payment_token`), permanente — sin relación con el JWT de staff |
 | API externa | Header `X-API-Key` |
 | Webhooks | Secret compartido por variable de entorno |
+
+`app/jwt_utils.py`: `JWT_SECRET_KEY` por entorno (obligatoria en producción), claims `jti`/`iat`/`nbf`/`iss`, sin `permissions` en el payload (se resuelven contra la BD en cada request vía `require_permission`). `app/api/v1/dependencies.py::get_current_user` releé `is_active` y el rol en BD en cada request — un usuario desactivado o degradado pierde acceso de inmediato, no hasta que expire el token viejo.
+
+### Auditoría (before/after)
+
+`app/audit/` — bitácora `audit_logs` (JSONB before/after, `changed_fields`, `request_id` para correlacionar todas las filas de una misma operación) capturada vía event listeners de `sqlalchemy.orm.Session` (`before_flush`/`after_flush`/`before_commit`/`do_orm_execute`), no mixins ni llamadas explícitas en servicios. Vive en la MISMA transacción que el negocio: un rollback descarta también la auditoría, cero commits adicionales. Alcance y exclusiones en `app/audit/scope.py`; redacción de secretos (por nombre de columna, incluida recursión en JSON anidado) en `app/audit/serialization.py`. Propagación del actor vía `contextvars` + middleware ASGI puro (ver `app/audit/context.py` para por qué no usa `BaseHTTPMiddleware`). Consulta: `GET /api/v1/audit` (permiso `audit:logs:view`, solo `full_admin`). Purga: `scripts/purge_audit_logs.py`.
 
 ### Optimización portal
 

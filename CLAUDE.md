@@ -48,7 +48,9 @@ npm run preview
 
 `api/v1/*.py` (routers, ~34 módulos) → `schemas/*.py` (Pydantic) → `services/*.py` (~45 módulos, lógica de negocio y transacciones) → `models/*.py` (SQLAlchemy, ~31 entidades). `security/*.py` cruza capas para validaciones de dinero, PIN maestro y anti-fraude OCR del portal.
 
-Los servicios críticos (`portal_auto_purchase_service`, `baas_commission_cascade_service`) **no hacen commit propio**: el router orquesta un único `db.commit()`/`rollback()` por request, así la venta y la cascada de comisiones quedan en una sola transacción ACID.
+`baas_commission_cascade_service` **no hace commit propio** (solo `db.add`/`flush`): el router orquesta un único `db.commit()`/`rollback()` por request, así la venta y la cascada de comisiones quedan en una sola transacción ACID. `portal_auto_purchase_service` sí ejecuta su propio `db.commit()` al final (línea ~461) — es él quien cierra esa transacción, no el router.
+
+La bitácora de auditoría (`app/audit/`, ver `backend/DOCUMENTACION_BACKEND.md` §Auditoría) captura before/after vía event listeners de `Session` en la misma transacción que el negocio: un rollback descarta también las filas de auditoría, nunca hace un commit adicional.
 
 ### Núcleo de dominio (BaaS)
 
@@ -61,7 +63,7 @@ Ver `backend/DOCUMENTACION_BACKEND.md` para el diagrama de tablas completo, el f
 
 ### Frontend — estado y rutas
 
-Sin Redux/Zustand/React Query: estado global vía tres React Context (`AuthContext`, `ModalContext`, `InventoryDataContext`) + `useState` local por componente, fetch manual en `useEffect`. Dos clientes HTTP distintos: `src/api/axios.js` (JWT Bearer, para `/dashboard`, `/ventas`, `/contabilidad`, etc. bajo `MainLayout`) y llamadas axios ad-hoc sin header Authorization para las rutas públicas del portal (`/portal/:token`, `/pay/:paymentId`, `/checkout/:token`), donde el token va en la URL.
+Sin Redux/Zustand/React Query: estado global vía tres React Context (`AuthContext`, `ModalContext`, `InventoryDataContext`) + `useState` local por componente, fetch manual en `useEffect`. Dos clientes HTTP distintos: `src/api/axios.js` (`withCredentials: true` — el JWT viaja en una cookie `HttpOnly`, nunca en `localStorage`; refresca la sesión sola en un 401 `token_expired` vía `POST /auth/refresh`, para `/dashboard`, `/ventas`, `/contabilidad`, etc. bajo `MainLayout`) y llamadas axios ad-hoc con `withCredentials: false` explícito para las rutas públicas del portal (`/portal/:token`, `/pay/:paymentId`, `/checkout/:token`), donde el token va en la URL y nunca debe llevar la cookie de sesión de staff.
 
 `ClientPortalPage.jsx` (~10.700 líneas) concentra casi toda la lógica del portal de autogestión del distribuidor (billetera, comisiones, red, notificaciones) en un único componente monolítico — el resto del código está más modularizado por dominio en `src/features/`.
 
