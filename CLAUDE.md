@@ -65,6 +65,10 @@ Ver `backend/DOCUMENTACION_BACKEND.md` para el diagrama de tablas completo, el f
 
 Sin Redux/Zustand/React Query: estado global vía tres React Context (`AuthContext`, `ModalContext`, `InventoryDataContext`) + `useState` local por componente, fetch manual en `useEffect`. Dos clientes HTTP distintos: `src/api/axios.js` (`withCredentials: true` — el JWT viaja en una cookie `HttpOnly`, nunca en `localStorage`; refresca la sesión sola en un 401 `token_expired` vía `POST /auth/refresh`, para `/dashboard`, `/ventas`, `/contabilidad`, etc. bajo `MainLayout`) y llamadas axios ad-hoc con `withCredentials: false` explícito para las rutas públicas del portal (`/portal/:token`, `/pay/:paymentId`, `/checkout/:token`), donde el token va en la URL y nunca debe llevar la cookie de sesión de staff.
 
+`AuthProvider` envuelve toda la app, incluida `/login` (dispara `GET /auth/me` también ahí para revalidar la cookie al montar). Por eso `redirectToLogin()` en `axios.js` comprueba `window.location.pathname !== '/login'` antes de navegar: sin esa guarda, un visitante sin sesión que aterriza directo en `/login` entra en un bucle de recargas (Chromium recarga igual con `location.href` al mismo valor, lo que remonta `AuthProvider` y repite el 401).
+
 `ClientPortalPage.jsx` (~10.700 líneas) concentra casi toda la lógica del portal de autogestión del distribuidor (billetera, comisiones, red, notificaciones) en un único componente monolítico — el resto del código está más modularizado por dominio en `src/features/`.
+
+La vista de bitácora de auditoría (`/auditoria`, `src/features/settings/AuditLog.jsx` + `src/api/audit.js`) consume `GET /api/v1/audit` del backend; requiere `PERMS.AUDIT_LOGS_VIEW`, que `full_admin` hereda automáticamente pero los demás roles no.
 
 Ver `frontend/DOCUMENTACION_FRONTEND.md` para rutas, guards de permisos y los flujos de UI del portal.

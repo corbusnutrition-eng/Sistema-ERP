@@ -51,7 +51,14 @@ function redirectToLogin() {
   } catch {
     // localStorage puede fallar (modo privado); no es crítico.
   }
-  window.location.href = '/login'
+  // AuthProvider envuelve también /login y dispara GET /auth/me al montar:
+  // un visitante sin cookie de sesión recibe 401 justo ahí. Sin esta guarda,
+  // `location.href = '/login'` fuerza una recarga aunque ya estemos en esa
+  // ruta (Chromium recarga igual con el mismo valor), lo que remonta
+  // AuthProvider y repite el 401 en un bucle infinito de recargas.
+  if (window.location.pathname !== '/login') {
+    window.location.href = '/login'
+  }
 }
 
 api.interceptors.response.use(

@@ -41,6 +41,7 @@ import PaymentMethodsList from './features/lists/PaymentMethodsList'
 import PaymentLinksManager from './features/lists/PaymentLinksManager'
 import CurrenciesList from './features/lists/CurrenciesList'
 import TagsList from './features/lists/TagsList'
+import AuditLog from './features/settings/AuditLog'
 function AuthLoadingScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -161,6 +162,7 @@ function AppRoutes() {
                     <Route path="/equipo/nuevo" element={<PermissionRoute permission={PERMS.TEAM_USERS_VIEW}><UserFormPage /></PermissionRoute>} />
                     <Route path="/equipo/:userId/editar" element={<PermissionRoute permission={PERMS.TEAM_USERS_VIEW}><UserFormPage /></PermissionRoute>} />
                     <Route path="/equipo/distribuidores" element={<BaasRoute><DistributorsBaaSPage /></BaasRoute>} />
+                    <Route path="/auditoria" element={<PermissionRoute permission={PERMS.AUDIT_LOGS_VIEW}><AuditLog /></PermissionRoute>} />
                     <Route
                       path="/equipo/distribuidores/:clientId/arbol"
                       element={
