@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.v1.dependencies import require_permission
+from app.api.v1.dependencies import UserDep, require_permission
 from app.permissions import (
     PRODUCTS_CREATE,
     PRODUCTS_DELETE,
@@ -1347,7 +1347,7 @@ def _apply_product_create_to_orm(product: Product, eff: ProductCreate) -> None:
 
 
 @router.get("/package-types/", response_model=list[str])
-def list_package_type_labels(db: DbDep) -> list[str]:
+def list_package_type_labels(db: DbDep, _: UserDep) -> list[str]:
     """Incluye tipos estándar + personalizados guardados en base de datos."""
     rows = db.scalars(select(CatalogPackageType.label).order_by(CatalogPackageType.label)).all()
     merged = {*BUILTIN_PACKAGE_TYPE_LABELS, *rows}
@@ -1381,7 +1381,7 @@ def create_package_type_label(payload: PackageTypeCreate, db: DbDep, _: Products
 
 
 @router.get("/", response_model=list[ProductResponse])
-def list_products(db: DbDep, skip: int = 0, limit: int = 100) -> list[ProductResponse]:
+def list_products(db: DbDep, _: UserDep, skip: int = 0, limit: int = 100) -> list[ProductResponse]:
     rows = (
         db.query(Product)
         .options(selectinload(Product.package_catalog_lines))
@@ -1441,7 +1441,7 @@ async def upload_product_logo(
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
-def get_product(product_id: int, db: DbDep) -> ProductResponse:
+def get_product(product_id: int, db: DbDep, _: UserDep) -> ProductResponse:
     row = _load_product_with_catalog(db, product_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Producto no encontrado.")

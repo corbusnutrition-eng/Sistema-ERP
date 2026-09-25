@@ -6,9 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.v1.dependencies import UserDep
+from app.api.v1.dependencies import require_permission
 from app.database import get_db
 from app.models.transaction_class import TransactionClass
+from app.permissions import (
+    REPORTS_CLASSES_CREATE,
+    REPORTS_CLASSES_DELETE,
+    REPORTS_CLASSES_EDIT,
+    REPORTS_CLASSES_VIEW,
+)
 from app.schemas.transaction_classes import (
     TransactionClassCreate,
     TransactionClassResponse,
@@ -18,12 +24,16 @@ from app.schemas.transaction_classes import (
 router = APIRouter(prefix="/classes", tags=["transaction-classes"])
 
 DbDep = Annotated[Session, Depends(get_db)]
+ClassesViewDep = Annotated[dict, Depends(require_permission(REPORTS_CLASSES_VIEW))]
+ClassesCreateDep = Annotated[dict, Depends(require_permission(REPORTS_CLASSES_CREATE))]
+ClassesEditDep = Annotated[dict, Depends(require_permission(REPORTS_CLASSES_EDIT))]
+ClassesDeleteDep = Annotated[dict, Depends(require_permission(REPORTS_CLASSES_DELETE))]
 
 
 @router.get("/", response_model=list[TransactionClassResponse])
 def list_transaction_classes(
     db: DbDep,
-    _: UserDep,
+    _: ClassesViewDep,
     include_inactive: bool = False,
 ) -> list[TransactionClass]:
     q = db.query(TransactionClass).order_by(TransactionClass.name)
@@ -33,7 +43,7 @@ def list_transaction_classes(
 
 
 @router.get("/{class_id}", response_model=TransactionClassResponse)
-def get_transaction_class(class_id: int, db: DbDep, _: UserDep) -> TransactionClass:
+def get_transaction_class(class_id: int, db: DbDep, _: ClassesViewDep) -> TransactionClass:
     row = db.get(TransactionClass, class_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clase no encontrada.")
@@ -41,7 +51,7 @@ def get_transaction_class(class_id: int, db: DbDep, _: UserDep) -> TransactionCl
 
 
 @router.post("/", response_model=TransactionClassResponse, status_code=status.HTTP_201_CREATED)
-def create_transaction_class(payload: TransactionClassCreate, db: DbDep, _: UserDep) -> TransactionClass:
+def create_transaction_class(payload: TransactionClassCreate, db: DbDep, _: ClassesCreateDep) -> TransactionClass:
     row = TransactionClass(name=payload.name, is_active=True)
     db.add(row)
     try:
@@ -61,7 +71,7 @@ def update_transaction_class(
     class_id: int,
     payload: TransactionClassUpdate,
     db: DbDep,
-    _: UserDep,
+    _: ClassesEditDep,
 ) -> TransactionClass:
     row = db.get(TransactionClass, class_id)
     if row is None:
@@ -80,7 +90,7 @@ def update_transaction_class(
 
 
 @router.delete("/{class_id}", status_code=status.HTTP_204_NO_CONTENT)
-def deactivate_transaction_class(class_id: int, db: DbDep, _: UserDep) -> None:
+def deactivate_transaction_class(class_id: int, db: DbDep, _: ClassesDeleteDep) -> None:
     row = db.get(TransactionClass, class_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clase no encontrada.")
