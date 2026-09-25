@@ -45,18 +45,27 @@ function refreshSessionOnce() {
   return refreshPromise
 }
 
+// Rutas públicas envueltas igual por AuthProvider (dispara GET /auth/me al
+// montar) pero que NO deben rebotar a /login: tienen su propia UI de acceso
+// (link con token, login del portal) y un visitante sin cookie de staff ahí
+// es el caso normal, no una sesión perdida.
+const PUBLIC_PATH_PREFIXES = ['/login', '/portal', '/pay', '/checkout']
+
+function isPublicPath(pathname) {
+  return PUBLIC_PATH_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+}
+
 function redirectToLogin() {
   try {
     localStorage.removeItem('user')
   } catch {
     // localStorage puede fallar (modo privado); no es crítico.
   }
-  // AuthProvider envuelve también /login y dispara GET /auth/me al montar:
-  // un visitante sin cookie de sesión recibe 401 justo ahí. Sin esta guarda,
-  // `location.href = '/login'` fuerza una recarga aunque ya estemos en esa
-  // ruta (Chromium recarga igual con el mismo valor), lo que remonta
+  // Sin esta guarda, un visitante sin sesión en /login o en una ruta pública
+  // (portal, pago, checkout) sería forzado a `location.href = '/login'`
+  // igual (Chromium recarga aunque el valor no cambie), lo que remonta
   // AuthProvider y repite el 401 en un bucle infinito de recargas.
-  if (window.location.pathname !== '/login') {
+  if (!isPublicPath(window.location.pathname)) {
     window.location.href = '/login'
   }
 }

@@ -95,7 +95,7 @@ Definidas en `src/App.jsx`.
 | `/portal/recharge/:linkHash` | `RechargePortalPage` | Recarga BaaS por enlace |
 | `/portal/:token` | `ClientPortalPage` | **Portal de autogestión del distribuidor** |
 
-Estas rutas usan **axios/fetch sin JWT**. El token del portal va en la URL.
+Estas rutas usan **axios/fetch sin el JWT de staff**. El token del portal va en la URL; `/portal/:token` además exige una sesión de portal propia (`PortalLoginGate.jsx`, correo + contraseña) sobre cookie `erp_portal_{id}` — ver § 4.0.
 
 ### 2.2 Rutas admin (JWT + `MainLayout`)
 
@@ -159,19 +159,38 @@ Protegidas por `ProtectedRoute` → `InventoryDataProvider` → `MainLayout`.
 // withCredentials: true — el JWT viaja en una cookie HttpOnly, nunca en localStorage
 // Response 401 con detail=token_expired: UN solo POST /auth/refresh (encolado
 // para peticiones concurrentes) + reintenta la petición original; si el
-// refresh falla, ahí sí limpia y redirige a /login.
+// refresh falla, ahí sí limpia y redirige a /login. `redirectToLogin()` no
+// redirige si pathname empieza por /login, /portal, /pay o /checkout —
+// AuthProvider envuelve toda la app (incluidas esas rutas públicas) y sin
+// esta guarda un visitante sin cookie de staff en el portal rebotaría a /login.
 ```
 
-**Portal (`ClientPortalPage.jsx` / `CheckoutPage.jsx`):**
+**Portal (`ClientPortalPage.jsx`):**
 
 ```javascript
 function publicApi() {
   return axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL,
-    withCredentials: false, // explícito: nunca debe enviar la cookie de sesión de staff
+    withCredentials: true, // cookie de sesión del portal (erp_portal_{id}, scope /api/v1) — no la de staff
   })
 }
-// Sin cookie ni header Authorization — el token va en la ruta /portal/:token
+// PortalLoginGate.jsx exige login (correo+contraseña) antes de renderizar
+// ClientPortalPageInner; el token en la URL identifica al cliente, la cookie
+// de portal autentica la sesión. Un 401 "portal_session_required" a mitad de
+// uso (cookie expirada o contraseña reseteada por un admin) vuelve al login
+// vía un interceptor de respuesta + PortalSessionContext.
+```
+
+**Checkout (`CheckoutPage.jsx`):**
+
+```javascript
+function publicApi() {
+  return axios.create({
+    baseURL: import.meta.env.VITE_API_BASE_URL,
+    withCredentials: false, // explícito: nunca debe enviar ninguna cookie de sesión
+  })
+}
+// Sin cookie ni header Authorization — el token va en la ruta /checkout/:token (fuera de alcance del login del portal)
 ```
 
 ### 3.3 Patrón de fetching
@@ -194,6 +213,17 @@ function publicApi() {
 
 ## 4. Flujos críticos de UI
 
+### 4.0 Login del portal (`PortalLoginGate.jsx`)
+
+**Archivo:** `src/features/public/PortalLoginGate.jsx`
+**Envuelve a:** `ClientPortalPageInner`, dentro de `PortalPageErrorBoundary`
+
+Puerta de sesión sobre el link `/portal/:token`: `GET .../auth/status` decide entre mostrar el portal (`authenticated`), un formulario de **login** (`has_password`) o de **crear tu contraseña** (primera vez), o una pantalla de **Cuenta Suspendida** (`blocked`) — este último caso ya no llega a `ClientPortalPageInner` porque una cuenta bloqueada no puede autenticarse (el login del backend rechaza `ACCOUNT_BLOCKED` antes de emitir sesión).
+
+Expone dos hooks vía `PortalSessionContext` para que `ClientPortalPageInner` los consuma sin prop-drilling:
+- `usePortalSessionExpired()` — el interceptor de respuesta del `api` del portal lo llama ante un 401 `portal_session_required` (cookie expirada a los 7 días, o un admin reseteó la contraseña) y vuelve al login.
+- `usePortalLogout()` — botón "Salir" del header del portal.
+
 ### 4.1 Portal de autogestión (`ClientPortalPage.jsx`)
 
 **Archivo:** `src/features/public/ClientPortalPage.jsx` (~10.700 líneas)  
@@ -204,13 +234,14 @@ function publicApi() {
 ```
 ClientPortalPage
 └── PortalPageErrorBoundary
-    └── ClientPortalPageInner
-        ├── ~50 funciones helper (pagos, deuda, formateo)
-        ├── ~15 subcomponentes inline (PortalNeoAccordion, cards…)
-        ├── ~80 bloques useState
-        ├── PortalAccordionSortableList (6 secciones reordenables)
-        ├── Secciones fijas (Saldo a favor, Saldo pendiente + ledger)
-        └── Modales (recarga, historiales, contacto, sub-clientes)
+    └── PortalLoginGate               # login / crear contraseña — ver § 4.0
+        └── ClientPortalPageInner
+            ├── ~50 funciones helper (pagos, deuda, formateo)
+            ├── ~15 subcomponentes inline (PortalNeoAccordion, cards…)
+            ├── ~80 bloques useState
+            ├── PortalAccordionSortableList (6 secciones reordenables)
+            ├── Secciones fijas (Saldo a favor, Saldo pendiente + ledger)
+            └── Modales (recarga, historiales, contacto, sub-clientes)
 ```
 
 #### Carga de datos
@@ -389,7 +420,7 @@ Variables requeridas: ver `GUIA_DESPLIEGUE.md` (`VITE_API_BASE_URL`, etc.).
 ## 8. Observaciones arquitectónicas
 
 1. **`ClientPortalPage.jsx` es un monolito** — lógica, UI y helpers en un solo archivo; el resto del portal está más modularizado.
-2. **Doble cliente HTTP** — cookie `HttpOnly` para staff (`withCredentials: true`), token en URL para clientes con `withCredentials: false` explícito (frontera de seguridad intencional: el cliente del portal nunca debe llevar la cookie de sesión de staff).
+2. **Tres clientes HTTP, tres cookies distintas** — staff (`erp_access_token`, scope `/`), portal (`erp_portal_{id}`, scope `/api/v1`, `withCredentials: true` pero cookie propia por cliente) y checkout/pago (`withCredentials: false`, sin cookie — frontera de seguridad intencional entre las tres).
 3. **Sin cache de datos** — simple pero implica refetch frecuente; aceptable para escala actual.
 4. **Modales admin centralizados** en `ModalContext`; modales del portal son estado local.
 5. **Acordeón reordenable** persistido por token en `localStorage` vía `@dnd-kit/sortable`.

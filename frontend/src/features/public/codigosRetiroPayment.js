@@ -56,9 +56,11 @@ export function resolveErpApiBaseUrl() {
  * Instancia Axios con la misma base URL que el resto del ERP.
  *
  * Estas llamadas se disparan desde el portal público (sin sesión de staff):
- * NUNCA deben usar el cliente autenticado compartido (`erpApi`, que envía la
- * cookie de sesión con `withCredentials: true`) como fallback implícito —
- * si no llega una instancia explícita, se crea una nueva sin credenciales.
+ * NUNCA deben usar el cliente autenticado compartido (`erpApi`, cookie
+ * `erp_access_token` con scope `/`) como fallback implícito — si no llega
+ * una instancia explícita, se crea una nueva con `withCredentials: true`
+ * para que sí viaje el cookie de sesión del portal (`erp_portal_{id}`,
+ * scope `/api/v1`), que es un cookie distinto y no colisiona con el de staff.
  */
 function resolveErpApiClient(passedApi) {
   if (passedApi?.post) {
@@ -68,7 +70,7 @@ function resolveErpApiClient(passedApi) {
   return axios.create({
     baseURL: resolveErpApiBaseUrl(),
     headers: { 'Content-Type': 'application/json' },
-    withCredentials: false,
+    withCredentials: true,
   })
 }
 

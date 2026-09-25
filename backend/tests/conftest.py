@@ -21,6 +21,7 @@ from sqlalchemy import JSON, String, create_engine, event
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
+from sqlalchemy.types import TypeDecorator
 
 from app.models.base import Base
 from app.models.registry import import_all_models
@@ -28,6 +29,28 @@ from app.models.registry import import_all_models
 
 def _is_postgresql(url: str) -> bool:
     return url.startswith("postgresql") or url.startswith("postgres+")
+
+
+class _SQLiteUUIDAsString(TypeDecorator):
+    """
+    Sustituto de ``UUID(as_uuid=True)`` para SQLite.
+
+    Un ``String(36)`` a secas guarda bien el UUID, pero comparar la columna
+    contra un ``uuid.UUID`` en un ``.filter(...)`` (lo que hace FastAPI al
+    parsear un path param tipado ``uuid.UUID``) nunca matchea: el bind
+    param viaja como objeto UUID y el driver de sqlite3 no lo compara igual
+    al string ya guardado. Este ``TypeDecorator`` normaliza a ``str`` tanto
+    al guardar como al bindear un filtro, para que ambos casos funcionen
+    igual que en PostgreSQL.
+    """
+
+    impl = String(36)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        return str(value)
 
 
 def _sqlite_compat_metadata() -> None:
@@ -38,7 +61,7 @@ def _sqlite_compat_metadata() -> None:
             if isinstance(col_type, JSONB):
                 col.type = JSON()
             elif isinstance(col_type, UUID):
-                col.type = String(36)
+                col.type = _SQLiteUUIDAsString()
             elif isinstance(col_type, ARRAY):
                 col.type = JSON()
             if col.server_default is not None:

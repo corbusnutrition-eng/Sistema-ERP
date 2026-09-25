@@ -66,7 +66,7 @@ La bitácora de auditoría (`app/audit/`, ver `backend/DOCUMENTACION_BACKEND.md`
 
 ### Núcleo de dominio (BaaS)
 
-- `clients` es un árbol vía `parent_id` (red de subdistribuidores) y tiene `payment_token` (UUID) que autentica todas las rutas `/portal/{token}/...` sin JWT — es la frontera de seguridad entre staff (JWT) y clientes (token en URL).
+- `clients` es un árbol vía `parent_id` (red de subdistribuidores) y tiene `payment_token` (UUID), el link permanente `/portal/{token}`. Ya no basta por sí solo: además hace falta una sesión de portal (correo + contraseña, o "crear tu contraseña" la primera vez — `client.password_hash`, compartido con catalogo-vip) guardada en una cookie HttpOnly **por cliente** (`erp_portal_{id}`, scope `/api/v1`, `app/security/portal_session.py`), gateada a nivel de router en `api/v1/portal.py`. Sigue sin ser JWT de staff — es la frontera de seguridad entre staff (cookie `erp_access_token`, scope `/`) y clientes (token en URL + cookie de portal propia); el frontend del portal (`ClientPortalPage.jsx`) usa `withCredentials: true` solo contra `/api/v1`, nunca la cookie de staff.
 - `baas_commission_cascade_service.py` recorre el árbol hacia arriba desde el comprador (`SELECT FOR UPDATE` en cada nivel), acredita el spread de precio a la billetera virtual de cada upline (nunca genera facturas), y corta a los 256 saltos (`_MAX_CASCADE_HOPS`).
 - Pagos (`ClientPayment`) se aplican a ventas o recargas BaaS vía `PaymentAllocation` con lógica FIFO (`client_payment_service.py`).
 - Multi-moneda: saldos por moneda en `custom_fields` (JSONB) con `SELECT FOR UPDATE`; conversión vía `currency_consolidation.get_last_exchange_rate`.

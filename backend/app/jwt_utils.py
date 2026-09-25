@@ -24,6 +24,7 @@ ISSUER = "erp-iptv-baas"
 # la ventana de un token robado.
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+PORTAL_TOKEN_EXPIRE_DAYS = 7
 
 
 def _load_secret_key() -> str:
@@ -123,6 +124,26 @@ def create_refresh_token(
     to_encode["iss"] = ISSUER
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return token, jti, family_id
+
+
+def create_portal_token(data: dict, *, expires_delta: Optional[datetime.timedelta] = None) -> str:
+    """
+    Emite un token de sesión del portal de autogestión (``/portal/{token}``).
+
+    Distinto de ``create_access_token`` (staff): ``token_type="portal"`` hace
+    que ``dependencies.py`` (que solo acepta ``access``) lo rechace, y evita
+    que un token de portal robado sirva contra rutas de staff o viceversa.
+    """
+    to_encode = data.copy()
+    now = now_utc()
+    expire = now + (expires_delta or datetime.timedelta(days=PORTAL_TOKEN_EXPIRE_DAYS))
+    to_encode.setdefault("jti", uuid.uuid4().hex)
+    to_encode["token_type"] = "portal"
+    to_encode["iat"] = now
+    to_encode["nbf"] = now
+    to_encode["exp"] = expire
+    to_encode["iss"] = ISSUER
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> DecodedToken:

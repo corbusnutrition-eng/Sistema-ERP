@@ -181,8 +181,37 @@ from app.services.telegram_service import (
     schedule_baas_new_request_notification,
     schedule_receipt_received_notification,
 )
+from app.security.portal_session import require_portal_session
 
-router = APIRouter(prefix="/portal", tags=["public-client-portal"])
+
+def _require_portal_session_dep(request: Request, db: Session = Depends(get_db)) -> None:
+    """
+    Gate de sesión a nivel de router: exige la cookie de portal_auth además
+    del token en la URL para toda ruta ``/{portal_token}/...`` de este router.
+
+    Si el token no es un UUID válido o no corresponde a ningún cliente, no
+    hace nada aquí — se deja que el propio handler (vía
+    ``_portal_client_from_token``) devuelva su 404 habitual, para no duplicar
+    ese mensaje en dos sitios.
+    """
+    raw_token = request.path_params.get("portal_token")
+    if not raw_token:
+        return
+    try:
+        token = uuid_pkg.UUID(str(raw_token))
+    except ValueError:
+        return
+    client = db.query(Client).filter(Client.payment_token == token).first()
+    if client is None:
+        return
+    require_portal_session(request, client)
+
+
+router = APIRouter(
+    prefix="/portal",
+    tags=["public-client-portal"],
+    dependencies=[Depends(_require_portal_session_dep)],
+)
 
 
 def _portal_commit_wallet_recharge_after_receipt(db: Session, req: WalletRechargeRequest) -> WalletRechargeRequest:

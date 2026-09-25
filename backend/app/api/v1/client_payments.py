@@ -23,6 +23,7 @@ from app.api.v1.sales import _persist_receipt_upload, _resolve_deposit_account_i
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.models.client import Client
+from app.security.portal_session import require_portal_session
 from app.services.telegram_service import schedule_receipt_received_notification
 from app.models.client_payment import ClientPayment, ClientPaymentStatus, PaymentAllocation
 from app.models.payment_method import PaymentMethod
@@ -178,6 +179,7 @@ def _allocations_to_dicts(rows: list) -> list[dict]:
 
 @router.post("/portal-abono", response_model=PortalAbonoResponse)
 async def portal_abono(
+    request: Request,
     db: DbDep,
     background_tasks: BackgroundTasks,
     portal_token: Annotated[str, Form(...)],
@@ -197,6 +199,7 @@ async def portal_abono(
     client = db.query(Client).filter(Client.payment_token == token).first()
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portal no encontrado.")
+    require_portal_session(request, client)
 
     paid_dec = validate_form_money(paid_amount, field_name="paid_amount")
 

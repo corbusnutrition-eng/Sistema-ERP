@@ -176,7 +176,15 @@ El proyecto usa **SQLAlchemy 2.x** con **PostgreSQL** en producción. No usa Pri
 - Meta en notas: `META_WALLET_RECHARGE_ID=<id>` vincula abono ↔ solicitud BaaS.
 
 **Portal público:**
-- `Client.payment_token` (UUID) autentica todas las rutas `/portal/{token}/…` sin JWT.
+- `Client.payment_token` (UUID) es el link permanente `/portal/{token}/…`. Ya no basta solo: hace falta además una sesión de portal (§ Login del portal) guardada en cookie propia, distinta del JWT de staff.
+
+**Login del portal (correo + contraseña):**
+- `Client.email` (único) + `Client.password_hash` (bcrypt, compartido con el webhook de catalogo-vip — `POST /customers/webhook-register-web`) autentican al cliente sobre su propio link.
+- `api/v1/portal_auth.py` (montado antes que `portal.py`, mismo prefijo `/portal/{portal_token}`): `GET /auth/status`, `POST /auth/login`, `POST /auth/setup-password` (solo si `password_hash IS NULL`), `POST /auth/logout`.
+- `app/security/portal_session.py`: cookie HttpOnly **por cliente** (`erp_portal_{client.id}`, scope `/api/v1`, 7 días) con un JWT propio (`token_type="portal"`, distinto del `"access"` de staff — `jwt_utils.create_portal_token`). El claim `pwv` (huella del hash de contraseña) invalida toda sesión abierta en cuanto el hash cambia, sin tabla de sesiones.
+- `api/v1/portal.py` exige esa sesión a nivel de router (`dependencies=[Depends(_require_portal_session_dep)]`, `portal.py:185`) para todas las rutas `/{portal_token}/...`; `POST /payments/portal-abono` (`client_payments.py`) la exige aparte, por estar fuera de ese router.
+- Reset por admin: `POST /admin/clients/{client_id}/reset-portal-password` (PIN maestro) pone `password_hash = NULL`, invalidando la sesión y devolviendo al cliente al flujo "crear tu contraseña".
+- Pendiente: `GET /clients/public/{token}` (usado por `/pay/:paymentId`) y `POST /portal/analyze-receipt` siguen sin este gate.
 
 ---
 
@@ -350,11 +358,15 @@ Base URL: `/api/v1`
 | GET | `/audit/request/{request_id}` | Todos los cambios de una misma petición |
 | GET/POST | `/users/` | CRUD usuarios ERP |
 
-### Portal del cliente (sin JWT, token UUID)
+### Portal del cliente (token UUID en URL + sesión de portal — sin JWT de staff)
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| GET | `/portal/{token}` | Home del portal (dashboard, ventas, métricas) |
+| GET | `/portal/{token}/auth/status` | ¿Hay sesión abierta? ¿Ya tiene contraseña? |
+| POST | `/portal/{token}/auth/login` | Login con correo + contraseña |
+| POST | `/portal/{token}/auth/setup-password` | Crear contraseña (solo la primera vez) |
+| POST | `/portal/{token}/auth/logout` | Cerrar sesión |
+| GET | `/portal/{token}` | Home del portal (dashboard, ventas, métricas) — requiere sesión |
 | GET | `/portal/{token}/cxc-balance` | Saldo pendiente CxC |
 | GET | `/portal/{token}/recharges` | Solicitudes de recarga |
 | POST | `/portal/{token}/recharges/{id}/pay` | Pagar recarga con comprobante |
@@ -423,7 +435,7 @@ Base URL: `/api/v1`
 | Actor | Mecanismo |
 |-------|-----------|
 | Staff ERP | JWT en cookie `HttpOnly`/`Secure`/`SameSite=Lax` (`erp_access_token`, 15 min) + refresh rotativo (`erp_refresh_token`, 7 días, tabla `refresh_tokens` con detección de reutilización). Header `Authorization: Bearer` aceptado como respaldo transicional. |
-| Cliente portal | UUID en URL (`Client.payment_token`), permanente — sin relación con el JWT de staff |
+| Cliente portal | UUID en URL (`Client.payment_token`, permanente) **+** sesión de portal: cookie `HttpOnly` por cliente (`erp_portal_{id}`, scope `/api/v1`, 7 días) con JWT propio `token_type="portal"` — sin relación con el JWT de staff (`app/security/portal_session.py`) |
 | API externa | Header `X-API-Key` |
 | Webhooks | Secret compartido por variable de entorno |
 

@@ -2,8 +2,9 @@ import axios from 'axios'
 import { useCallback, useEffect, useMemo, useRef, useState, Component, Fragment } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import Select from 'react-select'
-import { ArrowLeftRight, Check, ChevronDown, ChevronsUp, Copy, GripVertical, History, Loader2, Link2, Pencil, Phone, Plus, RefreshCw, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
+import { ArrowLeftRight, Check, ChevronDown, ChevronsUp, Copy, GripVertical, History, Loader2, Link2, LogOut, Pencil, Phone, Plus, RefreshCw, Search, ShoppingCart, Tag, Trash2, X } from 'lucide-react'
 import PortalAccordionSortableList from './PortalAccordionSortableList'
+import PortalLoginGate, { usePortalLogout, usePortalSessionExpired } from './PortalLoginGate'
 import {
   filterVisiblePortalAccordionOrder,
   loadPortalAccordionOrder,
@@ -56,9 +57,12 @@ import { normalizeCurrencyWithAliases, portalCurrencyIsoLabel } from '../../lib/
 function publicApi() {
   return axios.create({
     baseURL: (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/?$/, ''),
-    // Explícito: este cliente NUNCA debe enviar la cookie de sesión de staff.
-    // Autenticación por payment_token en la URL, no por cookie/JWT.
-    withCredentials: false,
+    // El backend del portal emite su propio cookie de sesión por cliente
+    // (`erp_portal_{id}`, scope `/api/v1`, ver app/security/portal_session.py)
+    // — distinto del cookie de staff (`erp_access_token`, scope `/`) y con
+    // token_type propio, así que este cliente nunca puede leer ni emitir la
+    // sesión de staff aunque withCredentials esté activo.
+    withCredentials: true,
   })
 }
 
@@ -2032,7 +2036,9 @@ function isAccountBlockedError(err) {
 export default function ClientPortalPage() {
   return (
     <PortalPageErrorBoundary>
-      <ClientPortalPageInner />
+      <PortalLoginGate>
+        <ClientPortalPageInner />
+      </PortalLoginGate>
     </PortalPageErrorBoundary>
   )
 }
@@ -2072,7 +2078,25 @@ function ClientPortalPageInner() {
   const { token } = useParams()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const api = useMemo(() => publicApi(), [])
+  const notifySessionExpired = usePortalSessionExpired()
+  const portalLogout = usePortalLogout()
+  const api = useMemo(() => {
+    const instance = publicApi()
+    // Cookie de portal expirada/reseteada a mitad de uso (7 días, o el admin
+    // reinició la contraseña): vuelve a mostrar el login en vez de dejar la
+    // pantalla en un estado a medio cargar.
+    instance.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        if (error?.response?.status === 401 && error?.response?.data?.detail === 'portal_session_required') {
+          notifySessionExpired()
+        }
+        return Promise.reject(error)
+      },
+    )
+    return instance
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [data, setData] = useState(null)
   const [cxcBalance, setCxcBalance] = useState(null)
@@ -6753,6 +6777,15 @@ function ClientPortalPageInner() {
           >
             <ChevronsUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
             Minimizar todo
+          </button>
+          <button
+            type="button"
+            onClick={portalLogout}
+            className="flex cursor-pointer items-center gap-1.5 rounded-full border border-slate-600/50 bg-slate-900/45 px-3 py-1.5 text-xs text-slate-300 transition-all hover:bg-slate-800/70"
+            aria-label="Cerrar sesión del portal"
+          >
+            <LogOut className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            Salir
           </button>
         </div>
 

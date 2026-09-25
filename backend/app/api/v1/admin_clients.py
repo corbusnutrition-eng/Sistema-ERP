@@ -40,6 +40,7 @@ from app.services.client_product_price_service import (
     list_client_assigned_package_prices,
     upsert_admin_client_package_prices_local,
 )
+from app.audit.forensic import record_forensic_event
 from app.security.master_pin import require_master_pin
 from app.security.ownership import assert_client_in_caller_scope
 
@@ -69,6 +70,12 @@ class AdminToggleStatusResponse(BaseModel):
     message: str
     client_id: int
     status: str
+
+
+class AdminResetPortalPasswordResponse(BaseModel):
+    ok: bool = True
+    message: str
+    client_id: int
 
 
 class AdminAdjustBalanceResponse(BaseModel):
@@ -105,6 +112,37 @@ def admin_toggle_client_status(
         message=f"Cliente {label} {verb} correctamente.",
         client_id=int(client.id),
         status=new_status,
+    )
+
+
+@router.post("/{client_id}/reset-portal-password", response_model=AdminResetPortalPasswordResponse)
+@limiter.limit(MASTER_PIN_LIMIT)
+def admin_reset_client_portal_password(
+    request: Request,
+    client_id: int,
+    payload: AdminPinBody,
+    db: DbDep,
+    current: BaasTreeEditDep,
+) -> AdminResetPortalPasswordResponse:
+    """
+    Borra la contraseña del portal del cliente: invalida de inmediato toda
+    sesión abierta (la huella ``pwv`` del JWT deja de coincidir) y lo regresa
+    al flujo "crear tu contraseña" la próxima vez que entre por su link.
+    """
+    require_master_pin(payload.pin)
+    client = assert_client_in_caller_scope(db, current, int(client_id))
+    client.password_hash = None
+    db.commit()
+    db.refresh(client)
+    record_forensic_event(
+        "portal.password_reset_by_admin",
+        entity_table="clients",
+        entity_id=str(client.id),
+    )
+    label = client.display_name()
+    return AdminResetPortalPasswordResponse(
+        message=f"Contraseña del portal de {label} reiniciada. Deberá crear una nueva.",
+        client_id=int(client.id),
     )
 
 

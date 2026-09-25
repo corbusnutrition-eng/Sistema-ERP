@@ -93,10 +93,10 @@ function BaasTreeNodeCard({ nodeDatum, toggleNode, onOpenAction, canEditTree }) 
 
   return (
     <g>
-      <foreignObject width={300} height={canEditTree ? 168 : 132} x={-150} y={canEditTree ? -84 : -66} requiredExtensions="http://www.w3.org/1999/xhtml">
+      <foreignObject width={300} height={canEditTree ? 188 : 132} x={-150} y={canEditTree ? -94 : -66} requiredExtensions="http://www.w3.org/1999/xhtml">
         <div
           xmlns="http://www.w3.org/1999/xhtml"
-          className={`${canEditTree ? 'h-[160px]' : 'h-[124px]'} rounded-xl border px-3 py-2.5 text-left text-slate-100 shadow-lg shadow-black/40 ${
+          className={`${canEditTree ? 'h-[180px]' : 'h-[124px]'} rounded-xl border px-3 py-2.5 text-left text-slate-100 shadow-lg shadow-black/40 ${
             blocked
               ? 'border-red-500/60 bg-slate-950/95'
               : 'border-slate-600 bg-slate-900/95'
@@ -159,6 +159,13 @@ function BaasTreeNodeCard({ nodeDatum, toggleNode, onOpenAction, canEditTree }) 
               >
                 💰 Ajustar Saldo
               </button>
+              <button
+                type="button"
+                onClick={(e) => handleAction('reset-password', e)}
+                className="rounded-md border border-sky-500/40 bg-sky-950/40 px-2 py-0.5 text-[10px] font-semibold text-sky-200 hover:bg-sky-900/50"
+              >
+                🔑 Resetear clave portal
+              </button>
             </div>
           ) : null}
         </div>
@@ -175,11 +182,12 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
   const [error, setError] = useState('')
 
   const isBlock = modal?.action === 'block'
+  const isResetPassword = modal?.action === 'reset-password'
   const node = modal?.node
   const blocked = isBlockedStatus(node?.status)
   const pinOk = pin.trim().length >= 4
   const amountNum = Number(amount)
-  const amountOk = isBlock || (Number.isFinite(amountNum) && amountNum > 0)
+  const amountOk = isBlock || isResetPassword || (Number.isFinite(amountNum) && amountNum > 0)
   const canSubmit = pinOk && amountOk && !submitting && node?.clientId
 
   useEffect(() => {
@@ -204,6 +212,12 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
           { pin },
         )
         onSuccess(data?.message || `Estado actualizado: ${data?.status || ''}`)
+      } else if (isResetPassword) {
+        const { data } = await api.post(
+          `/api/v1/admin/clients/${node.clientId}/reset-portal-password`,
+          { pin },
+        )
+        onSuccess(data?.message || 'Contraseña del portal reiniciada.')
       } else {
         const { data } = await api.post(
           `/api/v1/admin/clients/${node.clientId}/adjust-balance`,
@@ -233,7 +247,11 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="text-lg font-semibold text-gray-900">
-            {isBlock ? (blocked ? 'Desbloquear cliente' : 'Bloquear cliente') : 'Ajustar saldo BaaS'}
+            {isBlock
+              ? (blocked ? 'Desbloquear cliente' : 'Bloquear cliente')
+              : isResetPassword
+                ? 'Resetear contraseña del portal'
+                : 'Ajustar saldo BaaS'}
           </h2>
           <button
             type="button"
@@ -251,6 +269,11 @@ function TreeNodeActionModal({ modal, onClose, onSuccess }) {
               {blocked
                 ? <>¿Confirmar <strong>desbloqueo</strong> de <strong>{node.username}</strong>?</>
                 : <>¿Confirmar <strong>bloqueo</strong> de <strong>{node.username}</strong>?</>}
+            </p>
+          ) : isResetPassword ? (
+            <p className="text-sm text-gray-700">
+              ¿Confirmar reinicio de la <strong>contraseña del portal</strong> de <strong>{node.username}</strong>?
+              Su sesión actual se cerrará y deberá crear una contraseña nueva la próxima vez que entre por su link.
             </p>
           ) : (
             <>

@@ -323,12 +323,30 @@ def test_actor_contextvar_sobrevive_al_threadpool(db):
 def test_portal_token_atribuye_actor_portal_client(client, db):
     import uuid as uuid_module
 
+    from app.security.portal_session import hash_portal_password
+
     with audit_actor_scope(actor_type=ACTOR_STAFF, actor_id=1):
-        c = Client(email="portalactor@example.com", username="portalactor", wallet_balance=50.0, currency="USD", payment_token=uuid_module.uuid4())
+        c = Client(
+            email="portalactor@example.com",
+            username="portalactor",
+            wallet_balance=50.0,
+            currency="USD",
+            payment_token=uuid_module.uuid4(),
+            password_hash=hash_portal_password("Sup3rSecret!"),
+        )
         db.add(c)
         db.commit()
         token = str(c.payment_token)
         cid = c.id
+
+    # El gate de sesión del portal exige una cookie de portal_auth además del
+    # token en la URL: se abre sesión antes de ejercitar la ruta.
+    login = client.post(
+        f"/api/v1/portal/{token}/auth/login",
+        json={"email": "portalactor@example.com", "password": "Sup3rSecret!"},
+        headers={"X-Forwarded-For": "10.5.5.5"},
+    )
+    assert login.status_code == 200
 
     resp = client.get(f"/api/v1/portal/{token}/cxc-balance", headers={"X-Forwarded-For": "10.5.5.5"})
     # No importa el status exacto del endpoint; lo que se verifica es que
