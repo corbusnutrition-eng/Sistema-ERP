@@ -11,7 +11,7 @@ ERP de facturación para un negocio de IPTV/BaaS (Billing-as-a-Service): ventas,
 
 El directorio `app/` en la raíz **no** es el backend real: es un stub legacy que delega a `backend/app/main.py` para que `uvicorn app.main:app` funcione si se arranca desde la raíz por error. Trabaja siempre desde `backend/`.
 
-Para variables de entorno y despliegue en Render, ver `GUIA_DESPLIEGUE.md`.
+Para variables de entorno y despliegue (Render, y Docker/VPS + CI por SSH — ver §11), consultar `GUIA_DESPLIEGUE.md`.
 
 ## Commands
 
@@ -41,6 +41,18 @@ npm run build
 npm run lint
 npm run preview
 ```
+
+### Docker (build/prueba local de las imágenes de despliegue)
+
+```bash
+docker build -t erp-backend ./backend      # entrypoint corre `alembic upgrade head` antes de uvicorn
+docker build -t erp-frontend ./frontend \
+  --build-arg VITE_API_BASE_URL=http://localhost:8000   # VITE_* se incrustan en build, no en runtime
+
+docker compose -f docker-compose.prod.yml config         # valida el stack de VPS (sin levantarlo)
+```
+
+`docker-compose.yml` (raíz) es solo el Postgres de desarrollo local. `docker-compose.prod.yml` es el stack real de VPS (backend + frontend, sin Postgres — la DB vive fuera) y requiere `backend/.env` con secretos reales; ver `GUIA_DESPLIEGUE.md` §11.
 
 ## Architecture
 
@@ -72,3 +84,12 @@ Sin Redux/Zustand/React Query: estado global vía tres React Context (`AuthConte
 La vista de bitácora de auditoría (`/auditoria`, `src/features/settings/AuditLog.jsx` + `src/api/audit.js`) consume `GET /api/v1/audit` del backend; requiere `PERMS.AUDIT_LOGS_VIEW`, que `full_admin` hereda automáticamente pero los demás roles no.
 
 Ver `frontend/DOCUMENTACION_FRONTEND.md` para rutas, guards de permisos y los flujos de UI del portal.
+
+### Despliegue — Docker + CI/CD
+
+Además de Render, el proyecto se puede desplegar en un VPS con Docker (backend + frontend en contenedores, PostgreSQL siempre externo — nunca en `docker-compose.prod.yml`). Detalle completo en `GUIA_DESPLIEGUE.md` §11.
+
+- `backend/entrypoint.sh` corre `alembic upgrade head` en **cada arranque del contenedor**, antes de levantar uvicorn — las migraciones futuras se aplican solas, sin paso manual de despliegue.
+- `frontend/Dockerfile` construye con `npm ci --legacy-peer-deps` (necesario: `react-quill@2.0.0-beta.4` declara peer `react@^16||^17` contra React 19 del proyecto) y sirve el build vía `nginx` (`frontend/nginx.conf`), que hace reverse proxy de `/api/` y `/uploads/` al contenedor backend — mismo origen, evita el problema de cookies cross-subdominio documentado en `GUIA_DESPLIEGUE.md` §1.
+- `backend/requirements.txt` fija `sqlalchemy>=2.0,<2.1`: sin ese pin, una instalación limpia resuelve SQLAlchemy 2.1, que cambió el driver por defecto de una URL `postgresql://` (sin sufijo) de psycopg2 a psycopg v3 — no instalado aquí — y la app no arranca.
+- `.github/workflows/deploy-qa.yml`: en cada push a `dev`, construye y publica ambas imágenes en GHCR (`ghcr.io/corbusnutrition-eng/sistema-erp-{backend,frontend}:qa-<sha>`) y despliega por SSH (`git reset --hard origin/dev` + `docker compose pull && up -d` en `VPS_DEPLOY_PATH`). El despliegue equivalente a `main` (producción) está pendiente — se planea reusar los mismos Dockerfiles.

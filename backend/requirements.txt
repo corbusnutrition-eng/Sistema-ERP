@@ -15,6 +15,13 @@ slowapi==0.1.9
 pytest>=8.0.0
 
 # PostgreSQL (Alembic + SQLAlchemy)
+# SQLAlchemy sin pin resuelve la última versión disponible en cada install
+# limpio (pip install -r requirements.txt sin lockfile) — 2.1 cambió el DBAPI
+# por defecto de una URL "postgresql://" sin sufijo de driver de psycopg2 a
+# psycopg (v3), que este proyecto no instala: la app no arranca
+# (ModuleNotFoundError: No module named 'psycopg'). Fijado a la serie 2.0
+# para no depender de que DATABASE_URL especifique el driver explícitamente.
+sqlalchemy>=2.0,<2.1
 psycopg2-binary>=2.9.9
 
 # Windows no trae la base de datos de zonas horarias IANA que usa zoneinfo

@@ -429,4 +429,70 @@ render logs -s <nombre-servicio-backend>
 
 ---
 
+## 11. Despliegue con Docker (VPS + GHCR)
+
+Ruta alternativa a Render: backend y frontend corren como contenedores en un
+mismo VPS; la base de datos PostgreSQL vive en otro host/proveedor (Render DB,
+RDS, un VPS aparte, etc.) — nunca en este `docker-compose`.
+
+```
+┌────────────────────────── VPS ───────────────────────────┐
+│  ┌──────────────┐        ┌──────────────────────────┐    │
+│  │  frontend     │  /api  │  backend                 │    │
+│  │  nginx:80 ───►│───────►│  uvicorn:8000             │    │
+│  │  (SPA build)  │/uploads│  entrypoint: alembic      │    │
+│  └──────┬────────┘        │  upgrade head → uvicorn   │    │
+│         │                 └──────────────┬────────────┘    │
+└─────────┼────────────────────────────────┼─────────────────┘
+          ▼                                ▼
+   navegador (80/443)              DATABASE_URL externa
+                                    (PostgreSQL fuera del VPS)
+```
+
+### Archivos
+
+| Archivo | Rol |
+|---------|-----|
+| `backend/Dockerfile` | Imagen del backend (build multi-stage, venv, `entrypoint.sh` corre `alembic upgrade head` antes de `uvicorn` en cada arranque — cubre migraciones futuras sin pasos manuales) |
+| `frontend/Dockerfile` | Build de Vite + imagen `nginx` que sirve el SPA y hace reverse proxy de `/api/` y `/uploads/` al backend (mismo origen — evita el problema de cookies cross-subdominio de la §1) |
+| `frontend/nginx.conf` | Config del proxy (`location /api/`, `/uploads/`, fallback SPA en `/`) |
+| `docker-compose.prod.yml` | Stack del VPS: `backend` + `frontend`, sin Postgres. Imágenes vía `BACKEND_IMAGE`/`FRONTEND_IMAGE` |
+| `.env.prod.example` | Plantilla del `.env` que lee `docker-compose.prod.yml` en el VPS (tags de imagen, puerto) |
+| `.github/workflows/deploy-qa.yml` | CI/CD: build + push a GHCR + deploy por SSH en cada push a `dev` |
+
+### Variables de entorno
+
+- `backend/.env` en el VPS: el mismo que en despliegue local/Render (ver §2), con `DATABASE_URL` apuntando a la base externa. Se crea **a mano una vez** en el VPS — nunca viaja por CI ni se commitea.
+- `.env` en la raíz del VPS (junto a `docker-compose.prod.yml`): copia de `.env.prod.example`, define `BACKEND_IMAGE`/`FRONTEND_IMAGE`/`FRONTEND_HTTP_PORT`. El workflow de deploy sobreescribe `BACKEND_IMAGE`/`FRONTEND_IMAGE` con el tag exacto del commit desplegado.
+- Variables `VITE_*` del frontend: se incrustan en el bundle **en tiempo de build** (no de arranque del contenedor) vía `--build-arg` en `frontend/Dockerfile`. En CI vienen de Variables del repo (`vars.QA_VITE_API_BASE_URL`, etc. — no son secrets, terminan visibles en el JS del navegador).
+
+### Preparación única del VPS (antes del primer deploy)
+
+1. Instalar Docker + el plugin `docker compose`.
+2. Clonar el repo en un directorio dedicado (ej. `/opt/sistema-erp-qa`) y dejarlo en la rama `dev`. Ese path es `VPS_DEPLOY_PATH`.
+3. Crear `backend/.env` con los secretos reales (`DATABASE_URL` externa, `JWT_SECRET_KEY`, `CORS_ORIGINS`, etc. — ver §2).
+4. Copiar `.env.prod.example` → `.env` en la raíz del clon y ajustar `FRONTEND_HTTP_PORT` si ya hay un proxy propio (Caddy/Traefik) delante en el 80/443.
+5. Generar un par de llaves SSH dedicado al deploy y autorizar la pública en `~/.ssh/authorized_keys` de ese usuario.
+
+### Secrets/Variables del workflow (Settings → Secrets and variables → Actions)
+
+| Nombre | Tipo | Uso |
+|--------|------|-----|
+| `VPS_SSH_HOST`, `VPS_SSH_USER`, `VPS_SSH_KEY` | Secret | Conexión SSH al VPS |
+| `VPS_SSH_PORT` | Secret (opcional, default 22) | Puerto SSH si no es el estándar |
+| `VPS_DEPLOY_PATH` | Secret | Ruta del clon en el VPS (ver preparación arriba) |
+| `QA_VITE_API_BASE_URL`, `QA_VITE_CODIGOS_RETIRO_BASE_URL`, `QA_VITE_CODIGOS_RETIRO_ES_PRUEBA` | Variable | Build-args del frontend de QA |
+
+`GITHUB_TOKEN` (automático) autentica el push a GHCR desde el runner y, reenviado por SSH, el `docker login` en el VPS para el `pull` — no hace falta un PAT aparte.
+
+### Flujo en cada push a `dev`
+
+1. Build de `backend/Dockerfile` y `frontend/Dockerfile` en paralelo → push a `ghcr.io/corbusnutrition-eng/sistema-erp-{backend,frontend}` con tags `qa` y `qa-<sha>`.
+2. SSH al VPS: `git fetch/reset --hard origin/dev` en `VPS_DEPLOY_PATH` (así `docker-compose.prod.yml` siempre coincide con el commit desplegado), `docker login` a GHCR, `docker compose -f docker-compose.prod.yml pull && up -d` con el tag `qa-<sha>` exacto, `docker image prune -f`.
+3. El contenedor backend corre `alembic upgrade head` en su arranque — cualquier migración nueva del commit se aplica sola, sin paso manual.
+
+El despliegue a `main` (producción) reutilizará estos mismos Dockerfiles/imágenes en un workflow aparte (pendiente).
+
+---
+
 *Última actualización: generada a partir del análisis del repositorio.*
