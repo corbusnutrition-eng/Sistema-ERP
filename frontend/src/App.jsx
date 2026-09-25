@@ -41,6 +41,7 @@ import PaymentMethodsList from './features/lists/PaymentMethodsList'
 import PaymentLinksManager from './features/lists/PaymentLinksManager'
 import CurrenciesList from './features/lists/CurrenciesList'
 import TagsList from './features/lists/TagsList'
+import AuditLog from './features/settings/AuditLog'
 function AuthLoadingScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -50,13 +51,16 @@ function AuthLoadingScreen() {
 }
 
 function ProtectedRoute({ children }) {
+  // La sesión vive en cookies HttpOnly (no legibles desde JS): la única forma
+  // de saber si hay sesión es preguntarle al backend (GET /auth/me), que
+  // AuthProvider ya dispara al montar. Mientras esa respuesta no llega,
+  // `loading` se mantiene en true — no hay nada que inspeccionar en el cliente.
   const { loading, user } = useAuth()
-  const hasToken = Boolean(localStorage.getItem('access_token'))
 
-  if (hasToken && loading) {
+  if (loading) {
     return <AuthLoadingScreen />
   }
-  if (!hasToken || !user) {
+  if (!user) {
     return <Navigate to="/login" replace />
   }
   return children
@@ -158,6 +162,7 @@ function AppRoutes() {
                     <Route path="/equipo/nuevo" element={<PermissionRoute permission={PERMS.TEAM_USERS_VIEW}><UserFormPage /></PermissionRoute>} />
                     <Route path="/equipo/:userId/editar" element={<PermissionRoute permission={PERMS.TEAM_USERS_VIEW}><UserFormPage /></PermissionRoute>} />
                     <Route path="/equipo/distribuidores" element={<BaasRoute><DistributorsBaaSPage /></BaasRoute>} />
+                    <Route path="/auditoria" element={<PermissionRoute permission={PERMS.AUDIT_LOGS_VIEW}><AuditLog /></PermissionRoute>} />
                     <Route
                       path="/equipo/distribuidores/:clientId/arbol"
                       element={

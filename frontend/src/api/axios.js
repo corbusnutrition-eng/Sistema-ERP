@@ -3,14 +3,13 @@ import axios from 'axios'
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
   headers: { 'Content-Type': 'application/json' },
+  // El JWT viaja en una cookie HttpOnly: el navegador la adjunta solo si
+  // withCredentials está activo (obligatorio para peticiones cross-origin,
+  // que es el caso en producción — frontend y backend en dominios distintos).
+  withCredentials: true,
 })
 
-// Attach the JWT token to every request automatically
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
   // FormData requiere que el navegador fije multipart boundary (no application/json por defecto)
   if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
     delete config.headers['Content-Type']
@@ -18,23 +17,87 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Redirect to login on 401 (token expired or invalid)
+// ── Refresco silencioso de sesión ───────────────────────────────────────────
+//
+// Un 401 con detail "token_expired" dispara UN solo POST /auth/refresh
+// (encolando cualquier petición concurrente que también reciba 401 mientras
+// el refresh está en vuelo, para no disparar N refrescos en paralelo) y
+// reintenta la petición original. Si el refresh falla, ahí sí se cierra
+// sesión — evita el falso "sesión perdida" cuando el access token expira
+// pero el usuario sigue activo.
+const AUTH_PATHS = ['/auth/login', '/auth/refresh', '/auth/logout']
+
+function isAuthPath(url) {
+  const path = String(url || '')
+  return AUTH_PATHS.some((p) => path.includes(p))
+}
+
+let refreshPromise = null
+
+function refreshSessionOnce() {
+  if (!refreshPromise) {
+    refreshPromise = api
+      .post('/api/v1/auth/refresh')
+      .finally(() => {
+        refreshPromise = null
+      })
+  }
+  return refreshPromise
+}
+
+function redirectToLogin() {
+  try {
+    localStorage.removeItem('user')
+  } catch {
+    // localStorage puede fallar (modo privado); no es crítico.
+  }
+  // AuthProvider envuelve también /login y dispara GET /auth/me al montar:
+  // un visitante sin cookie de sesión recibe 401 justo ahí. Sin esta guarda,
+  // `location.href = '/login'` fuerza una recarga aunque ya estemos en esa
+  // ruta (Chromium recarga igual con el mismo valor), lo que remonta
+  // AuthProvider y repite el 401 en un bucle infinito de recargas.
+  if (window.location.pathname !== '/login') {
+    window.location.href = '/login'
+  }
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     if (import.meta.env.DEV) {
       console.error('[api]', error.config?.method, error.config?.url, error.response?.status, error.response?.data)
     }
-    if (error.response?.status === 401) {
-      const url = String(error.config?.url || '')
-      const isLoginAttempt = url.includes('/auth/login')
-      if (!isLoginAttempt) {
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-      }
+
+    const original = error.config
+    const status = error.response?.status
+    const detail = error.response?.data?.detail
+
+    if (status !== 401 || !original || isAuthPath(original.url)) {
+      return Promise.reject(error)
     }
-    return Promise.reject(error)
+
+    if (detail !== 'token_expired') {
+      // token_invalid, usuario inactivo, o "no autenticado" sin más contexto
+      // (ninguna cookie presente): ningún refresh va a arreglar esto.
+      redirectToLogin()
+      return Promise.reject(error)
+    }
+
+    if (original._retriedAfterRefresh) {
+      // Ya se reintentó una vez tras refrescar y volvió a fallar: sesión perdida de verdad.
+      redirectToLogin()
+      return Promise.reject(error)
+    }
+
+    try {
+      await refreshSessionOnce()
+    } catch {
+      redirectToLogin()
+      return Promise.reject(error)
+    }
+
+    original._retriedAfterRefresh = true
+    return api(original)
   }
 )
 

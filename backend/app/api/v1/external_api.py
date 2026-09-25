@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.audit.context import ACTOR_WEBHOOK, set_actor
 from app.database import get_db
 from app.models.client import Client
 
@@ -65,6 +66,7 @@ def get_portal_link_by_email(
         return _external_api_ok_response(
             {"status": "error", "message": "Clave API inválida o ausente."}
         )
+    set_actor(actor_type=ACTOR_WEBHOOK, actor_label="external_api")
 
     email_norm = (email or "").strip().lower()
     if not email_norm or "@" not in email_norm:

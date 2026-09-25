@@ -10,13 +10,14 @@ from decimal import Decimal
 from typing import Annotated, Any, Optional
 
 import requests
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status, Body
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status, Body
 from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.services.transaction_discount_helpers import normalize_discount_triplet
 from app.account_constants import is_liquid_deposit_account
+from app.rate_limit import MASTER_PIN_LIMIT, limiter
 from app.currency_utils import normalize_currency_code
 from app.schemas.hotmart_links import hotmart_links_from_model, normalize_hotmart_links_list
 from app.api.v1.dependencies import require_any_permission, require_permission
@@ -1796,7 +1797,9 @@ def activate_pending_wallet_recharge(
 
 
 @router.post("/recharge-requests/{request_id}/void", response_model=WalletRechargeRequestRead)
+@limiter.limit(MASTER_PIN_LIMIT)
 def void_wallet_recharge_request(
+    request: Request,
     request_id: int,
     db: DbDep,
     current_user: BaasRechargeEditDep,

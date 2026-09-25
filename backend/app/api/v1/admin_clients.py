@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import os
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.v1.dependencies import AdminDep, require_permission
 from app.permissions import BAAS_SALE_PRICES_EDIT, BAAS_SALE_PRICES_VIEW, BAAS_TREE_EDIT
 from app.database import get_db
+from app.rate_limit import MASTER_PIN_LIMIT, limiter
 from app.models.client import CLIENT_STATUSES, Client
 from app.models.wallet_transaction import WalletTransaction
 from app.schemas.client_payment_methods import (
@@ -40,6 +40,7 @@ from app.services.client_product_price_service import (
     list_client_assigned_package_prices,
     upsert_admin_client_package_prices_local,
 )
+from app.security.master_pin import require_master_pin
 from app.security.ownership import assert_client_in_caller_scope
 
 router = APIRouter(prefix="/admin/clients", tags=["admin"])
@@ -79,33 +80,17 @@ class AdminAdjustBalanceResponse(BaseModel):
     amount_applied: float
 
 
-def _configured_master_pin() -> str:
-    pin = (os.getenv("MASTER_ADMIN_PIN") or "").strip()
-    if not pin:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="PIN maestro no configurado (variable MASTER_ADMIN_PIN).",
-        )
-    return pin
-
-
-def _require_master_pin(pin: str) -> None:
-    if str(pin or "").strip() != _configured_master_pin():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="PIN maestro incorrecto.",
-        )
-
-
 @router.post("/{client_id}/toggle-status", response_model=AdminToggleStatusResponse)
+@limiter.limit(MASTER_PIN_LIMIT)
 def admin_toggle_client_status(
+    request: Request,
     client_id: int,
     payload: AdminPinBody,
     db: DbDep,
     current: BaasTreeEditDep,
 ) -> AdminToggleStatusResponse:
     """Invierte Activo ↔ Inactivo del cliente BaaS."""
-    _require_master_pin(payload.pin)
+    require_master_pin(payload.pin)
     client = assert_client_in_caller_scope(db, current, int(client_id))
     status_now = str(client.status or "Activo").strip()
     new_status = "Inactivo" if status_now.lower() != "inactivo" else "Activo"
@@ -124,14 +109,16 @@ def admin_toggle_client_status(
 
 
 @router.post("/{client_id}/adjust-balance", response_model=AdminAdjustBalanceResponse)
+@limiter.limit(MASTER_PIN_LIMIT)
 def admin_adjust_client_balance(
+    request: Request,
     client_id: int,
     payload: AdminAdjustBalanceBody,
     db: DbDep,
     current: BaasTreeEditDep,
 ) -> AdminAdjustBalanceResponse:
     """Ajusta saldo BaaS del cliente (sumar o restar) con movimiento en ledger."""
-    _require_master_pin(payload.pin)
+    require_master_pin(payload.pin)
     client = assert_client_in_caller_scope(db, current, int(client_id))
     amt = round(float(payload.amount), 2)
     if amt <= 0:

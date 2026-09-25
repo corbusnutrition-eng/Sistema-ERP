@@ -33,7 +33,14 @@ async def upload_receipt(request: Request, file: UploadFile) -> JSONResponse:
     """
     Recibe imagen, video o PDF, lo sube a Cloudinary (resource_type=auto)
     y devuelve la URL HTTPS pública y el tipo de medio detectado.
-    Endpoint público – no requiere autenticación.
+
+    Endpoint público — no requiere autenticación, POR DISEÑO: lo usan los
+    flujos anónimos de portal/checkout/pago (CheckoutPage, ClientPortalPage,
+    PaymentPage, RechargePortalPage) para subir el comprobante antes de que
+    exista ninguna sesión. Revisado en la auditoría de auth de 2026-09:
+    queda contenido con allowlist de content-type, tope de 10 MB y
+    ``RECEIPT_UPLOAD_LIMIT`` (5/min por IP). Si se observa abuso, la mitigación
+    es exigir un token de venta/portal válido, no un JWT de staff.
     """
     content_type = (file.content_type or "").split(";")[0].strip().lower()
     if content_type not in ALLOWED_CONTENT_TYPES:

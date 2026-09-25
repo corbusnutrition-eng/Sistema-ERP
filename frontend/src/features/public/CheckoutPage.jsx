@@ -16,6 +16,9 @@ const CHECKOUT_PAYMENT_CARD_CLASS =
 function publicApi() {
   return axios.create({
     baseURL: (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/?$/, ''),
+    // Explícito: este cliente NUNCA debe enviar la cookie de sesión de staff.
+    // Autenticación por payment_token en la URL, no por cookie/JWT.
+    withCredentials: false,
   })
 }
 

@@ -22,6 +22,7 @@ from app.timezone_utils import UTC, ensure_aware, isoformat_z, now_ecuador
 logger = logging.getLogger(__name__)
 
 from app.account_constants import is_liquid_deposit_account
+from app.audit.context import ACTOR_PORTAL_CLIENT, set_actor
 from app.api.v1.checkout import (
     _checkout_lines_public,
     _finalize_checkout_line_amount,
@@ -2305,6 +2306,9 @@ def _portal_client_from_token(db: Session, portal_token: uuid_pkg.UUID) -> Clien
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Portal no encontrado.")
     _ensure_portal_client_not_blocked(client)
+    # Chokepoint único de ~50 rutas /portal/{token}/...: una sola línea ancla
+    # el actor de auditoría para todas ellas.
+    set_actor(actor_type=ACTOR_PORTAL_CLIENT, actor_id=client.id, actor_label=client.email)
     return client
 
 

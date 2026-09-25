@@ -7,6 +7,15 @@ import tempfile
 import uuid
 from typing import Generator
 
+# Default a SQLite en memoria ANTES de que cualquier test importe `app.main`
+# (necesario para usar TestClient). `app.main` carga `backend/.env` con
+# `override=False` en el import: si `DATABASE_URL` no está ya en el entorno,
+# adoptaría silenciosamente la Postgres de desarrollo local ahí definida y
+# rompería el aislamiento de la suite. `setdefault` respeta una
+# TEST_DATABASE_URL/DATABASE_URL que el propio entorno ya haya exportado
+# (así sigue funcionando correr la suite contra Postgres a propósito).
+os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+
 import pytest
 from sqlalchemy import JSON, String, create_engine, event
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
@@ -68,6 +77,16 @@ def _resolve_test_database_url() -> tuple[str, bool]:
 def test_engine():
     """Motor aislado para pruebas (SQLite en memoria por defecto)."""
     import_all_models()
+
+    # Los listeners de auditoría se registran en app.database al importarse
+    # (ver install_audit_listeners()) — normalmente eso ocurre de forma
+    # transitiva vía app.main, pero un test que solo usa el fixture `db`
+    # (sin `client`/`patched_database`) nunca importa app.database, dejando
+    # los listeners sin instalar. Se fuerza aquí, explícito y determinista,
+    # antes de que cualquier test que dependa de `test_engine` pueda correr.
+    from app.audit.listeners import install_audit_listeners
+
+    install_audit_listeners()
     url, is_pg = _resolve_test_database_url()
     if not is_pg:
         _sqlite_compat_metadata()
@@ -121,6 +140,17 @@ def patched_database(test_engine, test_session_factory, monkeypatch):
     monkeypatch.setattr(database_module, "engine", test_engine)
     monkeypatch.setattr(database_module, "SessionLocal", test_session_factory)
     return test_session_factory
+
+
+@pytest.fixture
+def client(patched_database):
+    """``TestClient`` con la app real, apuntando a la BD de prueba parcheada."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as c:
+        yield c
 
 
 @pytest.fixture

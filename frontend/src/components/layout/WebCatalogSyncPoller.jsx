@@ -1,25 +1,18 @@
 import { useEffect, useRef } from 'react'
 import api from '../../api/axios'
+import { useAuth } from '../../context/AuthContext'
 
 const INTERVAL_MS = 30_000
-
-function getStoredUser() {
-  try {
-    return JSON.parse(localStorage.getItem('user') || 'null')
-  } catch {
-    return null
-  }
-}
 
 /**
  * Robot global (solo admin): sincroniza recargas billetera + comprobantes de ventas IPTV/créditos
  * desde catalogo-vip (Render). Dispara pulso visual y evento para refrescar Ventas / Distribuidores.
  */
 export default function WebCatalogSyncPoller() {
+  const { user } = useAuth()
   const titleFlashTimeoutRef = useRef(null)
 
   useEffect(() => {
-    const user = getStoredUser()
     if (!user || user.role !== 'admin') return undefined
 
     const pulseBody = () => {
@@ -77,7 +70,10 @@ export default function WebCatalogSyncPoller() {
       window.clearInterval(id)
       if (titleFlashTimeoutRef.current) window.clearTimeout(titleFlashTimeoutRef.current)
     }
-  }, [])
+    // Solo reinicia el poller si cambia el rol (login/logout/cambio de usuario),
+    // no en cada actualización superficial del objeto `user`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.role])
 
   return null
 }

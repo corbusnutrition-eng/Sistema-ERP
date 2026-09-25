@@ -1,16 +1,9 @@
 import { Search, HelpCircle, ChevronDown, Menu, X } from 'lucide-react'
+import { useAuth } from '../../context/AuthContext'
 import NotificationBell from './NotificationBell'
 
-function getCurrentUser() {
-  try {
-    return JSON.parse(localStorage.getItem('user') || 'null')
-  } catch {
-    return null
-  }
-}
-
 export default function Header({ onMenuClick, mobileNavOpen = false }) {
-  const user = getCurrentUser()
+  const { user } = useAuth()
   const initials = user?.name
     ? user.name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()
     : 'U'

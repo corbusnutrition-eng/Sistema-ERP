@@ -54,6 +54,7 @@ from app.services.client_payment_service import (
     void_client_payment,
     wallet_recharge_ref_number,
 )
+from app.rate_limit import MASTER_PIN_LIMIT, limiter
 from app.security.master_pin import require_master_pin
 from app.security.money_validation import validate_form_money
 from app.services.client_payment_accounting_sync import sync_client_payment_accounting_ledgers
@@ -609,7 +610,9 @@ def approve_payment(
 
 
 @router.patch("/{payment_id}/correct", response_model=ClientPaymentOut)
+@limiter.limit(MASTER_PIN_LIMIT)
 def correct_payment(
+    request: Request,
     payment_id: int,
     db: DbDep,
     _: ReceivablesEditDep,
@@ -688,7 +691,9 @@ def reject_payment(payment_id: int, db: DbDep, _: ReceivablesEditDep) -> dict:
 
 
 @router.post("/{payment_id}/void", response_model=VoidTransactionResponse)
+@limiter.limit(MASTER_PIN_LIMIT)
 def void_payment(
+    request: Request,
     payment_id: int,
     db: DbDep,
     _: ReceivablesEditDep,

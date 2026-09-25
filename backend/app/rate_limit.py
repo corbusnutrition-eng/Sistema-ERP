@@ -13,6 +13,14 @@ PORTAL_GET_LIMIT = "20/minute"
 PORTAL_FINANCIAL_LIMIT = "5/minute"
 # Alias histórico usado en uploads y comprobantes.
 RECEIPT_UPLOAD_LIMIT = PORTAL_FINANCIAL_LIMIT
+# Login de staff: pocos intentos por IP; el bloqueo progresivo por cuenta
+# (ver app.security.login_guard) es la defensa complementaria por email.
+LOGIN_LIMIT = "5/minute"
+# Endpoints que exigen MASTER_ADMIN_PIN (ajuste de saldo, bloqueo de cliente,
+# desactivar tasa de cambio...). Un PIN de 6 dígitos sin límite se agota en
+# minutos por fuerza bruta; esto acota los intentos por IP independientemente
+# de la comparación en tiempo constante de ``require_master_pin``.
+MASTER_PIN_LIMIT = "10/minute"
 
 RATE_LIMIT_EXCEEDED_MESSAGE = (
     "Has superado el límite de peticiones permitidas. "

@@ -28,10 +28,9 @@ Esta guía documenta las **variables de entorno**, comandos para desarrollo loca
 | Frontend ERP | Static Site | SPA React (Vite) |
 | PostgreSQL | Managed DB | Datos persistentes |
 
-**CORS:** el backend en `app/main.py` permite por defecto:
-- `https://sistema-erp-1.onrender.com`
-- `http://localhost:5173` y `:3000`
-- Regex adicional: `https://.*\.onrender\.com` (configurable)
+**CORS:** el backend en `app/main.py` permite en desarrollo `http://localhost:5173`/`:3000`. En producción (`ENVIRONMENT=production`) exige una lista explícita en `CORS_ORIGINS` — **sin regex comodín por defecto** (el histórico `https://.*\.onrender\.com` dejaba pasar credenciales desde cualquier app alojada en Render, no solo la nuestra).
+
+> ⚠️ **Cookies de sesión y dominio propio.** El login ya no devuelve el JWT en el cuerpo: viaja en cookies `HttpOnly`. Para que el navegador las envíe entre el frontend y el backend en producción, **ambos deben ser subdominios de un mismo dominio propio** (ej. `app.tudominio.com` + `api.tudominio.com`) — `sistema-erp-1.onrender.com` y `sistema-erp-e2iw.onrender.com` son subdominios de `onrender.com`, que está en la Public Suffix List: para el navegador son sitios **distintos**, y una cookie `SameSite=Lax` entre ellos no se envía. Migrar a cookies **requiere** configurar un dominio propio en Render (Custom Domain) antes de desplegar esa parte del cambio; hasta entonces, el backend sigue aceptando también el header `Authorization: Bearer` como respaldo transicional (ver `app/api/v1/dependencies.py`).
 
 ---
 
@@ -71,20 +70,39 @@ Si ambas están vacías, las notificaciones Telegram se omiten silenciosamente.
 | `OPENAI_API_KEY` | Opcional | API key OpenAI para OCR de recibos en portal |
 | `OPENAI_INVENTORY_VISION_MODEL` | Opcional | Modelo visión inventario (default: `gpt-4o`) |
 
+### Entorno
+
+| Variable | Obligatoria | Descripción |
+|----------|-------------|-------------|
+| `ENVIRONMENT` | Recomendada | `production` activa validaciones estrictas de arranque: `JWT_SECRET_KEY` y `CORS_ORIGINS` se vuelven obligatorias (el servidor no arranca sin ellas, en vez de arrancar inseguro en silencio). Default: `development`. |
+
+### Autenticación (JWT + cookies de sesión)
+
+| Variable | Obligatoria | Descripción |
+|----------|-------------|-------------|
+| `JWT_SECRET_KEY` | **Sí en producción** | Secreto de firma del JWT. Generar con `python -c "import secrets; print(secrets.token_urlsafe(64))"`. Rotarlo invalida TODAS las sesiones activas. Sin default seguro — antes vivía hardcodeado en `app/jwt_utils.py`. |
+| `COOKIE_DOMAIN` | Opcional | Dominio compartido entre frontend y backend, ej. `.tudominio.com` (con el punto inicial). Vacío en desarrollo local. |
+| `COOKIE_SECURE` | Opcional | `true`/`false`. Se activa automáticamente si `ENVIRONMENT=production`; en desarrollo local (http) déjala en `false` o el navegador descarta la cookie. |
+
 ### Seguridad admin
 
 | Variable | Obligatoria | Descripción |
 |----------|-------------|-------------|
-| `MASTER_ADMIN_PIN` | Recomendada | PIN para operaciones sensibles (ajuste de saldo, etc.) |
+| `MASTER_ADMIN_PIN` | Recomendada | PIN para operaciones sensibles (ajuste de saldo, anular venta/pago, desactivar moneda). Sin esta variable esos endpoints responden 503 en vez de aceptar cualquier PIN. |
 
-> **Nota:** El `SECRET_KEY` JWT está definido en código (`app/jwt_utils.py`). Para producción se recomienda externalizarlo a variable de entorno en una futura mejora de seguridad.
+### Auditoría (bitácora before/after)
+
+| Variable | Obligatoria | Descripción |
+|----------|-------------|-------------|
+| `AUDIT_ENABLED` | Opcional | `0` desactiva la captura de auditoría en caliente, sin desplegar. Default: `1`. |
+| `AUDIT_STRICT` | Opcional | `1` propaga las excepciones del listener de auditoría en vez de tragarlas — solo para tests/staging, nunca en producción. Default: `0`. |
 
 ### CORS
 
 | Variable | Obligatoria | Descripción |
 |----------|-------------|-------------|
-| `CORS_ORIGINS` | Opcional | Orígenes extra separados por coma |
-| `CORS_ORIGIN_REGEX` | Opcional | Regex de orígenes permitidos (default: `https://.*\.onrender\.com`) |
+| `CORS_ORIGINS` | **Sí en producción** | Lista explícita de orígenes exactos separados por coma (ej. `https://app.tudominio.com`). Sin esta variable, el servidor no arranca en producción. |
+| `CORS_ORIGIN_REGEX` | Opcional y desaconsejado | Sin valor por defecto. Solo definirlo si de verdad se necesita un patrón (ej. previews de este mismo proyecto), lo más restrictivo posible — nunca un comodín amplio como `.*\.onrender\.com`. |
 
 ### Integración catálogo VIP / Render sync
 
@@ -215,16 +233,26 @@ El `payment_token` está en la tabla `clients` (columna `payment_token`).
 
 **Variables en Render Dashboard → Environment:**
 - `DATABASE_URL` (desde PostgreSQL addon)
+- `ENVIRONMENT=production`
+- `JWT_SECRET_KEY` (generado, nunca el mismo entre entornos)
+- `CORS_ORIGINS` (dominio del frontend, sin regex comodín)
+- `COOKIE_DOMAIN` (ej. `.tudominio.com`, una vez configurado el dominio propio)
 - `CLOUDINARY_*` (3 variables)
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - `OPENAI_API_KEY` (si usas OCR)
 - `MASTER_ADMIN_PIN`
-- CORS extras si aplica
 
 **Migraciones en deploy** (opcional, añadir al Build Command):
 ```bash
 pip install -r requirements.txt && alembic upgrade head
 ```
+
+**Primer despliegue tras el endurecimiento de auth (una sola vez):** antes de que el backdoor de login sea historia en producción, crear un admin real:
+```bash
+ADMIN_EMAIL=admin@tudominio.com ADMIN_PASSWORD='...' ADMIN_NAME='Nombre' \
+  PYTHONPATH=. python scripts/create_admin.py --yes
+```
+Ejecutar contra la `DATABASE_URL` de producción (shell one-off de Render), **antes** de desplegar el commit que elimina el mock `admin@erp.com`/`admin123`, o quedará sin ningún acceso admin.
 
 ### Frontend (Static Site)
 
@@ -308,26 +336,59 @@ Variables de entorno: las mismas del Web Service (`DATABASE_URL`, `TELEGRAM_BOT_
 
 ---
 
+## 6bis. Purga de la bitácora de auditoría (Cron Job)
+
+`backend/scripts/purge_audit_logs.py` — retención diferenciada: 24 meses para tablas de dinero/contabilidad/RBAC, 6 meses para el resto. Purga por lotes de 10.000 con commit por lote (nunca un `DELETE` monolítico que bloquee la tabla).
+
+```bash
+# Solo cuenta filas elegibles, no borra
+PYTHONPATH=. python scripts/purge_audit_logs.py --dry-run
+
+# Purga real
+PYTHONPATH=. python scripts/purge_audit_logs.py
+```
+
+### Render Cron Job (recomendado, diario 04:00 hora Ecuador = 09:00 UTC)
+
+| Campo | Valor típico |
+|-------|--------------|
+| **Root Directory** | `backend` |
+| **Schedule** | `0 9 * * *` |
+| **Command** | `PYTHONPATH=. python scripts/purge_audit_logs.py` |
+
+Variables de entorno: las mismas del Web Service (`DATABASE_URL` como mínimo).
+
+> Verificar el tamaño real de la tabla a los 7 y 30 días de operar (`SELECT pg_size_pretty(pg_total_relation_size('audit_logs'))`) para recalibrar la retención si el volumen real difiere de la estimación inicial.
+
+---
+
 ## 7. Checklist post-despliegue
 
 - [ ] `GET /health` responde OK en backend
-- [ ] Login ERP funciona (`/login`)
+- [ ] `python scripts/create_admin.py` ejecutado contra producción (admin real creado) **antes** de este deploy
+- [ ] Login ERP funciona y fija cookies `HttpOnly` (DevTools → Application → Cookies)
+- [ ] `localStorage` del frontend **no** contiene ningún token
+- [ ] Recargar la página (F5) estando logueado conserva la sesión (`GET /auth/me`)
+- [ ] Cerrar sesión limpia las cookies y `/auth/me` devuelve 401
 - [ ] Frontend carga y las peticiones API no tienen error CORS
 - [ ] Subida de comprobante funciona (Cloudinary configurado)
 - [ ] Portal accesible con token UUID
 - [ ] Telegram recibe alertas de prueba (si configurado)
 - [ ] Reporte matutino probado con `--dry-run` y cron `0 14 * * *` configurado (opcional)
-- [ ] Migraciones aplicadas (`alembic current`)
+- [ ] Purga de auditoría probada con `--dry-run` y cron `0 9 * * *` configurado
+- [ ] Migraciones aplicadas (`alembic current` → debe mostrar el head más reciente)
+- [ ] `GET /api/v1/audit` (logueado como admin) devuelve filas tras hacer algún cambio de prueba
 
 ---
 
 ## 8. Seguridad — buenas prácticas
 
-1. **Nunca commitear** `.env` con secretos reales — usar `.gitignore`.
-2. Rotar `TELEGRAM_BOT_TOKEN`, `CLOUDINARY_API_SECRET`, `EXTERNAL_API_KEY` periódicamente.
+1. **Nunca commitear** `.env` con secretos reales — usar `.gitignore`. `backend/.env` estuvo commiteado en el historial (`c3df086`): si es tu caso, asume comprometido todo lo que contenía y rota cada secreto.
+2. Rotar `TELEGRAM_BOT_TOKEN`, `CLOUDINARY_API_SECRET`, `EXTERNAL_API_KEY`, `MASTER_ADMIN_PIN` y la contraseña de PostgreSQL periódicamente.
 3. `MASTER_ADMIN_PIN` solo en backend; no exponer al frontend.
-4. Revisar `CORS_ORIGINS` — no usar `*` con credenciales.
-5. Considerar mover `SECRET_KEY` JWT a variable de entorno en producción.
+4. Revisar `CORS_ORIGINS` — no usar `*` con credenciales, y no configurar `CORS_ORIGIN_REGEX` salvo necesidad puntual y restrictiva.
+5. `JWT_SECRET_KEY` obligatoria y distinta en cada entorno; rotarla cierra todas las sesiones activas.
+6. Revisar periódicamente `GET /api/v1/audit?actor_type=webhook` y `?action=bulk_update` — son las rutas más sensibles a abuso silencioso.
 
 ---
 
@@ -346,6 +407,12 @@ cd backend && alembic current && alembic history --verbose
 # Reporte matutino Telegram (dry-run)
 cd backend && PYTHONPATH=. python3 scripts/daily_telegram_report.py --dry-run
 
+# Purga de auditoría (dry-run)
+cd backend && PYTHONPATH=. python3 scripts/purge_audit_logs.py --dry-run
+
+# Crear/promover un admin real (producción)
+cd backend && ADMIN_EMAIL=... ADMIN_PASSWORD=... PYTHONPATH=. python3 scripts/create_admin.py --yes
+
 # Logs Render (CLI)
 render logs -s <nombre-servicio-backend>
 ```
@@ -359,6 +426,72 @@ render logs -s <nombre-servicio-backend>
 | `backend/DOCUMENTACION_BACKEND.md` | Arquitectura API, modelos, servicios |
 | `frontend/DOCUMENTACION_FRONTEND.md` | Rutas React, estado, flujos UI |
 | `http://localhost:8000/docs` | OpenAPI interactivo (Swagger) |
+
+---
+
+## 11. Despliegue con Docker (VPS + GHCR)
+
+Ruta alternativa a Render: backend y frontend corren como contenedores en un
+mismo VPS; la base de datos PostgreSQL vive en otro host/proveedor (Render DB,
+RDS, un VPS aparte, etc.) — nunca en este `docker-compose`.
+
+```
+┌────────────────────────── VPS ───────────────────────────┐
+│  ┌──────────────┐        ┌──────────────────────────┐    │
+│  │  frontend     │  /api  │  backend                 │    │
+│  │  nginx:80 ───►│───────►│  uvicorn:8000             │    │
+│  │  (SPA build)  │/uploads│  entrypoint: alembic      │    │
+│  └──────┬────────┘        │  upgrade head → uvicorn   │    │
+│         │                 └──────────────┬────────────┘    │
+└─────────┼────────────────────────────────┼─────────────────┘
+          ▼                                ▼
+   navegador (80/443)              DATABASE_URL externa
+                                    (PostgreSQL fuera del VPS)
+```
+
+### Archivos
+
+| Archivo | Rol |
+|---------|-----|
+| `backend/Dockerfile` | Imagen del backend (build multi-stage, venv, `entrypoint.sh` corre `alembic upgrade head` antes de `uvicorn` en cada arranque — cubre migraciones futuras sin pasos manuales) |
+| `frontend/Dockerfile` | Build de Vite + imagen `nginx` que sirve el SPA y hace reverse proxy de `/api/` y `/uploads/` al backend (mismo origen — evita el problema de cookies cross-subdominio de la §1) |
+| `frontend/nginx.conf` | Config del proxy (`location /api/`, `/uploads/`, fallback SPA en `/`) |
+| `docker-compose.prod.yml` | Stack del VPS: `backend` + `frontend`, sin Postgres. Imágenes vía `BACKEND_IMAGE`/`FRONTEND_IMAGE` |
+| `.env.prod.example` | Plantilla del `.env` que lee `docker-compose.prod.yml` en el VPS (tags de imagen, puerto) |
+| `.github/workflows/deploy-qa.yml` | CI/CD: build + push a GHCR + deploy por SSH en cada push a `dev` |
+
+### Variables de entorno
+
+- `backend/.env` en el VPS: el mismo que en despliegue local/Render (ver §2), con `DATABASE_URL` apuntando a la base externa. Se crea **a mano una vez** en el VPS — nunca viaja por CI ni se commitea.
+- `.env` en la raíz del VPS (junto a `docker-compose.prod.yml`): copia de `.env.prod.example`, define `BACKEND_IMAGE`/`FRONTEND_IMAGE`/`FRONTEND_HTTP_PORT`. El workflow de deploy sobreescribe `BACKEND_IMAGE`/`FRONTEND_IMAGE` con el tag exacto del commit desplegado.
+- Variables `VITE_*` del frontend: se incrustan en el bundle **en tiempo de build** (no de arranque del contenedor) vía `--build-arg` en `frontend/Dockerfile`. En CI vienen de Variables del repo (`vars.QA_VITE_API_BASE_URL`, etc. — no son secrets, terminan visibles en el JS del navegador).
+
+### Preparación única del VPS (antes del primer deploy)
+
+1. Instalar Docker + el plugin `docker compose`.
+2. Clonar el repo en un directorio dedicado (ej. `/opt/sistema-erp-qa`) y dejarlo en la rama `dev`. Ese path es `VPS_DEPLOY_PATH`.
+3. Crear `backend/.env` con los secretos reales (`DATABASE_URL` externa, `JWT_SECRET_KEY`, `CORS_ORIGINS`, etc. — ver §2).
+4. Copiar `.env.prod.example` → `.env` en la raíz del clon y ajustar `FRONTEND_HTTP_PORT` si ya hay un proxy propio (Caddy/Traefik) delante en el 80/443.
+5. Generar un par de llaves SSH dedicado al deploy y autorizar la pública en `~/.ssh/authorized_keys` de ese usuario.
+
+### Secrets/Variables del workflow (Settings → Secrets and variables → Actions)
+
+| Nombre | Tipo | Uso |
+|--------|------|-----|
+| `VPS_SSH_HOST`, `VPS_SSH_USER`, `VPS_SSH_KEY` | Secret | Conexión SSH al VPS |
+| `VPS_SSH_PORT` | Secret (opcional, default 22) | Puerto SSH si no es el estándar |
+| `VPS_DEPLOY_PATH` | Secret | Ruta del clon en el VPS (ver preparación arriba) |
+| `QA_VITE_API_BASE_URL`, `QA_VITE_CODIGOS_RETIRO_BASE_URL`, `QA_VITE_CODIGOS_RETIRO_ES_PRUEBA` | Variable | Build-args del frontend de QA |
+
+`GITHUB_TOKEN` (automático) autentica el push a GHCR desde el runner y, reenviado por SSH, el `docker login` en el VPS para el `pull` — no hace falta un PAT aparte.
+
+### Flujo en cada push a `dev`
+
+1. Build de `backend/Dockerfile` y `frontend/Dockerfile` en paralelo → push a `ghcr.io/corbusnutrition-eng/sistema-erp-{backend,frontend}` con tags `qa` y `qa-<sha>`.
+2. SSH al VPS: `git fetch/reset --hard origin/dev` en `VPS_DEPLOY_PATH` (así `docker-compose.prod.yml` siempre coincide con el commit desplegado), `docker login` a GHCR, `docker compose -f docker-compose.prod.yml pull && up -d` con el tag `qa-<sha>` exacto, `docker image prune -f`.
+3. El contenedor backend corre `alembic upgrade head` en su arranque — cualquier migración nueva del commit se aplica sola, sin paso manual.
+
+El despliegue a `main` (producción) reutilizará estos mismos Dockerfiles/imágenes en un workflow aparte (pendiente).
 
 ---
 

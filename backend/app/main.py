@@ -26,6 +26,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from app.audit.middleware import AuditContextMiddleware
 from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.upload_paths import UPLOAD_ROOT
 
@@ -58,14 +59,26 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+# Starlette hace user_middleware.insert(0, ...): el ÚLTIMO añadido queda MÁS
+# INTERNO en ejecución. AuditContextMiddleware va primero para quedar así —
+# scope["client"] ya viene corregido por ProxyHeadersMiddleware (IP real de
+# Render) y un 429 de slowapi no consume un request_id.
+app.add_middleware(AuditContextMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 # Render actúa como proxy inverso: confiar en X-Forwarded-* para IP/host reales.
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Orígenes permitidos (allow_credentials=True exige dominios explícitos; no usar "*").
-# Necesario para JWT / Authorization en peticiones cross-origin desde el frontend.
-_DEFAULT_ORIGINS = [
-    "https://sistema-erp-1.onrender.com",  # Frontend producción (Render Static Site)
+# Necesario para JWT / cookies de sesión en peticiones cross-origin desde el frontend.
+#
+# Deliberadamente SIN regex comodín: `https://.*\.onrender\.com` (el default
+# histórico) dejaba pasar credenciales desde CUALQUIER app alojada en Render,
+# no solo la nuestra. Con allow_credentials=True eso es una lista de invitados
+# abierta a cualquier usuario de Render. Lista explícita, nada más.
+ENVIRONMENT = (os.getenv("ENVIRONMENT") or os.getenv("ENV") or "development").strip().lower()
+_IS_PRODUCTION = ENVIRONMENT in {"production", "prod"}
+
+_DEV_ORIGINS = [
     "http://localhost:5173",  # Vite dev server
     "http://localhost:3000",  # Entorno local alternativo
     "http://127.0.0.1:5173",
@@ -74,24 +87,34 @@ _DEFAULT_ORIGINS = [
 
 _extra = os.getenv("CORS_ORIGINS", "")
 _EXTRA_ORIGINS = [o.strip() for o in _extra.split(",") if o.strip()]
-_ALLOWED_ORIGINS = list(dict.fromkeys(_DEFAULT_ORIGINS + _EXTRA_ORIGINS))
 
-# Cubre despliegues Render adicionales (preview, staging, otros static sites).
-# Con allow_credentials=True no se puede usar allow_origins=["*"]; el regex complementa la lista.
-_ALLOW_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.onrender\.com").strip() or None
+if _IS_PRODUCTION:
+    if not _EXTRA_ORIGINS:
+        raise RuntimeError(
+            "CORS_ORIGINS no está configurada. En producción (ENVIRONMENT=production) "
+            "el servidor no puede arrancar sin una lista explícita de orígenes permitidos "
+            "(ej. CORS_ORIGINS=https://app.tudominio.com)."
+        )
+    _ALLOWED_ORIGINS = list(dict.fromkeys(_EXTRA_ORIGINS))
+else:
+    _ALLOWED_ORIGINS = list(dict.fromkeys(_DEV_ORIGINS + _EXTRA_ORIGINS))
+
+# Regex opcional, SIN valor por defecto: solo quien lo configure explícitamente
+# (ej. para previews de un mismo proyecto) asume ese riesgo a sabiendas.
+_ALLOW_ORIGIN_REGEX = (os.getenv("CORS_ORIGIN_REGEX") or "").strip() or None
 
 print(f"INFO: CORS allow_origins = {_ALLOWED_ORIGINS}")
 if _ALLOW_ORIGIN_REGEX:
-    print(f"INFO: CORS allow_origin_regex = {_ALLOW_ORIGIN_REGEX!r}")
+    print(f"WARN: CORS allow_origin_regex configurado = {_ALLOW_ORIGIN_REGEX!r} (verifica que no sea demasiado amplio)")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_origin_regex=_ALLOW_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
     max_age=3600,
 )
 
@@ -111,6 +134,7 @@ from app.api.v1 import accounting as accounting_router
 from app.api.v1 import admin_clients as admin_clients_router
 from app.api.v1 import admin_transactions as admin_transactions_router
 from app.api.v1 import accounts as chart_accounts_router
+from app.api.v1 import audit as audit_router
 from app.api.v1 import checkout as checkout_router
 from app.api.v1 import portal as portal_router
 from app.api.v1 import auth as auth_router
@@ -148,6 +172,7 @@ API_V1_PREFIX = "/api/v1"
 app.include_router(admin_transactions_router.router, prefix=API_V1_PREFIX)
 app.include_router(admin_clients_router.router, prefix=API_V1_PREFIX)
 app.include_router(admin_notifications_router.router, prefix=API_V1_PREFIX)
+app.include_router(audit_router.router, prefix=API_V1_PREFIX)
 app.include_router(accounting_router.router, prefix=API_V1_PREFIX)
 app.include_router(chart_accounts_router.router, prefix=API_V1_PREFIX)
 app.include_router(classes_router.router, prefix=API_V1_PREFIX)

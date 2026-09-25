@@ -18,13 +18,13 @@ frontend/
 │   ├── index.css                 # Tailwind base
 │   │
 │   ├── api/                      # Cliente HTTP admin
-│   │   ├── axios.js              # Interceptores JWT + 401 redirect
+│   │   ├── axios.js              # withCredentials:true (JWT en cookie HttpOnly), refresh-on-401
 │   │   ├── auth.js
 │   │   ├── clients.js
 │   │   └── users.js
 │   │
 │   ├── context/                  # Estado global (3 contextos)
-│   │   ├── AuthContext.jsx       # Sesión JWT, permisos RBAC
+│   │   ├── AuthContext.jsx       # Sesión (cookie HttpOnly), permisos RBAC
 │   │   ├── ModalContext.jsx      # Modales globales admin
 │   │   └── InventoryDataContext.jsx  # Snapshot inventario en shell admin
 │   │
@@ -119,7 +119,7 @@ Protegidas por `ProtectedRoute` → `InventoryDataProvider` → `MainLayout`.
 
 | Guard | Función |
 |-------|---------|
-| `ProtectedRoute` | Requiere `localStorage.access_token` + user hidratado |
+| `ProtectedRoute` | Requiere `user` resuelto por `AuthContext` (vía `GET /auth/me`); la sesión vive en cookie `HttpOnly`, no en `localStorage` |
 | `PermissionRoute` | Admin bypass; otros necesitan permiso granular |
 | `BaasRoute` | Acceso módulo BaaS |
 | `AccountingHomeRedirect` | Usuarios ledger-only → cuenta asignada |
@@ -156,17 +156,22 @@ Protegidas por `ProtectedRoute` → `InventoryDataProvider` → `MainLayout`.
 
 ```javascript
 // Base URL desde import.meta.env.VITE_API_BASE_URL
-// Request: Authorization: Bearer <access_token>
-// Response 401: limpia storage → redirect /login
+// withCredentials: true — el JWT viaja en una cookie HttpOnly, nunca en localStorage
+// Response 401 con detail=token_expired: UN solo POST /auth/refresh (encolado
+// para peticiones concurrentes) + reintenta la petición original; si el
+// refresh falla, ahí sí limpia y redirige a /login.
 ```
 
-**Portal (`ClientPortalPage.jsx`):**
+**Portal (`ClientPortalPage.jsx` / `CheckoutPage.jsx`):**
 
 ```javascript
 function publicApi() {
-  return axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL })
+  return axios.create({
+    baseURL: import.meta.env.VITE_API_BASE_URL,
+    withCredentials: false, // explícito: nunca debe enviar la cookie de sesión de staff
+  })
 }
-// Sin header Authorization — el token va en la ruta /portal/:token
+// Sin cookie ni header Authorization — el token va en la ruta /portal/:token
 ```
 
 ### 3.3 Patrón de fetching
@@ -182,7 +187,7 @@ function publicApi() {
 
 | Clave | Uso |
 |-------|-----|
-| `localStorage.access_token` | JWT staff |
+| `localStorage.user` | Caché no sensible (nombre/rol/permisos) para pintar la UI antes de que resuelva `GET /auth/me`; el JWT en sí **nunca** se guarda aquí — vive solo en la cookie `HttpOnly` |
 | `portal-accordion-order-{token}` | Orden drag-and-drop de secciones del portal |
 
 ---
@@ -384,7 +389,7 @@ Variables requeridas: ver `GUIA_DESPLIEGUE.md` (`VITE_API_BASE_URL`, etc.).
 ## 8. Observaciones arquitectónicas
 
 1. **`ClientPortalPage.jsx` es un monolito** — lógica, UI y helpers en un solo archivo; el resto del portal está más modularizado.
-2. **Doble cliente HTTP** — JWT para staff, token en URL para clientes (frontera de seguridad intencional).
+2. **Doble cliente HTTP** — cookie `HttpOnly` para staff (`withCredentials: true`), token en URL para clientes con `withCredentials: false` explícito (frontera de seguridad intencional: el cliente del portal nunca debe llevar la cookie de sesión de staff).
 3. **Sin cache de datos** — simple pero implica refetch frecuente; aceptable para escala actual.
 4. **Modales admin centralizados** en `ModalContext`; modales del portal son estado local.
 5. **Acordeón reordenable** persistido por token en `localStorage` vía `@dnd-kit/sortable`.

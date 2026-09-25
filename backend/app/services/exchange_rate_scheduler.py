@@ -7,6 +7,7 @@ import logging
 import os
 from datetime import timedelta
 
+from app.audit.context import ACTOR_SYSTEM, audit_actor_scope
 from app.database import SessionLocal
 from app.services.exchange_rate_service import (
     send_morning_exchange_rate_report,
@@ -46,16 +47,17 @@ async def _exchange_rate_loop(stop_event: asyncio.Event) -> None:
 
     while not stop_event.is_set():
         try:
-            db = SessionLocal()
-            try:
-                synced, failed = sync_exchange_rates_from_binance(db)
-                logger.info(
-                    "Scheduler exchange rates: synced=%s failed=%s",
-                    synced,
-                    failed or "—",
-                )
-            finally:
-                db.close()
+            with audit_actor_scope(actor_type=ACTOR_SYSTEM, actor_label="exchange_rate_scheduler"):
+                db = SessionLocal()
+                try:
+                    synced, failed = sync_exchange_rates_from_binance(db)
+                    logger.info(
+                        "Scheduler exchange rates: synced=%s failed=%s",
+                        synced,
+                        failed or "—",
+                    )
+                finally:
+                    db.close()
         except Exception:
             logger.exception("Error en scheduler de exchange rates")
 

@@ -17,6 +17,7 @@ from app.api.v1.sales import (
     expire_pending_sales_if_needed,
 )
 from app.account_constants import is_liquid_deposit_account
+from app.audit.context import ACTOR_PORTAL_CLIENT, set_actor
 from app.currency_utils import normalize_currency_code
 from app.database import get_db
 from app.rate_limit import PORTAL_FINANCIAL_LIMIT, PORTAL_GET_LIMIT, limiter
@@ -444,6 +445,7 @@ async def checkout_pay(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Este enlace ya no está disponible para enviar pagos.",
         )
+    set_actor(actor_type=ACTOR_PORTAL_CLIENT, actor_id=sale.client_id)
 
     labels_allowed = _sale_allowed_payment_labels(sale)
     if not labels_allowed:

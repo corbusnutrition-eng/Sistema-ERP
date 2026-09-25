@@ -1,0 +1,48 @@
+# Stack de despliegue para VPS (backend + frontend). La base de datos vive
+# fuera de este compose (otro host/proveedor) — se conecta vía DATABASE_URL
+# en backend/.env, que debe existir ya en el VPS y NUNCA se commitea.
+#
+# Uso en el VPS:
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# BACKEND_IMAGE / FRONTEND_IMAGE se inyectan desde el workflow de deploy
+# (ver .github/workflows/deploy-qa.yml) o desde un .env en la raíz del VPS
+# (plantilla en .env.prod.example).
+
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/corbusnutrition-eng/sistema-erp-backend:qa}
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    volumes:
+      - backend_uploads:/app/uploads
+    networks:
+      - erp
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/corbusnutrition-eng/sistema-erp-frontend:qa}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_HTTP_PORT:-80}:80"
+    networks:
+      - erp
+
+networks:
+  erp:
+    driver: bridge
+
+volumes:
+  backend_uploads:

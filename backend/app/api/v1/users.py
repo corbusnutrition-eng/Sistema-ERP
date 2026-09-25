@@ -314,7 +314,7 @@ def _unique_referral_code(db: Session) -> str:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def create_user(payload: UserCreate, db: DbDep, _: TeamUsersCreateDep) -> UserResponse:
+def create_user(payload: UserCreate, db: DbDep, current_user: TeamUsersCreateDep) -> UserResponse:
     """Registra un nuevo trabajador/administrador. Sin password → contraseña temporal."""
     if not payload.name.strip():
         raise HTTPException(
@@ -325,6 +325,11 @@ def create_user(payload: UserCreate, db: DbDep, _: TeamUsersCreateDep) -> UserRe
         role_template=payload.role_template,
         permissions=payload.permissions,
     )
+    if db_role == UserRole.admin and str(current_user.get("role") or "") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo un administrador total puede crear otro administrador.",
+        )
     plain_password = _resolve_create_password(payload.password)
     assigned_ids = resolve_assigned_account_ids_for_user(
         db,
@@ -483,10 +488,21 @@ def get_user(user_id: int, db: DbDep, _: TeamUsersViewDep) -> UserResponse:
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
-def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: TeamUsersEditDep) -> UserResponse:
+def update_user(user_id: int, payload: UserUpdate, db: DbDep, current_user: TeamUsersEditDep) -> UserResponse:
     user: Optional[User] = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado.")
+
+    caller_is_admin = str(current_user.get("role") or "") == "admin"
+    caller_id = current_user.get("user_id")
+    is_self = caller_id is not None and int(caller_id) == int(user_id)
+
+    if (payload.role_template is not None or payload.permissions is not None) and not caller_is_admin:
+        if is_self:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No puedes modificar tu propio rol o permisos.",
+            )
 
     if payload.name is not None:
         user.name = payload.name.strip()
@@ -514,6 +530,11 @@ def update_user(user_id: int, payload: UserUpdate, db: DbDep, _: TeamUsersEditDe
             role_template=tpl,
             permissions=perms,
         )
+        if db_role == UserRole.admin and not caller_is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo un administrador total puede otorgar el rol de administrador.",
+            )
         user.role = db_role
         user.role_template = resolved_tpl if db_role == UserRole.worker else ROLE_TEMPLATE_FULL_ADMIN
         user.permissions = expanded if db_role == UserRole.worker else []

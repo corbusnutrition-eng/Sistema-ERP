@@ -29,6 +29,7 @@ import {
   Landmark,
   Package,
   Wallet,
+  History,
 } from 'lucide-react'
 
 // ── Quick-create menu ─────────────────────────────────────────────────────────
@@ -300,6 +301,7 @@ const NAV_ITEMS = [
 const BOTTOM_ITEMS = [
   { label: 'Equipo', icon: UsersRound, to: '/equipo', permission: PERMS.TEAM_USERS_VIEW },
   { label: 'Billeteras BaaS', icon: Wallet, to: '/equipo/distribuidores', baasAccess: true },
+  { label: 'Auditoría', icon: History, to: '/auditoria', permission: PERMS.AUDIT_LOGS_VIEW },
 ]
 
 // ── Componente ───────────────────────────────────────────────────────────────
@@ -336,9 +338,9 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }) {
 
   const visibleBottomItems = BOTTOM_ITEMS.filter((item) => isNavItemVisible(item, navCtx))
 
-  function handleLogout() {
+  async function handleLogout() {
     onMobileClose?.()
-    clearSession()
+    await clearSession()
     navigate('/login', { replace: true })
   }
 
